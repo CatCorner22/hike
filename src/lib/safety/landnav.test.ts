@@ -9,6 +9,7 @@ import {
   milRelationRange,
   obstacleBox,
   rangeAzimuth,
+  intersection,
   resection,
   resection3,
   timeSpeedDistance,
@@ -109,6 +110,16 @@ describe("land nav math", () => {
     const tsd = timeSpeedDistance({ distanceM: 5000, speedKph: 5 });
     expect(tsd).not.toBeNull();
     expect(tsd!.minutes).toBeCloseTo(60, 0);
+  });
+
+  it("intersects two observer rays on an unknown point", () => {
+    const target = { lat: 37.0, lng: -119.0 };
+    const west = { lat: 37.0, lng: -119.01 };
+    const south = { lat: 36.99, lng: -119.0 };
+    const hit = intersection(west, 90, south, 0);
+    expect(hit).not.toBeNull();
+    expect(hit!.point.lat).toBeCloseTo(target.lat, 3);
+    expect(hit!.point.lng).toBeCloseTo(target.lng, 3);
   });
 });
 

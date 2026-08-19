@@ -71,6 +71,66 @@ export function sectorSearchLine(
   return { type: "LineString", coordinates: coords };
 }
 
+/**
+ * Creeping-line search: sweep a corridor (lost along a trail / drainage).
+ * Alternate headings along the axis, offset by search width each pass.
+ */
+export function creepingLineLegs(
+  lengthM: number,
+  widthM: number,
+  passes = 4,
+  axisHeading = 0,
+): SearchLeg[] {
+  const legs: SearchLeg[] = [];
+  let cum = 0;
+  const right = (axisHeading + 90) % 360;
+  const left = (axisHeading + 270) % 360;
+  for (let i = 0; i < passes; i++) {
+    const along = i % 2 === 0 ? axisHeading : (axisHeading + 180) % 360;
+    cum += lengthM;
+    legs.push({ headingTrue: along, meters: lengthM, cumMeters: cum });
+    if (i < passes - 1) {
+      cum += widthM;
+      legs.push({ headingTrue: i % 2 === 0 ? right : left, meters: widthM, cumMeters: cum });
+    }
+  }
+  return legs;
+}
+
+export function parallelTrackLegs(
+  lengthM: number,
+  spacingM: number,
+  tracks = 3,
+  axisHeading = 0,
+): SearchLeg[] {
+  const legs: SearchLeg[] = [];
+  let cum = 0;
+  const right = (axisHeading + 90) % 360;
+  for (let i = 0; i < tracks; i++) {
+    const along = i % 2 === 0 ? axisHeading : (axisHeading + 180) % 360;
+    cum += lengthM;
+    legs.push({ headingTrue: along, meters: lengthM, cumMeters: cum });
+    if (i < tracks - 1) {
+      cum += spacingM;
+      legs.push({ headingTrue: right, meters: spacingM, cumMeters: cum });
+    }
+  }
+  return legs;
+}
+
+export function searchLineFromLegs(
+  start: { lat: number; lng: number },
+  legs: SearchLeg[],
+): GeoJSON.LineString {
+  const coords: GeoJSON.Position[] = [[start.lng, start.lat]];
+  let here = start;
+  for (const leg of legs) {
+    here = deadReckon(here, leg.headingTrue, leg.meters);
+    coords.push([here.lng, here.lat]);
+  }
+  return { type: "LineString", coordinates: coords };
+}
+
 export function formatSearchPlan(name: string, legs: SearchLeg[]): string {
   return [
     `${name.toUpperCase()} SEARCH`,

@@ -11,7 +11,7 @@ import { SafetyPanel } from "@/components/offline/safety-panel";
 import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useGps } from "@/hooks/use-gps";
-import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
+import { formatDistance, formatElevation } from "@/lib/geo";
 import {
   compassLabel,
   gpsAccuracyLabel,
@@ -47,6 +47,8 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
+import { formatNaismith, gpsAnomalyWarning, naismithMinutes } from "@/lib/safety/field-ops";
+import { buddySeparationWarning } from "@/lib/safety/sar-advanced";
 import { sereAssessment } from "@/lib/safety/sere";
 import { deadReckon, distanceFromPaces, formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
@@ -83,6 +85,7 @@ export default function NavigatePage() {
   const [overdueBanner, setOverdueBanner] = useState<string | null>(null);
   const [nightMode, setNightMode] = useState<"off" | "red" | "nvg">("off");
   const [goto, setGoto] = useState<{ lat: number; lng: number } | null>(null);
+  const [searchOverlay, setSearchOverlay] = useState<GeoJSON.LineString | null>(null);
   const [zulu, setZulu] = useState(formatZulu());
   const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
   const [gpsDenied, setGpsDenied] = useState(false);
@@ -356,12 +359,17 @@ export default function NavigatePage() {
     stationaryMin: stillMin,
     hasSignal: gpsTrusted,
   });
+  const gpsSpoof = gpsTrusted ? gpsAnomalyWarning(trackPoints) : null;
+  const buddyWarn =
+    trusted && navFix ? buddySeparationWarning({ lat: navFix.lat, lng: navFix.lng }, waypoints) : null;
 
   const skyWarning =
     deniedWarning ??
+    gpsSpoof ??
     fallWarning ??
     exposureWarning ??
     sereWarning ??
+    buddyWarn ??
     stillWarning ??
     ascentWarning ??
     hydrateWarning ??
@@ -505,6 +513,7 @@ export default function NavigatePage() {
           waypoints={waypoints}
           goto={goto}
           ghost={ghost}
+          search={searchOverlay}
           showGrid
           nightMode={nightMode}
           className="absolute inset-0 h-full w-full"
@@ -580,6 +589,10 @@ export default function NavigatePage() {
                   }
                 }}
                 gpsTrusted={gpsTrusted}
+                geometry={pack.geometry}
+                remainingMeters={trusted ? progress?.remainingMeters : undefined}
+                remainingGainM={trusted ? progress?.remainingElevationMeters : undefined}
+                onSearchOverlay={setSearchOverlay}
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
@@ -737,7 +750,9 @@ export default function NavigatePage() {
             label="Est. time"
             value={
               trusted && progress && progress.remainingMeters > 0
-                ? formatDuration(Math.round((progress.remainingMeters / 5000) * 3600))
+                ? formatNaismith(
+                    naismithMinutes(progress.remainingMeters, progress.remainingElevationMeters),
+                  ).replace("Naismith ", "")
                 : trusted && progress && progress.remainingMeters < 50
                   ? "Done"
                   : "—"
