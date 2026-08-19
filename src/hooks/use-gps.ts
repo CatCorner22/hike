@@ -2,16 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
-<<<<<<< HEAD
 import {
   DISPLAY_FIX_MS,
   isTrustedFix,
   isValidLatLng,
   sanitizeFixTimestamp,
 } from "@/lib/safety/gps-quality";
-=======
-import { DISPLAY_FIX_MS, isTrustedFix } from "@/lib/safety/gps-quality";
->>>>>>> origin/main
 
 export interface GpsFix {
   lat: number;
@@ -57,13 +53,9 @@ export function useGps() {
 
     void getLastFix().then((stored) => {
       if (cancelled || !stored || lastFixRef.current) return;
-<<<<<<< HEAD
       if (!isValidLatLng(stored.lat, stored.lng)) return;
       const recordedAt = new Date(stored.recordedAt).getTime();
       if (!Number.isFinite(recordedAt) || recordedAt < 1e12) return;
-=======
-      const recordedAt = new Date(stored.recordedAt).getTime();
->>>>>>> origin/main
       if (Date.now() - recordedAt > DISPLAY_FIX_MS) return;
       const fix: GpsFix = {
         lat: stored.lat,
@@ -77,68 +69,37 @@ export function useGps() {
       setState({
         fix,
         status: "stale",
-<<<<<<< HEAD
         message:
           "Showing last known position until a live GPS fix arrives. Do not treat this as your current location.",
-=======
-        message: "Showing last known position until a live GPS fix arrives. Do not treat this as your current location.",
->>>>>>> origin/main
       });
     });
 
     const applyFix = (position: GeolocationPosition) => {
-<<<<<<< HEAD
       lastCallbackRef.current = Date.now();
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
       if (!isValidLatLng(lat, lng)) return;
 
-=======
->>>>>>> origin/main
       const prev = lastFixRef.current;
       let heading =
         position.coords.heading != null && Number.isFinite(position.coords.heading)
           ? position.coords.heading
           : undefined;
 
-<<<<<<< HEAD
       if (heading == null && prev && isTrustedFix(prev.recordedAt, prev.stale)) {
         const moved = haversineMeters(prev.lat, prev.lng, lat, lng);
         if (moved >= 12) {
           heading = bearingDegrees(prev.lat, prev.lng, lat, lng);
-=======
-      if (
-        heading == null &&
-        prev &&
-        isTrustedFix(prev.recordedAt, prev.stale)
-      ) {
-        const moved = haversineMeters(
-          prev.lat,
-          prev.lng,
-          position.coords.latitude,
-          position.coords.longitude,
-        );
-        if (moved >= 12) {
-          heading = bearingDegrees(
-            prev.lat,
-            prev.lng,
-            position.coords.latitude,
-            position.coords.longitude,
-          );
->>>>>>> origin/main
         } else if (prev.heading != null) {
           heading = prev.heading;
         }
       }
 
-<<<<<<< HEAD
       const altitude =
         position.coords.altitude != null && Number.isFinite(position.coords.altitude)
           ? position.coords.altitude
           : undefined;
 
-=======
->>>>>>> origin/main
       const fix: GpsFix = {
         lat,
         lng,

@@ -79,6 +79,20 @@ describe("safetySelfCheck", () => {
       expect.arrayContaining(["gps", "ice", "return", "wake", "crumbs"]),
     );
   });
+
+  it("treats GPS-denied compass nav as an ok GPS line", () => {
+    const items = safetySelfCheck({
+      packReady: true,
+      gpsTrusted: false,
+      iceFilled: true,
+      returnSet: true,
+      wakeLock: true,
+      crumbs: 4,
+      gpsDenied: true,
+    });
+    expect(items.find((i) => i.id === "gps")?.ok).toBe(true);
+    expect(items.find((i) => i.id === "gps")?.label).toMatch(/denied/);
+  });
 });
 
 describe("isIceFilled", () => {

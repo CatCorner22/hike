@@ -6,12 +6,13 @@ export interface IceProfile {
   icePhone: string;
   medical: string;
   partySize: number;
+  bloodType?: string;
 }
 
 export interface SafetyWaypoint {
   id: string;
   packId: string;
-  kind: "water" | "junction" | "camp" | "note" | "lkp" | "rp" | "orp";
+  kind: "water" | "junction" | "camp" | "note" | "lkp" | "rp" | "orp" | "ap" | "cf" | "hr";
   lat: number;
   lng: number;
   note?: string;

@@ -59,9 +59,130 @@ export function deadReckon(
   return { lat: dest.geometry.coordinates[1], lng: dest.geometry.coordinates[0] };
 }
 
-export function distanceFromPaces(paces: number, pacesPer100m: number): number {
+export type PaceTerrain = "flat" | "up" | "down" | "sand" | "snow" | "night" | "brush";
+
+/** Extra paces per 100 m vs a flat 100 m calibration. */
+export const PACE_FACTOR: Record<PaceTerrain, number> = {
+  flat: 1,
+  up: 1.15,
+  down: 0.95,
+  sand: 1.2,
+  snow: 1.25,
+  night: 1.1,
+  brush: 1.2,
+};
+
+export function distanceFromPaces(
+  paces: number,
+  pacesPer100m: number,
+  terrain: PaceTerrain = "flat",
+): number {
   if (pacesPer100m <= 0) return 0;
-  return (paces / pacesPer100m) * 100;
+  return (paces / (pacesPer100m * (PACE_FACTOR[terrain] ?? 1))) * 100;
+}
+
+/** Range to a landmark of known height using the NATO mil relation. */
+export function milRelationRange(heightMeters: number, mils: number): number | null {
+  if (!(heightMeters > 0) || !(mils > 0)) return null;
+  return (heightMeters * 1000) / mils;
+}
+
+export function smallestAngle(a: number, b: number): number {
+  const d = Math.abs((((a - b) % 360) + 360) % 360);
+  return d > 180 ? 360 - d : d;
+}
+
+/**
+ * Two-point resection: you shoot true bearings TO two known points.
+ * Plot the back azimuths; their cut is your position.
+ */
+export function resection(
+  knownA: { lat: number; lng: number },
+  bearingToA: number,
+  knownB: { lat: number; lng: number },
+  bearingToB: number,
+): { point: { lat: number; lng: number }; cutDeg: number; warning: string | null } | null {
+  const backA = backAzimuth(bearingToA);
+  const backB = backAzimuth(bearingToB);
+  const rayA = turf.lineString([
+    [knownA.lng, knownA.lat],
+    turf.destination(turf.point([knownA.lng, knownA.lat]), 80, backA, {
+      units: "kilometers",
+    }).geometry.coordinates,
+  ]);
+  const rayB = turf.lineString([
+    [knownB.lng, knownB.lat],
+    turf.destination(turf.point([knownB.lng, knownB.lat]), 80, backB, {
+      units: "kilometers",
+    }).geometry.coordinates,
+  ]);
+  const hit = turf.lineIntersect(rayA, rayB).features[0];
+  if (!hit || hit.geometry.type !== "Point") return null;
+  const [lng, lat] = hit.geometry.coordinates;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const cutDeg = smallestAngle(bearingToA, bearingToB);
+  const warning =
+    cutDeg < 30 || cutDeg > 150
+      ? "Poor cut — shoot points 30–150° apart for a stable fix."
+      : null;
+  return { point: { lat, lng }, cutDeg, warning };
+}
+
+export function deliberateOffset(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number },
+  offsetM: number,
+  side: "left" | "right",
+): {
+  aim: { lat: number; lng: number };
+  headingTrue: number;
+  catchTurn: "left" | "right";
+  label: string;
+} {
+  const ra = rangeAzimuth(from, to);
+  const perp = (ra.trueDeg + (side === "right" ? 90 : 270)) % 360;
+  const aim = deadReckon(to, perp, Math.max(0, offsetM));
+  const headingTrue = rangeAzimuth(from, aim).trueDeg;
+  const catchTurn = side === "right" ? "left" : "right";
+  return {
+    aim,
+    headingTrue,
+    catchTurn,
+    label: `Aim ${Math.round(headingTrue)}° true, offset ${Math.round(offsetM)} m ${side}. When you hit the catching feature, turn ${catchTurn}.`,
+  };
+}
+
+export function obstacleBox(
+  start: { lat: number; lng: number },
+  headingTrue: number,
+  widthM: number,
+  depthM: number,
+  side: "left" | "right",
+): {
+  resume: { lat: number; lng: number };
+  corners: Array<{ lat: number; lng: number }>;
+  legs: Array<{ heading: number; meters: number }>;
+} {
+  const right = side === "right";
+  const legs = [
+    { heading: (headingTrue + (right ? 90 : 270)) % 360, meters: widthM },
+    { heading: headingTrue, meters: depthM },
+    { heading: (headingTrue + (right ? 270 : 90)) % 360, meters: widthM },
+    { heading: headingTrue, meters: 0 },
+  ];
+  const corners: Array<{ lat: number; lng: number }> = [];
+  let here = start;
+  for (const leg of legs.slice(0, 3)) {
+    here = deadReckon(here, leg.heading, leg.meters);
+    corners.push(here);
+  }
+  return { resume: here, corners, legs };
+}
+
+/** Turn this many degrees toward the destination to cancel a known lateral error. */
+export function courseCorrection(offCourseM: number, remainingM: number): number {
+  if (!(remainingM > 0) || !Number.isFinite(offCourseM)) return 0;
+  return (Math.atan2(offCourseM, remainingM) * 180) / Math.PI;
 }
 
 export function formatZulu(date = new Date()): string {

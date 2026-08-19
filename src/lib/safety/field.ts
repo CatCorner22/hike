@@ -124,6 +124,7 @@ export function safetySelfCheck(input: {
   returnSet: boolean;
   wakeLock: boolean;
   crumbs: number;
+  gpsDenied?: boolean;
 }): SelfCheckItem[] {
   return [
     {
@@ -135,8 +136,12 @@ export function safetySelfCheck(input: {
     },
     {
       id: "gps",
-      ok: input.gpsTrusted,
-      label: input.gpsTrusted ? "GPS fix is live" : "GPS is not live — last-known only",
+      ok: input.gpsDenied || input.gpsTrusted,
+      label: input.gpsDenied
+        ? "GPS denied — navigating by dead reckon / compass"
+        : input.gpsTrusted
+          ? "GPS fix is live"
+          : "GPS is not live — last-known only",
     },
     {
       id: "ice",

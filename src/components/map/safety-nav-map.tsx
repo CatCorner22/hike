@@ -14,6 +14,7 @@ interface SafetyNavMapProps {
   backtrack?: GeoJSON.LineString | null;
   waypoints?: Array<{ lat: number; lng: number; kind: string }>;
   goto?: LatLng | null;
+  ghost?: LatLng | null;
   showGrid?: boolean;
   nightMode?: "off" | "red" | "nvg";
 }
@@ -57,6 +58,9 @@ const WAYPOINT_COLORS: Record<string, string> = {
   lkp: "#f43f5e",
   rp: "#a3e635",
   orp: "#fb923c",
+  ap: "#e879f9",
+  cf: "#2dd4bf",
+  hr: "#818cf8",
 };
 
 export function SafetyNavMap({
@@ -69,6 +73,7 @@ export function SafetyNavMap({
   backtrack = null,
   waypoints = [],
   goto = null,
+  ghost = null,
   showGrid = true,
   nightMode = "off",
 }: SafetyNavMapProps) {
@@ -252,6 +257,15 @@ export function SafetyNavMap({
         ctx.fill();
       }
 
+      if (ghost) {
+        const g = project(ghost.lng, ghost.lat, bbox, width, height, 28);
+        ctx.strokeStyle = "#64748b";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(g.x, g.y, 8, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
       if (user) {
         const p = project(user.lng, user.lat, bbox, width, height, 28);
         if (user.accuracy && user.accuracy > 0) {
@@ -300,7 +314,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bbox, endpoints, follow, goto, headingUp, lines, nearest, nightMode, showGrid, user, waypoints]);
+  }, [backtrack, bbox, endpoints, follow, ghost, goto, headingUp, lines, nearest, nightMode, showGrid, user, waypoints]);
 
   return (
     <canvas

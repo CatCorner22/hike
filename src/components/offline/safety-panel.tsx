@@ -29,13 +29,18 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { compassLabel } from "@/lib/geo/navigation";
-import { formatWalkBearing } from "@/lib/safety/declination";
+import { moonPhase } from "@/lib/safety/astro";
+import {
+  formatWalkBearing,
+  gmAngleCard,
+  magneticDeclination,
+  toTrueBearing,
+} from "@/lib/safety/declination";
 import {
   copyEmergencyInfo,
   emergencyMessage,
   formatCoords,
 } from "@/lib/safety/emergency";
-<<<<<<< HEAD
 import {
   breadcrumbGpx,
   downloadTextFile,
@@ -58,13 +63,29 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import {
+  courseCorrection,
   deadReckon,
+  deliberateOffset,
   distanceFromPaces,
   formatRangeAzimuth,
   formatZulu,
+  milRelationRange,
+  obstacleBox,
   rangeAzimuth,
+  resection,
+  type PaceTerrain,
 } from "@/lib/safety/landnav";
 import { lostProcedure, nineLineMedevac, pacePlan, radioGrid } from "@/lib/safety/medevac";
+import { closeNavLeg, formatNavLog, listNavLegs, startNavLeg, type NavLeg } from "@/lib/safety/navlog";
+import {
+  groundToAirSignals,
+  imsafeWarning,
+  marchCard,
+  mistReport,
+  sarFrequencies,
+  sitrep,
+  type ImsafeFlag,
+} from "@/lib/safety/reports";
 import { playWhistleBlasts, smsHref } from "@/lib/safety/strobe";
 import {
   formatDdm,
@@ -74,9 +95,6 @@ import {
   formatUtm,
   parseUsng,
 } from "@/lib/safety/usng";
-=======
-import { formatFixAge } from "@/lib/safety/gps-quality";
->>>>>>> origin/main
 
 interface SafetyPanelProps {
   lat?: number;
@@ -91,7 +109,6 @@ interface SafetyPanelProps {
   altitudeM?: number;
   stale?: boolean;
   recordedAt?: number;
-<<<<<<< HEAD
   backtrackEnabled: boolean;
   backtrackReady: boolean;
   onToggleBacktrack: () => void;
@@ -103,8 +120,9 @@ interface SafetyPanelProps {
   trackPoints?: Array<{ lat: number; lng: number; altitude?: number; recordedAt: string }>;
   onDrank?: () => void;
   gpsTrusted?: boolean;
-=======
->>>>>>> origin/main
+  gpsDenied?: boolean;
+  onToggleGpsDenied?: () => void;
+  onDeniedPaces?: (paces: number) => void;
 }
 
 export function SafetyPanel({
@@ -120,7 +138,6 @@ export function SafetyPanel({
   altitudeM,
   stale,
   recordedAt,
-<<<<<<< HEAD
   backtrackEnabled,
   backtrackReady,
   onToggleBacktrack,
@@ -132,6 +149,9 @@ export function SafetyPanel({
   trackPoints = [],
   onDrank,
   gpsTrusted = false,
+  gpsDenied = false,
+  onToggleGpsDenied,
+  onDeniedPaces,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -140,6 +160,7 @@ export function SafetyPanel({
     icePhone: "",
     medical: "",
     partySize: 1,
+    bloodType: "",
   });
   const [returnLocal, setReturnLocal] = useState("");
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
@@ -151,6 +172,22 @@ export function SafetyPanel({
   const [copiedNine, setCopiedNine] = useState(false);
   const [gpxStatus, setGpxStatus] = useState<string | null>(null);
   const [whistleBusy, setWhistleBusy] = useState(false);
+  const [terrain, setTerrain] = useState<PaceTerrain>("flat");
+  const [gridA, setGridA] = useState("");
+  const [brgA, setBrgA] = useState("");
+  const [gridB, setGridB] = useState("");
+  const [brgB, setBrgB] = useState("");
+  const [bearingsMag, setBearingsMag] = useState(true);
+  const [offsetM, setOffsetM] = useState("100");
+  const [offsetSide, setOffsetSide] = useState<"left" | "right">("right");
+  const [boxW, setBoxW] = useState("40");
+  const [boxD, setBoxD] = useState("80");
+  const [heightM, setHeightM] = useState("1.8");
+  const [mils, setMils] = useState("10");
+  const [legs, setLegs] = useState<NavLeg[]>([]);
+  const [copiedReport, setCopiedReport] = useState<string | null>(null);
+  const [imsafe, setImsafe] = useState<ImsafeFlag[]>([]);
+  const [resectInfo, setResectInfo] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
@@ -168,6 +205,10 @@ export function SafetyPanel({
       }
     };
   }, []);
+
+  useEffect(() => {
+    void listNavLegs(packId).then(setLegs);
+  }, [packId]);
 
   useEffect(() => {
     const tick = () => {
@@ -200,21 +241,6 @@ export function SafetyPanel({
     [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile],
   );
 
-=======
-}: SafetyPanelProps) {
-  const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
-
-  const message = emergencyMessage({
-    lat,
-    lng,
-    accuracyM,
-    trailName,
-    offTrailM,
-    stale,
-    recordedAt,
-  });
-
->>>>>>> origin/main
   async function handleCopy() {
     const ok = await copyEmergencyInfo(message);
     setCopied(ok ? "ok" : "fail");
@@ -227,11 +253,7 @@ export function SafetyPanel({
         await navigator.share({ title: "My hiking location", text: message });
         return;
       } catch {
-<<<<<<< HEAD
         /* cancelled */
-=======
-        /* user cancelled or share failed — fall through */
->>>>>>> origin/main
       }
     }
     await handleCopy();
@@ -260,9 +282,14 @@ export function SafetyPanel({
         returnSet: Boolean(returnLocal),
         wakeLock: isWakeLockHeld(),
         crumbs: trackPoints.length,
+        gpsDenied,
       }),
-    [gpsTrusted, profile, returnLocal, trackPoints.length],
+    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied],
   );
+
+  const moon = useMemo(() => moonPhase(), []);
+  const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
+  const imsafeNote = imsafeWarning(imsafe);
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
@@ -292,11 +319,7 @@ export function SafetyPanel({
             Safety &amp; SOS
           </SheetTitle>
           <SheetDescription>
-<<<<<<< HEAD
-            Offline tools for rescue: USNG, ICE card, beacon, backtrack, overdue timer.
-=======
-            Works offline. Copy coordinates even if share is unavailable.
->>>>>>> origin/main
+            Land-nav and rescue: resection, GPS-denied DR, SITREP, MARCH, USNG, ICE.
           </SheetDescription>
         </SheetHeader>
 
@@ -308,7 +331,18 @@ export function SafetyPanel({
             </div>
           )}
 
-<<<<<<< HEAD
+          {imsafeNote && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {imsafeNote}
+            </div>
+          )}
+
+          {gm && (
+            <p className="text-xs text-muted-foreground">
+              {gm.gridToMagnetic}. {gm.magneticToGrid}. {moon.nightNav}
+            </p>
+          )}
+
           {overdueLabel && (
             <div
               className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
@@ -322,8 +356,6 @@ export function SafetyPanel({
             </div>
           )}
 
-=======
->>>>>>> origin/main
           {offTrailM != null && offTrailM > 35 && !stale && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -348,7 +380,6 @@ export function SafetyPanel({
             {lat != null && lng != null ? (
               <>
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
-<<<<<<< HEAD
                 <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
                 <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
@@ -356,8 +387,6 @@ export function SafetyPanel({
                 <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
-=======
->>>>>>> origin/main
                 {recordedAt != null && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     GPS fix {formatFixAge(recordedAt)}
@@ -375,12 +404,9 @@ export function SafetyPanel({
                     {compassLabel(bearingToStart)})
                   </p>
                 )}
-<<<<<<< HEAD
                 {nearest && (
                   <p className="mt-2 text-xs text-muted-foreground">{nearest.label}</p>
                 )}
-=======
->>>>>>> origin/main
               </>
             ) : (
               <p className="mt-1 text-sm text-muted-foreground">
@@ -392,11 +418,7 @@ export function SafetyPanel({
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={() => void handleCopy()} variant="outline">
               <Copy className="mr-2 size-4" />
-<<<<<<< HEAD
               {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy"}
-=======
-              {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy coords"}
->>>>>>> origin/main
             </Button>
             <Button onClick={() => void handleShare()} variant="outline">
               <Share2 className="mr-2 size-4" />
@@ -455,6 +477,34 @@ export function SafetyPanel({
             </Button>
             <Button
               variant="outline"
+              disabled={lat == null}
+              onClick={() => void markWaypoint("ap")}
+            >
+              Mark AP
+            </Button>
+            <Button
+              variant="outline"
+              disabled={lat == null}
+              onClick={() => void markWaypoint("cf")}
+            >
+              Mark CF
+            </Button>
+            <Button
+              variant="outline"
+              disabled={lat == null}
+              onClick={() => void markWaypoint("hr")}
+            >
+              Mark handrail
+            </Button>
+            <Button
+              variant={gpsDenied ? "default" : "outline"}
+              disabled={!gpsDenied && !gpsTrusted}
+              onClick={() => onToggleGpsDenied?.()}
+            >
+              {gpsDenied ? "Exit GPS denied" : "GPS denied"}
+            </Button>
+            <Button
+              variant="outline"
               disabled={trackPoints.length < 2}
               onClick={async () => {
                 const gpx = breadcrumbGpx(`${trailName} breadcrumbs`, trackPoints);
@@ -488,7 +538,6 @@ export function SafetyPanel({
             </Button>
           </div>
 
-<<<<<<< HEAD
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Field nav — go-to grid
@@ -529,19 +578,43 @@ export function SafetyPanel({
             {lat != null && lng != null && heading != null && (
               <p className="text-xs text-muted-foreground">
                 Current heading {Math.round(heading)}° true. Dead-reckon{" "}
-                {Math.round(distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65))} m
+                {Math.round(distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65, terrain))} m
                 on that heading with the pace boxes below.
               </p>
             )}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label htmlFor="paces">Paces</Label>
-                <Input id="paces" value={paces} onChange={(e) => setPaces(e.target.value)} />
+                <Input
+                  id="paces"
+                  value={paces}
+                  onChange={(e) => {
+                    setPaces(e.target.value);
+                    onDeniedPaces?.(Number(e.target.value) || 0);
+                  }}
+                />
               </div>
               <div>
                 <Label htmlFor="pace-len">Paces / 100 m</Label>
                 <Input id="pace-len" value={paceLen} onChange={(e) => setPaceLen(e.target.value)} />
               </div>
+            </div>
+            <div>
+              <Label htmlFor="terrain">Terrain factor</Label>
+              <select
+                id="terrain"
+                className="h-9 w-full rounded-lg border bg-background px-2 text-sm"
+                value={terrain}
+                onChange={(e) => setTerrain(e.target.value as PaceTerrain)}
+              >
+                <option value="flat">Flat</option>
+                <option value="up">Upslope</option>
+                <option value="down">Downslope</option>
+                <option value="sand">Sand</option>
+                <option value="snow">Snow</option>
+                <option value="night">Night</option>
+                <option value="brush">Brush</option>
+              </select>
             </div>
             <Button
               variant="outline"
@@ -551,7 +624,7 @@ export function SafetyPanel({
                 const dest = deadReckon(
                   { lat, lng },
                   heading,
-                  distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65),
+                  distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65, terrain),
                 );
                 onGoto(dest);
                 setGotoInfo(
@@ -561,6 +634,136 @@ export function SafetyPanel({
             >
               Dead reckon
             </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Resection / offset / box / mils
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={gridA} placeholder="Known A grid" onChange={(e) => setGridA(e.target.value)} />
+              <Input value={brgA} placeholder="Bearing to A" onChange={(e) => setBrgA(e.target.value)} />
+              <Input value={gridB} placeholder="Known B grid" onChange={(e) => setGridB(e.target.value)} />
+              <Input value={brgB} placeholder="Bearing to B" onChange={(e) => setBrgB(e.target.value)} />
+            </div>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={bearingsMag}
+                onChange={(e) => setBearingsMag(e.target.checked)}
+              />
+              Bearings are magnetic
+            </label>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const hint = lat != null && lng != null ? { lat, lng } : undefined;
+                const a = parseUsng(gridA, hint);
+                const b = parseUsng(gridB, hint);
+                if (!a || !b) {
+                  setResectInfo("Need two valid USNG/MGRS points.");
+                  return;
+                }
+                let azA = Number(brgA);
+                let azB = Number(brgB);
+                if (!Number.isFinite(azA) || !Number.isFinite(azB)) {
+                  setResectInfo("Bearings must be numbers.");
+                  return;
+                }
+                if (bearingsMag && lat != null && lng != null) {
+                  const dec = magneticDeclination(lat, lng);
+                  if (dec != null) {
+                    azA = toTrueBearing(azA, dec);
+                    azB = toTrueBearing(azB, dec);
+                  }
+                }
+                const fix = resection(a, azA, b, azB);
+                if (!fix) {
+                  setResectInfo("No cut — check bearings and that the rays cross.");
+                  return;
+                }
+                onGoto(fix.point);
+                setResectInfo(
+                  `Resection ${formatUsng(fix.point.lat, fix.point.lng)} · cut ${Math.round(fix.cutDeg)}°${fix.warning ? ` — ${fix.warning}` : ""}`,
+                );
+              }}
+            >
+              Plot resection
+            </Button>
+            {resectInfo && <p className="text-xs text-muted-foreground">{resectInfo}</p>}
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={offsetM} onChange={(e) => setOffsetM(e.target.value)} placeholder="Offset m" />
+              <select
+                className="h-9 rounded-lg border bg-background px-2 text-sm"
+                value={offsetSide}
+                onChange={(e) => setOffsetSide(e.target.value as "left" | "right")}
+              >
+                <option value="right">Offset right</option>
+                <option value="left">Offset left</option>
+              </select>
+            </div>
+            <Button
+              variant="outline"
+              disabled={lat == null || !gotoGrid}
+              onClick={() => {
+                if (lat == null || lng == null) return;
+                const dest = parseUsng(gotoGrid, { lat, lng });
+                if (!dest) {
+                  setGotoInfo("Plot or type a go-to grid first.");
+                  return;
+                }
+                const off = deliberateOffset(
+                  { lat, lng },
+                  dest,
+                  Number(offsetM) || 0,
+                  offsetSide,
+                );
+                onGoto(off.aim);
+                setGotoInfo(off.label);
+              }}
+            >
+              Aim-off go-to
+            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={boxW} onChange={(e) => setBoxW(e.target.value)} placeholder="Box width m" />
+              <Input value={boxD} onChange={(e) => setBoxD(e.target.value)} placeholder="Box depth m" />
+            </div>
+            <Button
+              variant="outline"
+              disabled={lat == null || heading == null}
+              onClick={() => {
+                if (lat == null || lng == null || heading == null) return;
+                const box = obstacleBox(
+                  { lat, lng },
+                  heading,
+                  Number(boxW) || 0,
+                  Number(boxD) || 0,
+                  offsetSide,
+                );
+                onGoto(box.resume);
+                setGotoInfo(
+                  `Box resume ${formatRangeAzimuth(rangeAzimuth({ lat, lng }, box.resume))}. Then continue original heading.`,
+                );
+              }}
+            >
+              Obstacle box
+            </Button>
+            {offTrailM != null && offTrailM > 15 && (
+              <p className="text-xs text-muted-foreground">
+                Drift {Math.round(offTrailM)} m. To close that over 200 m, turn ~
+                {Math.round(Math.abs(courseCorrection(offTrailM, 200)))}° toward the dashed
+                trail line.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={heightM} onChange={(e) => setHeightM(e.target.value)} placeholder="Landmark height m" />
+              <Input value={mils} onChange={(e) => setMils(e.target.value)} placeholder="Mils subtended" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Landmark range:{" "}
+              {milRelationRange(Number(heightM) || 0, Number(mils) || 0)?.toFixed(0) ?? "—"} m
+              (height × 1000 / mils). Person ~1.8 m.
+            </p>
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">
@@ -595,6 +798,131 @@ export function SafetyPanel({
                 <li key={line}>{line}</li>
               ))}
             </ul>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    sitrep({ lat, lng, trailName, profile, stale }),
+                  );
+                  setCopiedReport(ok ? "SITREP copied" : "Copy failed");
+                  window.setTimeout(() => setCopiedReport(null), 2000);
+                }}
+              >
+                <Copy className="mr-2 size-4" />
+                Copy SITREP
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    mistReport({
+                      mechanism: "wilderness — see medical notes",
+                      injuries: profile.medical || "not stated",
+                      lat,
+                      lng,
+                    }),
+                  );
+                  setCopiedReport(ok ? "MIST copied" : "Copy failed");
+                  window.setTimeout(() => setCopiedReport(null), 2000);
+                }}
+              >
+                Copy MIST
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(formatNavLog(legs));
+                  setCopiedReport(ok ? "Nav log copied" : "Copy failed");
+                  window.setTimeout(() => setCopiedReport(null), 2000);
+                }}
+              >
+                Copy nav log
+              </Button>
+            </div>
+            {copiedReport && <p className="text-xs text-muted-foreground">{copiedReport}</p>}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                disabled={heading == null}
+                onClick={async () => {
+                  if (heading == null) return;
+                  await startNavLeg(packId, {
+                    azimuthTrue: heading,
+                    distanceM: distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65, terrain),
+                    paces: Number(paces) || undefined,
+                    terrain,
+                    fromLat: lat,
+                    fromLng: lng,
+                    note: gotoGrid || undefined,
+                  });
+                  setLegs(await listNavLegs(packId));
+                }}
+              >
+                Start leg
+              </Button>
+              <Button
+                variant="outline"
+                disabled={!legs.some((l) => !l.arrivedAt)}
+                onClick={async () => {
+                  const open = [...legs].reverse().find((l) => !l.arrivedAt);
+                  if (!open) return;
+                  await closeNavLeg(open.id);
+                  setLegs(await listNavLegs(packId));
+                }}
+              >
+                Close leg
+              </Button>
+            </div>
+            {legs.length > 0 && (
+              <p className="whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">
+                {formatNavLog(legs)}
+              </p>
+            )}
+            <p className="text-xs font-medium text-foreground">MARCH</p>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {marchCard().map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="text-xs font-medium text-foreground">Ground-to-air</p>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {groundToAirSignals().map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="text-xs font-medium text-foreground">SAR comms (reference)</p>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {sarFrequencies().map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="text-xs font-medium text-foreground">IMSAFE</p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {(
+                [
+                  ["illness", "Illness"],
+                  ["meds", "Meds"],
+                  ["stress", "Stress"],
+                  ["alcohol", "Alcohol"],
+                  ["fatigue", "Fatigue"],
+                  ["emotion", "Emotion"],
+                ] as Array<[ImsafeFlag, string]>
+              ).map(([id, label]) => (
+                <label key={id} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={imsafe.includes(id)}
+                    onChange={(e) =>
+                      setImsafe((prev) =>
+                        e.target.checked ? [...prev, id] : prev.filter((x) => x !== id),
+                      )
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">
@@ -666,6 +994,13 @@ export function SafetyPanel({
                 })
               }
             />
+            <Label htmlFor="blood">Blood type</Label>
+            <Input
+              id="blood"
+              value={profile.bloodType ?? ""}
+              placeholder="O+, A−, unknown"
+              onChange={(e) => void persistProfile({ ...profile, bloodType: e.target.value })}
+            />
             <Label htmlFor="medical">Medical notes</Label>
             <Input
               id="medical"
@@ -684,12 +1019,6 @@ export function SafetyPanel({
               Route: {trailName}. GPS can be wrong in canyons — confirm with terrain.
             </p>
           </div>
-=======
-          <p className="text-xs text-muted-foreground">
-            Route: {trailName}. Bearings are true north, not magnetic. GPS can be wrong in
-            canyons — confirm with the green trail line and terrain.
-          </p>
->>>>>>> origin/main
         </div>
       </SheetContent>
     </Sheet>

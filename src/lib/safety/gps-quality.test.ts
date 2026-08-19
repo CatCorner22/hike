@@ -3,11 +3,8 @@ import {
   formatFixAge,
   isDisplayableFix,
   isTrustedFix,
-<<<<<<< HEAD
   isValidLatLng,
   sanitizeFixTimestamp,
-=======
->>>>>>> origin/main
   TRUSTED_FIX_MS,
 } from "./gps-quality";
 
@@ -36,7 +33,6 @@ describe("gps quality", () => {
     expect(formatFixAge(now - 8_000, now)).toBe("just now");
     expect(formatFixAge(now - 5 * 60_000, now)).toBe("5 min ago");
   });
-<<<<<<< HEAD
 
   it("rejects impossible coordinates", () => {
     expect(isValidLatLng(37, -119)).toBe(true);
@@ -51,6 +47,4 @@ describe("gps quality", () => {
     expect(sanitizeFixTimestamp(now + 10 * 60_000, now)).toBe(now);
     expect(sanitizeFixTimestamp(now - 8_000, now)).toBe(now - 8_000);
   });
-=======
->>>>>>> origin/main
 });

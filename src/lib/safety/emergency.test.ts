@@ -25,21 +25,20 @@ describe("emergency helpers", () => {
     expect(msg).toContain("UTM:");
   });
 
-  it("labels stale last-known coordinates so rescuers are not misled", () => {
+  it("includes blood type when the ICE card has it", () => {
     const msg = emergencyMessage({
       lat: 37.1,
       lng: -119.2,
-      stale: true,
-      recordedAt: Date.parse("2026-08-19T18:00:00Z"),
+      profile: {
+        name: "Pat",
+        iceName: "",
+        icePhone: "",
+        medical: "",
+        partySize: 1,
+        bloodType: "O+",
+      },
     });
-    expect(msg).toContain("LAST KNOWN POSITION");
-    expect(msg).toContain("2026-08-19T18:00:00.000Z");
-  });
-
-  it("still produces a message when GPS has never arrived", () => {
-    const msg = emergencyMessage({ trailName: "Half Dome" });
-    expect(msg).toContain("No GPS fix");
-    expect(msg).toContain("Half Dome");
+    expect(msg).toContain("Blood type: O+");
   });
 
   it("labels stale last-known coordinates so rescuers are not misled", () => {
