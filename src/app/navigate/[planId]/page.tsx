@@ -29,6 +29,7 @@ import { appendNavPoint, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
+import { formatWalkBearing, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
 import { daylightStatus } from "@/lib/safety/daylight";
 import { formatCoords } from "@/lib/safety/emergency";
 import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
@@ -156,6 +157,7 @@ export default function NavigatePage() {
     if (loadState.status !== "ready") return;
     let cancelled = false;
 
+    sessionIdRef.current = null;
     void startNavSession(navId, loadState.pack.name).then((id) => {
       if (cancelled) return;
       sessionIdRef.current = id;
@@ -168,6 +170,7 @@ export default function NavigatePage() {
 
     return () => {
       cancelled = true;
+      sessionIdRef.current = null;
     };
   }, [loadState, navId]);
 
@@ -218,11 +221,30 @@ export default function NavigatePage() {
   }, [gps.fix, loadState, trusted]);
 
   const daylight = useMemo(() => {
-    const lat = gps.fix?.lat ?? (loadState.status === "ready" ? loadState.pack.bbox[1] : null);
-    const lng = gps.fix?.lng ?? (loadState.status === "ready" ? loadState.pack.bbox[0] : null);
+    const lat =
+      gps.fix?.lat ??
+      (loadState.status === "ready"
+        ? (loadState.pack.bbox[1] + loadState.pack.bbox[3]) / 2
+        : null);
+    const lng =
+      gps.fix?.lng ??
+      (loadState.status === "ready"
+        ? (loadState.pack.bbox[0] + loadState.pack.bbox[2]) / 2
+        : null);
     if (lat == null || lng == null) return null;
     return daylightStatus(new Date(), lat, lng);
   }, [gps.fix, loadState]);
+
+  const turnaround = useMemo(() => {
+    if (!trusted || !progress || !daylight) return null;
+    return turnaroundWarning(
+      progress.remainingMeters,
+      daylight.minutesUntilSunset,
+      daylight.isDark,
+    );
+  }, [trusted, progress, daylight]);
+
+  const skyWarning = turnaround ?? daylight?.warning ?? null;
 
   if (loadState.status === "loading") {
     return (
@@ -258,14 +280,18 @@ export default function NavigatePage() {
   }
 
   const { pack, source } = loadState;
-  const user = gps.fix
-    ? {
-        lat: gps.fix.lat,
-        lng: gps.fix.lng,
-        heading: trusted ? gps.fix.heading : undefined,
-        accuracy: gps.fix.accuracy,
-      }
-    : null;
+  const fixOnRoute = Boolean(
+    gps.fix && isFixNearRouteBbox(gps.fix.lat, gps.fix.lng, pack.bbox),
+  );
+  const user =
+    gps.fix && (trusted || fixOnRoute)
+      ? {
+          lat: gps.fix.lat,
+          lng: gps.fix.lng,
+          heading: trusted ? gps.fix.heading : undefined,
+          accuracy: gps.fix.accuracy,
+        }
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background">
@@ -305,7 +331,7 @@ export default function NavigatePage() {
                 offTrailM={trusted ? progress?.offsetMeters : undefined}
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
                 bearingToStart={bearingToStart}
-                daylightWarning={daylight?.warning}
+                daylightWarning={skyWarning}
                 altitudeM={gps.fix?.altitude}
                 stale={!trusted && Boolean(gps.fix)}
                 recordedAt={gps.fix?.recordedAt}
@@ -342,14 +368,14 @@ export default function NavigatePage() {
             }`}
           >
             {severity === "critical"
-              ? `OFF TRAIL — ${Math.round(progress.offsetMeters)} m from route. Walk ${Math.round(progress.bearingToTrail)}° true (${compassLabel(progress.bearingToTrail)}) back.`
+              ? `OFF TRAIL — ${Math.round(progress.offsetMeters)} m from route. Walk ${formatWalkBearing(progress.bearingToTrail, gps.fix?.lat, gps.fix?.lng)} (${compassLabel(progress.bearingToTrail)}) back.`
               : `Drifting off trail (${Math.round(progress.offsetMeters)} m)`}
           </div>
         )}
 
-        {daylight?.warning && severity === "ok" && !exitArmed && (
+        {skyWarning && severity === "ok" && !exitArmed && (
           <div className="pointer-events-none absolute inset-x-3 top-16 z-10 rounded-lg border border-amber-500/50 bg-background/90 px-3 py-2 text-xs">
-            {daylight.warning}
+            {skyWarning}
           </div>
         )}
 

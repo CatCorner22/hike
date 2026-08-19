@@ -12,6 +12,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { compassLabel } from "@/lib/geo/navigation";
+import { formatWalkBearing } from "@/lib/safety/declination";
 import {
   copyEmergencyInfo,
   emergencyMessage,
@@ -113,7 +114,7 @@ export function SafetyPanel({
                 </p>
                 {bearingToTrail != null && (
                   <p className="mt-1 text-muted-foreground">
-                    Walk {Math.round(bearingToTrail)}° true (
+                    Walk {formatWalkBearing(bearingToTrail, lat, lng)} (
                     {compassLabel(bearingToTrail)}) toward the dashed orange line.
                   </p>
                 )}
@@ -141,7 +142,7 @@ export function SafetyPanel({
                 )}
                 {bearingToStart != null && !stale && (
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Trailhead bearing: {Math.round(bearingToStart)}° true (
+                    Trailhead: {formatWalkBearing(bearingToStart, lat, lng)} (
                     {compassLabel(bearingToStart)})
                   </p>
                 )}
