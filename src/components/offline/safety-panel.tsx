@@ -12,15 +12,17 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { compassLabel } from "@/lib/geo/navigation";
+import { formatWalkBearing } from "@/lib/safety/declination";
 import {
   copyEmergencyInfo,
   emergencyMessage,
   formatCoords,
 } from "@/lib/safety/emergency";
+import { formatFixAge } from "@/lib/safety/gps-quality";
 
 interface SafetyPanelProps {
-  lat: number;
-  lng: number;
+  lat?: number;
+  lng?: number;
   accuracyM?: number;
   trailName: string;
   offTrailM?: number;
@@ -28,6 +30,8 @@ interface SafetyPanelProps {
   bearingToStart?: number;
   daylightWarning?: string | null;
   altitudeM?: number;
+  stale?: boolean;
+  recordedAt?: number;
 }
 
 export function SafetyPanel({
@@ -40,37 +44,34 @@ export function SafetyPanel({
   bearingToStart,
   daylightWarning,
   altitudeM,
+  stale,
+  recordedAt,
 }: SafetyPanelProps) {
-  const [copied, setCopied] = useState(false);
+  const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+
+  const message = emergencyMessage({
+    lat,
+    lng,
+    accuracyM,
+    trailName,
+    offTrailM,
+    stale,
+    recordedAt,
+  });
 
   async function handleCopy() {
-    const ok = await copyEmergencyInfo(
-      emergencyMessage({
-        lat,
-        lng,
-        accuracyM,
-        trailName,
-        offTrailM,
-      }),
-    );
-    setCopied(ok);
-    if (ok) setTimeout(() => setCopied(false), 2500);
+    const ok = await copyEmergencyInfo(message);
+    setCopied(ok ? "ok" : "fail");
+    setTimeout(() => setCopied(null), 2500);
   }
 
   async function handleShare() {
-    const text = emergencyMessage({
-      lat,
-      lng,
-      accuracyM,
-      trailName,
-      offTrailM,
-    });
     if (navigator.share) {
       try {
-        await navigator.share({ title: "My hiking location", text });
+        await navigator.share({ title: "My hiking location", text: message });
         return;
       } catch {
-        /* user cancelled */
+        /* user cancelled or share failed — fall through */
       }
     }
     await handleCopy();
@@ -92,11 +93,11 @@ export function SafetyPanel({
             Safety &amp; SOS
           </SheetTitle>
           <SheetDescription>
-            Works offline. Share your coordinates with rescuers if needed.
+            Works offline. Copy coordinates even if share is unavailable.
           </SheetDescription>
         </SheetHeader>
 
-        <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-4 px-4 pb-6">
           {daylightWarning && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
               <Sun className="mt-0.5 size-4 shrink-0 text-amber-600" />
@@ -104,7 +105,7 @@ export function SafetyPanel({
             </div>
           )}
 
-          {offTrailM != null && offTrailM > 35 && (
+          {offTrailM != null && offTrailM > 35 && !stale && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
               <div>
@@ -113,8 +114,8 @@ export function SafetyPanel({
                 </p>
                 {bearingToTrail != null && (
                   <p className="mt-1 text-muted-foreground">
-                    Walk {Math.round(bearingToTrail)}° ({compassLabel(bearingToTrail)}) toward
-                    the dashed orange line on the map.
+                    Walk {formatWalkBearing(bearingToTrail, lat, lng)} (
+                    {compassLabel(bearingToTrail)}) toward the dashed orange line.
                   </p>
                 )}
               </div>
@@ -122,16 +123,33 @@ export function SafetyPanel({
           )}
 
           <div className="rounded-lg border p-3">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Your position</p>
-            <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
-            {altitudeM != null && (
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              {stale ? "Last known position" : "Your position"}
+            </p>
+            {lat != null && lng != null ? (
+              <>
+                <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
+                {recordedAt != null && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    GPS fix {formatFixAge(recordedAt)}
+                    {stale ? " — not a live location" : ""}
+                  </p>
+                )}
+                {altitudeM != null && (
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Altitude ~{Math.round(altitudeM * 3.28084).toLocaleString()} ft
+                  </p>
+                )}
+                {bearingToStart != null && !stale && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Trailhead: {formatWalkBearing(bearingToStart, lat, lng)} (
+                    {compassLabel(bearingToStart)})
+                  </p>
+                )}
+              </>
+            ) : (
               <p className="mt-1 text-sm text-muted-foreground">
-                Altitude ~{Math.round(altitudeM * 3.28084).toLocaleString()} ft
-              </p>
-            )}
-            {bearingToStart != null && (
-              <p className="mt-2 text-sm text-muted-foreground">
-                Trailhead bearing: {Math.round(bearingToStart)}° ({compassLabel(bearingToStart)})
+                No GPS fix yet. The downloaded trail stays on the map.
               </p>
             )}
           </div>
@@ -139,7 +157,7 @@ export function SafetyPanel({
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => void handleCopy()} variant="outline" className="flex-1">
               <Copy className="mr-2 size-4" />
-              {copied ? "Copied" : "Copy coords"}
+              {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy coords"}
             </Button>
             <Button onClick={() => void handleShare()} className="flex-1">
               <Share2 className="mr-2 size-4" />
@@ -148,8 +166,8 @@ export function SafetyPanel({
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Route: {trailName}. GPS can be wrong in canyons — use the green trail line and terrain
-            features to confirm your position.
+            Route: {trailName}. Bearings are true north, not magnetic. GPS can be wrong in
+            canyons — confirm with the green trail line and terrain.
           </p>
         </div>
       </SheetContent>

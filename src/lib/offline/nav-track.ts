@@ -20,6 +20,7 @@ interface NavTrackDB extends DBSchema {
 }
 
 let dbPromise: Promise<IDBPDatabase<NavTrackDB>> | null = null;
+const writeQueue = new Map<string, Promise<void>>();
 
 function getDb() {
   if (typeof window === "undefined") return null;
@@ -49,6 +50,24 @@ export async function startNavSession(packId: string, name: string): Promise<str
 }
 
 export async function appendNavPoint(
+  sessionId: string,
+  point: {
+    lat: number;
+    lng: number;
+    accuracy?: number;
+    altitude?: number;
+    recordedAt?: number;
+  },
+) {
+  const previous = writeQueue.get(sessionId) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => writeNavPoint(sessionId, point));
+  writeQueue.set(sessionId, next);
+  await next;
+}
+
+async function writeNavPoint(
   sessionId: string,
   point: {
     lat: number;

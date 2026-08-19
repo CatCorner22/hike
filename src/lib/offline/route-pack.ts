@@ -135,13 +135,17 @@ export async function saveLastFix(fix: {
   lng: number;
   accuracy?: number;
   heading?: number;
+  recordedAt?: number;
 }) {
   const db = await getDb();
   if (!db) return;
   await db.put("lastFix", {
     id: "current",
-    ...fix,
-    recordedAt: new Date().toISOString(),
+    lat: fix.lat,
+    lng: fix.lng,
+    accuracy: fix.accuracy,
+    heading: fix.heading,
+    recordedAt: new Date(fix.recordedAt ?? Date.now()).toISOString(),
   });
 }
 

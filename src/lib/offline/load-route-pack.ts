@@ -30,6 +30,9 @@ export async function loadCachedRoutePack(
 }
 
 export async function persistRoutePack(pack: RoutePack): Promise<RoutePack> {
+  if (!isValidGeometry(pack.geometry)) {
+    throw new Error("Route geometry is invalid — cannot navigate safely");
+  }
   await saveRoutePack(pack);
   const verified = await loadCachedRoutePack(pack.id, { retries: 5, retryMs: 100 });
   if (!verified) throw new Error("Route pack failed to save on device");
@@ -46,6 +49,9 @@ export function packFromTrailApi(
     elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   },
 ): RoutePack {
+  if (!isValidGeometry(data.geometry)) {
+    throw new Error("Trail geometry is missing or invalid");
+  }
   const target = navId.startsWith("plan-") ? "plan" : "trail";
   const rawId = navId.replace(/^(trail|plan)-/, "");
   return buildRoutePack({

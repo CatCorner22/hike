@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
+import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
 import {
@@ -28,7 +29,10 @@ import { appendNavPoint, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
-import { daylightWarning, minutesUntilSunset } from "@/lib/safety/daylight";
+import { formatWalkBearing, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
+import { daylightStatus } from "@/lib/safety/daylight";
+import { formatCoords } from "@/lib/safety/emergency";
+import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
 import * as turf from "@turf/turf";
 
 type LoadState =
@@ -52,11 +56,22 @@ export default function NavigatePage() {
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [progress, setProgress] = useState<TrailProgress | null>(null);
   const [headingUp, setHeadingUp] = useState(true);
+  const [exitArmed, setExitArmed] = useState(false);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
-  const trackRef = useRef<[number, number][]>([]);
+  const pendingPointsRef = useRef<
+    Array<{
+      lat: number;
+      lng: number;
+      accuracy?: number;
+      altitude?: number;
+      recordedAt: number;
+    }>
+  >([]);
 
   const gps = useGps();
+  const batteryWarning = useBatteryWarning();
+  const trusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
   const loadPack = useCallback(async () => {
     setLoadState({ status: "loading" });
@@ -119,54 +134,66 @@ export default function NavigatePage() {
   }, [loadPack]);
 
   useEffect(() => {
-    void requestWakeLock().then((lock) => {
-      return () => lock.release();
-    });
+    void requestWakeLock();
     return () => {
       void releaseWakeLock();
     };
   }, []);
 
   useEffect(() => {
-    if (loadState.status !== "ready" || !gps.fix) return;
+    if (loadState.status !== "ready" || !gps.fix || !trusted) {
+      if (!trusted) setProgress(null);
+      return;
+    }
     const p = progressAlongTrail(
       { lat: gps.fix.lat, lng: gps.fix.lng },
       loadState.pack.geometry,
       loadState.pack.elevationProfile,
     );
     setProgress(p);
-  }, [gps.fix, loadState]);
+  }, [gps.fix, loadState, trusted]);
 
   useEffect(() => {
     if (loadState.status !== "ready") return;
     let cancelled = false;
 
+    sessionIdRef.current = null;
     void startNavSession(navId, loadState.pack.name).then((id) => {
-      if (!cancelled) sessionIdRef.current = id;
+      if (cancelled) return;
+      sessionIdRef.current = id;
+      const queued = pendingPointsRef.current;
+      pendingPointsRef.current = [];
+      for (const point of queued) {
+        void appendNavPoint(id, point);
+      }
     });
 
     return () => {
       cancelled = true;
+      sessionIdRef.current = null;
     };
   }, [loadState, navId]);
 
   useEffect(() => {
-    if (!gps.fix || loadState.status !== "ready" || !sessionIdRef.current) return;
-    trackRef.current.push([gps.fix.lng, gps.fix.lat]);
-    if (trackRef.current.length > 5000) trackRef.current.shift();
-    void appendNavPoint(sessionIdRef.current, {
+    if (!gps.fix || loadState.status !== "ready" || !trusted) return;
+    const point = {
       lat: gps.fix.lat,
       lng: gps.fix.lng,
       accuracy: gps.fix.accuracy,
       altitude: gps.fix.altitude,
       recordedAt: gps.fix.recordedAt,
-    });
-  }, [gps.fix, loadState.status]);
+    };
+    if (!sessionIdRef.current) {
+      pendingPointsRef.current.push(point);
+      return;
+    }
+    void appendNavPoint(sessionIdRef.current, point);
+  }, [gps.fix, loadState.status, trusted]);
 
   const severity = useMemo(() => {
     if (!progress) return "unknown" as const;
-    return offTrailLevel(progress.offsetMeters, gps.fix?.accuracy);
-  }, [progress, gps.fix?.accuracy]);
+    return offTrailLevel(progress.offsetMeters, gps.fix?.accuracy, { trustedFix: trusted });
+  }, [progress, gps.fix?.accuracy, trusted]);
 
   useEffect(() => {
     if (severity === "unknown" || severity === "ok") return;
@@ -184,20 +211,40 @@ export default function NavigatePage() {
   }, [loadState]);
 
   const bearingToStart = useMemo(() => {
-    if (loadState.status !== "ready" || !gps.fix) return undefined;
+    if (loadState.status !== "ready" || !gps.fix || !trusted) return undefined;
     const start = trailheadPoint(loadState.pack.geometry);
     if (!start) return undefined;
     return turf.bearing(
       turf.point([gps.fix.lng, gps.fix.lat]),
       turf.point([start.lng, start.lat]),
     );
+  }, [gps.fix, loadState, trusted]);
+
+  const daylight = useMemo(() => {
+    const lat =
+      gps.fix?.lat ??
+      (loadState.status === "ready"
+        ? (loadState.pack.bbox[1] + loadState.pack.bbox[3]) / 2
+        : null);
+    const lng =
+      gps.fix?.lng ??
+      (loadState.status === "ready"
+        ? (loadState.pack.bbox[0] + loadState.pack.bbox[2]) / 2
+        : null);
+    if (lat == null || lng == null) return null;
+    return daylightStatus(new Date(), lat, lng);
   }, [gps.fix, loadState]);
 
-  const daylightMsg = useMemo(() => {
-    if (!gps.fix) return null;
-    const mins = minutesUntilSunset(new Date(), gps.fix.lat, gps.fix.lng);
-    return daylightWarning(mins);
-  }, [gps.fix]);
+  const turnaround = useMemo(() => {
+    if (!trusted || !progress || !daylight) return null;
+    return turnaroundWarning(
+      progress.remainingMeters,
+      daylight.minutesUntilSunset,
+      daylight.isDark,
+    );
+  }, [trusted, progress, daylight]);
+
+  const skyWarning = turnaround ?? daylight?.warning ?? null;
 
   if (loadState.status === "loading") {
     return (
@@ -233,14 +280,18 @@ export default function NavigatePage() {
   }
 
   const { pack, source } = loadState;
-  const user = gps.fix
-    ? {
-        lat: gps.fix.lat,
-        lng: gps.fix.lng,
-        heading: gps.fix.heading,
-        accuracy: gps.fix.accuracy,
-      }
-    : null;
+  const fixOnRoute = Boolean(
+    gps.fix && isFixNearRouteBbox(gps.fix.lat, gps.fix.lng, pack.bbox),
+  );
+  const user =
+    gps.fix && (trusted || fixOnRoute)
+      ? {
+          lat: gps.fix.lat,
+          lng: gps.fix.lng,
+          heading: trusted ? gps.fix.heading : undefined,
+          accuracy: gps.fix.accuracy,
+        }
+      : null;
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background">
@@ -248,45 +299,67 @@ export default function NavigatePage() {
         <SafetyNavMap
           geometry={pack.geometry}
           user={user}
-          nearest={progress?.nearest ?? null}
-          headingUp={headingUp}
-          follow={Boolean(user)}
+          nearest={trusted ? progress?.nearest ?? null : null}
+          headingUp={headingUp && trusted && gps.fix?.heading != null}
+          follow={trusted}
           className="absolute inset-0 h-full w-full"
         />
 
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8">
           <div className="pointer-events-auto flex items-start justify-between gap-2">
-            <Link href={exitHref}>
-              <Button variant="secondary" size="icon-sm" aria-label="Exit navigation">
-                <ArrowLeft className="size-4" />
-              </Button>
-            </Link>
+            <Button
+              variant="secondary"
+              size="icon-sm"
+              aria-label={exitArmed ? "Tap again to exit navigation" : "Exit navigation"}
+              onClick={() => {
+                if (!exitArmed) {
+                  setExitArmed(true);
+                  window.setTimeout(() => setExitArmed(false), 2500);
+                  return;
+                }
+                window.location.href = exitHref;
+              }}
+            >
+              <ArrowLeft className="size-4" />
+            </Button>
             <div className="flex items-start gap-2">
-              {gps.fix && (
-                <SafetyPanel
-                  lat={gps.fix.lat}
-                  lng={gps.fix.lng}
-                  accuracyM={gps.fix.accuracy}
-                  trailName={pack.name}
-                  offTrailM={progress?.offsetMeters}
-                  bearingToTrail={progress?.bearingToTrail}
-                  bearingToStart={bearingToStart}
-                  daylightWarning={daylightMsg}
-                  altitudeM={gps.fix.altitude}
-                />
-              )}
+              <SafetyPanel
+                lat={gps.fix?.lat}
+                lng={gps.fix?.lng}
+                accuracyM={gps.fix?.accuracy}
+                trailName={pack.name}
+                offTrailM={trusted ? progress?.offsetMeters : undefined}
+                bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
+                bearingToStart={bearingToStart}
+                daylightWarning={skyWarning}
+                altitudeM={gps.fix?.altitude}
+                stale={!trusted && Boolean(gps.fix)}
+                recordedAt={gps.fix?.recordedAt}
+              />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {source === "cache" ? "Offline pack" : "Saved to device"}
                   {gps.status === "stale" && " · GPS stale"}
                 </p>
+                {gps.fix && (
+                  <p className="font-mono text-[10px] text-muted-foreground">
+                    {formatCoords(gps.fix.lat, gps.fix.lng)}
+                    {!trusted ? ` · last known ${formatFixAge(gps.fix.recordedAt)}` : ""}
+                  </p>
+                )}
               </div>
             </div>
           </div>
         </div>
 
-        {severity !== "ok" && severity !== "unknown" && progress && (
+        {exitArmed && (
+          <div className="pointer-events-none absolute inset-x-3 top-16 z-20 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs">
+            Tap back again to leave navigation. The route pack stays on this device.
+          </div>
+        )}
+
+        {severity !== "ok" && severity !== "unknown" && progress && trusted && !exitArmed && (
           <div
             className={`pointer-events-none absolute inset-x-3 top-16 z-10 rounded-lg border px-3 py-2 text-sm font-medium ${
               severity === "critical"
@@ -295,14 +368,20 @@ export default function NavigatePage() {
             }`}
           >
             {severity === "critical"
-              ? `OFF TRAIL — ${Math.round(progress.offsetMeters)} m from route. Walk ${Math.round(progress.bearingToTrail)}° (${compassLabel(progress.bearingToTrail)}) back.`
+              ? `OFF TRAIL — ${Math.round(progress.offsetMeters)} m from route. Walk ${formatWalkBearing(progress.bearingToTrail, gps.fix?.lat, gps.fix?.lng)} (${compassLabel(progress.bearingToTrail)}) back.`
               : `Drifting off trail (${Math.round(progress.offsetMeters)} m)`}
           </div>
         )}
 
-        {daylightMsg && severity === "ok" && (
+        {skyWarning && severity === "ok" && !exitArmed && (
           <div className="pointer-events-none absolute inset-x-3 top-16 z-10 rounded-lg border border-amber-500/50 bg-background/90 px-3 py-2 text-xs">
-            {daylightMsg}
+            {skyWarning}
+          </div>
+        )}
+
+        {batteryWarning && (
+          <div className="pointer-events-none absolute inset-x-3 top-28 z-10 rounded-lg border border-amber-500/50 bg-background/90 px-3 py-2 text-xs">
+            {batteryWarning}
           </div>
         )}
 
@@ -325,9 +404,10 @@ export default function NavigatePage() {
             variant={headingUp ? "default" : "outline"}
             size="sm"
             onClick={() => setHeadingUp((v) => !v)}
+            disabled={!trusted || gps.fix?.heading == null}
           >
             <Compass className="size-3.5" />
-            {headingUp ? "Heading up" : "North up"}
+            {headingUp && trusted && gps.fix?.heading != null ? "Heading up" : "North up"}
           </Button>
         </div>
 
@@ -335,28 +415,28 @@ export default function NavigatePage() {
           <Stat
             icon={MapPin}
             label="Remaining"
-            value={progress ? formatDistance(progress.remainingMeters) : "—"}
+            value={trusted && progress ? formatDistance(progress.remainingMeters) : "—"}
           />
           <Stat
             icon={Mountain}
             label="Climb left"
             value={
-              progress ? formatElevation(progress.remainingElevationMeters) : "—"
+              trusted && progress ? formatElevation(progress.remainingElevationMeters) : "—"
             }
           />
           <Stat
             icon={Compass}
             label="Off trail"
-            value={progress ? `${Math.round(progress.offsetMeters)} m` : "—"}
+            value={trusted && progress ? `${Math.round(progress.offsetMeters)} m` : "—"}
             alert={severity === "critical"}
           />
           <Stat
             icon={Mountain}
             label="Est. time"
             value={
-              progress && progress.remainingMeters > 0
+              trusted && progress && progress.remainingMeters > 0
                 ? formatDuration(Math.round((progress.remainingMeters / 5000) * 3600))
-                : progress && progress.remainingMeters < 50
+                : trusted && progress && progress.remainingMeters < 50
                   ? "Done"
                   : "—"
             }

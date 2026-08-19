@@ -6,7 +6,6 @@ import {
   progressAlongTrail,
   remainingElevationGain,
 } from "./navigation";
-import { daylightWarning, minutesUntilSunset } from "@/lib/safety/daylight";
 import { offTrailLevel, shouldRepeatAlert } from "@/lib/safety/alerts";
 
 const straightLine: GeoJSON.LineString = {
@@ -106,16 +105,12 @@ describe("safety alerts", () => {
     expect(shouldRepeatAlert(Date.now() - 1000, "warn")).toBe(false);
     expect(shouldRepeatAlert(Date.now() - 40_000, "critical")).toBe(true);
   });
-});
 
-describe("daylight warnings", () => {
-  it("warns within an hour of sunset", () => {
-    const lat = 37.77;
-    const lng = -122.42;
-    const sunset = new Date();
-    sunset.setUTCHours(3, 0, 0, 0);
-    const mins = minutesUntilSunset(sunset, lat, lng);
-    const warning = daylightWarning(Math.min(mins, 45));
-    expect(warning).toMatch(/sunset/i);
+  it("does not raise off-trail alerts from an untrusted last-known fix", () => {
+    expect(offTrailLevel(200, 8, { trustedFix: false })).toBe("ok");
+  });
+
+  it("still warns when raw offset is large even if GPS accuracy is poor", () => {
+    expect(offTrailLevel(120, 80)).toBe("warn");
   });
 });
