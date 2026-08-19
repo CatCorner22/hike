@@ -98,12 +98,19 @@ npm start
 - Set `TAVILY_API_KEY` for web search consolidation
 - Without these keys, research falls back to OSM tag data
 
-## Offline usage
+## Offline navigation (life-safety)
 
-1. Open a trail and tap **Offline** to cache GPX and geometry in IndexedDB
-2. Install the PWA from your browser (Add to Home Screen)
-3. Before navigating, use **Download** in navigate mode to cache the route
-4. GPS points queue locally when offline and sync when connectivity returns
+Navigation is designed to keep working after cell service drops. Do this **before** you leave coverage:
+
+1. Open the trail or plan while you still have service. The app auto-saves a **route pack** (geometry, elevation, GPX) to IndexedDB on this device.
+2. Tap **Prepare offline** if you want to confirm or refresh the pack.
+3. Install the PWA (Add to Home Screen) so the navigate shell is cached.
+4. Open **Navigate**. The screen uses a self-contained trail map that does **not** need map tiles or the network.
+5. Keep the phone charged. The navigate screen requests a wake lock so it stays visible.
+
+If you open Navigate with no pack and no network, you will see a clear error: download the route first. GPS loss does not close the map — the last fix is held and marked stale. Off-trail warnings use a 50 m threshold and show the bearing back to the route.
+
+This is a navigation aid, not a substitute for a paper map, compass, or official park guidance.
 
 ## Project structure
 

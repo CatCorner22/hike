@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trailResearch, trails } from "@/lib/db/schema";
+import { parseOsmTrailId } from "@/lib/ids";
 import { researchTrail } from "@/lib/research/agent";
 import { findOrCreateTrail } from "@/lib/trails/service";
 
@@ -19,9 +20,9 @@ export async function GET(
     let trail = null;
     let resolvedId = trailId;
 
-    if (trailId.startsWith("osm-")) {
-      const [, osmType, osmId] = trailId.split("-");
-      const result = await findOrCreateTrail(osmId, osmType);
+    const osm = parseOsmTrailId(trailId);
+    if (osm) {
+      const result = await findOrCreateTrail(osm.osmId, osm.osmType);
       if (!result) {
         return NextResponse.json({ error: "Trail not found" }, { status: 404 });
       }

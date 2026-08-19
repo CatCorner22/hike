@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cachePlanOffline } from "@/lib/offline";
-import { Download, Navigation, Trash2 } from "lucide-react";
+import { PrepareOffline } from "@/components/offline/prepare-offline";
+import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
+import { Navigation, Trash2 } from "lucide-react";
 
 const MapView = dynamic(
   () => import("@/components/map/map-view").then((m) => m.MapView),
@@ -28,9 +29,11 @@ interface Plan {
 }
 
 interface TrailData {
+  id?: string;
   name: string;
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox: [number, number, number, number];
+  elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
 }
 
 export default function PlanDetailPage() {
@@ -48,7 +51,28 @@ export default function PlanDetailPage() {
         setPlan(p);
         if (p.trailId) {
           const tr = await fetch(`/api/trails/${p.trailId}`).then((r) => r.json());
-          if (tr.geometry) setTrail(tr);
+          if (tr.geometry) {
+            setTrail(tr);
+            await saveRoutePack(
+              buildRoutePack({
+                id: `plan-${planId}`,
+                aliases: [planId, p.trailId, `trail-${p.trailId}`],
+                name: p.name,
+                geometry: tr.geometry,
+                bbox: tr.bbox,
+                elevationProfile: tr.elevationProfile || [],
+              }),
+            );
+          }
+        } else if (p.customGeometry) {
+          await saveRoutePack(
+            buildRoutePack({
+              id: `plan-${planId}`,
+              aliases: [planId],
+              name: p.name,
+              geometry: p.customGeometry,
+            }),
+          );
         }
       });
   }, [planId]);
@@ -89,15 +113,17 @@ export default function PlanDetailPage() {
       const data = await response.json();
       if (data.geometry) {
         await save({ customGeometry: data.geometry, name: data.name });
+        await saveRoutePack(
+          buildRoutePack({
+            id: `plan-${planId}`,
+            aliases: [planId],
+            name: data.name || plan?.name || "Imported route",
+            geometry: data.geometry,
+          }),
+        );
       }
     };
     input.click();
-  }
-
-  async function saveOffline() {
-    if (!plan) return;
-    await cachePlanOffline({ id: plan.id, plan: plan as unknown as Record<string, unknown> });
-    alert("Plan saved for offline use");
   }
 
   if (!plan) return <Skeleton className="h-64 w-full" />;
@@ -119,10 +145,14 @@ export default function PlanDetailPage() {
           <Button variant="outline" onClick={importGpx}>
             Import GPX
           </Button>
-          <Button variant="outline" onClick={saveOffline}>
-            <Download className="mr-2 h-4 w-4" />
-            Save offline
-          </Button>
+          <PrepareOffline
+            packId={`plan-${plan.id}`}
+            aliases={[plan.id, plan.trailId].filter(Boolean) as string[]}
+            name={plan.name}
+            geometry={geometry}
+            bbox={trail?.bbox}
+            elevationProfile={trail?.elevationProfile}
+          />
           <Button variant="destructive" onClick={deletePlan}>
             <Trash2 className="mr-2 h-4 w-4" />
             Delete

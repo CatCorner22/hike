@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { gpxFromLineString } from "@/lib/geo";
+import { parseOsmTrailId } from "@/lib/ids";
 import { findOrCreateTrail, getTrailById } from "@/lib/trails/service";
 
 export async function GET(request: Request) {
@@ -15,9 +16,9 @@ export async function GET(request: Request) {
     let geometry: GeoJSON.LineString | GeoJSON.MultiLineString | null = null;
     let name = "Trail";
 
-    if (trailId.startsWith("osm-")) {
-      const [, osmType, osmId] = trailId.split("-");
-      const result = await findOrCreateTrail(osmId, osmType);
+    const osm = parseOsmTrailId(trailId);
+    if (osm) {
+      const result = await findOrCreateTrail(osm.osmId, osm.osmType);
       if (result) {
         geometry = result.detail.geometry;
         name = result.detail.name;

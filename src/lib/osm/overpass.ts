@@ -36,24 +36,38 @@ export interface TrailDetail extends TrailSearchResult {
   elevationGainMeters?: number;
 }
 
-const OVERPASS_URL = "https://overpass-api.de/api/interpreter";
+const OVERPASS_URLS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+];
 
 async function runOverpass(query: string): Promise<OverpassResponse> {
-  const response = await fetch(OVERPASS_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "HikeApp/1.0 (bespoke hiking planner)",
-    },
-    body: `data=${encodeURIComponent(query)}`,
-    next: { revalidate: 3600 },
-  });
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    throw new Error(`Overpass API error: ${response.status}`);
+  for (const url of OVERPASS_URLS) {
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "HikeApp/1.0 (bespoke hiking planner)",
+        },
+        body: `data=${encodeURIComponent(query)}`,
+        next: { revalidate: 3600 },
+      });
+
+      if (!response.ok) {
+        lastError = new Error(`Overpass API error: ${response.status}`);
+        continue;
+      }
+
+      return response.json();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Overpass request failed");
+    }
   }
 
-  return response.json();
+  throw lastError ?? new Error("Overpass API unavailable");
 }
 
 function getCenter(element: OverpassElement): { lat: number; lng: number } | null {
