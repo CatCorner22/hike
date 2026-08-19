@@ -10,6 +10,8 @@ interface SafetyNavMapProps {
   headingUp?: boolean;
   follow?: boolean;
   className?: string;
+  backtrack?: GeoJSON.LineString | null;
+  waypoints?: Array<{ lat: number; lng: number; kind: string }>;
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -43,6 +45,13 @@ function project(
   return { x, y };
 }
 
+const WAYPOINT_COLORS: Record<string, string> = {
+  water: "#38bdf8",
+  junction: "#facc15",
+  camp: "#c084fc",
+  note: "#e5e7eb",
+};
+
 export function SafetyNavMap({
   geometry,
   user,
@@ -50,6 +59,8 @@ export function SafetyNavMap({
   headingUp = false,
   follow = true,
   className = "h-full w-full",
+  backtrack = null,
+  waypoints = [],
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
@@ -141,6 +152,28 @@ export function SafetyNavMap({
         ctx.fill();
       }
 
+      if (backtrack && backtrack.coordinates.length >= 2) {
+        ctx.setLineDash([4, 6]);
+        ctx.strokeStyle = "#38bdf8";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        backtrack.coordinates.forEach(([lng, lat], index) => {
+          const p = project(lng, lat, bbox, width, height, 28);
+          if (index === 0) ctx.moveTo(p.x, p.y);
+          else ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      for (const wp of waypoints) {
+        const p = project(wp.lng, wp.lat, bbox, width, height, 28);
+        ctx.fillStyle = WAYPOINT_COLORS[wp.kind] ?? "#e5e7eb";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       if (user && nearest) {
         const from = project(user.lng, user.lat, bbox, width, height, 28);
         const to = project(nearest.lng, nearest.lat, bbox, width, height, 28);
@@ -206,7 +239,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [bbox, endpoints, follow, headingUp, lines, nearest, user]);
+  }, [backtrack, bbox, endpoints, follow, headingUp, lines, nearest, user, waypoints]);
 
   return (
     <canvas

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
+import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
@@ -25,14 +26,26 @@ import {
   persistRoutePack,
   withNetworkTimeout,
 } from "@/lib/offline/load-route-pack";
-import { appendNavPoint, startNavSession } from "@/lib/offline/nav-track";
+import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
+import {
+  backtrackProgress,
+  rapidAscentWarning,
+  reverseTrackLine,
+  stationaryMinutes,
+} from "@/lib/safety/backtrack";
 import { formatWalkBearing, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
 import { daylightStatus } from "@/lib/safety/daylight";
-import { formatCoords } from "@/lib/safety/emergency";
 import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
+import {
+  getOverdueAlarm,
+  listWaypoints,
+  overdueStatus,
+  type SafetyWaypoint,
+} from "@/lib/safety/profile";
+import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
 
 type LoadState =
@@ -57,6 +70,13 @@ export default function NavigatePage() {
   const [progress, setProgress] = useState<TrailProgress | null>(null);
   const [headingUp, setHeadingUp] = useState(true);
   const [exitArmed, setExitArmed] = useState(false);
+  const [backtrackOn, setBacktrackOn] = useState(false);
+  const [beaconOn, setBeaconOn] = useState(false);
+  const [waypoints, setWaypoints] = useState<SafetyWaypoint[]>([]);
+  const [trackPoints, setTrackPoints] = useState<
+    Array<{ lat: number; lng: number; altitude?: number; recordedAt: string }>
+  >([]);
+  const [overdueBanner, setOverdueBanner] = useState<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -244,7 +264,69 @@ export default function NavigatePage() {
     );
   }, [trusted, progress, daylight]);
 
-  const skyWarning = turnaround ?? daylight?.warning ?? null;
+  const stillMin = useMemo(
+    () => (trusted ? stationaryMinutes(trackPoints) : 0),
+    [trusted, trackPoints],
+  );
+  const ascentWarning = useMemo(
+    () => (trusted ? rapidAscentWarning(trackPoints) : null),
+    [trusted, trackPoints],
+  );
+  const stillWarning =
+    stillMin >= 20 ? `No movement for ${stillMin} min. If you are hurt, open SOS.` : null;
+
+  const skyWarning =
+    stillWarning ?? ascentWarning ?? turnaround ?? daylight?.warning ?? null;
+
+  const crumbs = useMemo(
+    () => reverseTrackLine(trackPoints),
+    [trackPoints],
+  );
+  const retrace = useMemo(() => {
+    if (!backtrackOn || !gps.fix || !trusted) return null;
+    return backtrackProgress({ lat: gps.fix.lat, lng: gps.fix.lng }, trackPoints);
+  }, [backtrackOn, gps.fix, trusted, trackPoints]);
+
+  useEffect(() => {
+    if (loadState.status !== "ready") return;
+    void listWaypoints(loadState.pack.id).then(setWaypoints);
+  }, [loadState]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      const alarm = await getOverdueAlarm();
+      if (cancelled) return;
+      if (!alarm) {
+        setOverdueBanner(null);
+        return;
+      }
+      const status = overdueStatus(alarm.returnAt);
+      setOverdueBanner(status.overdue ? status.label : null);
+    }
+    void tick();
+    const id = window.setInterval(() => void tick(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadState.status !== "ready") return;
+    let cancelled = false;
+    async function refresh() {
+      if (!sessionIdRef.current) return;
+      const session = await getNavSession(sessionIdRef.current);
+      if (!cancelled && session) setTrackPoints(session.points);
+    }
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [loadState]);
 
   if (loadState.status === "loading") {
     return (
@@ -296,12 +378,21 @@ export default function NavigatePage() {
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background">
       <div className="relative min-h-0 flex-1">
+        {beaconOn && <SosBeacon onClose={() => setBeaconOn(false)} />}
         <SafetyNavMap
           geometry={pack.geometry}
           user={user}
-          nearest={trusted ? progress?.nearest ?? null : null}
+          nearest={
+            backtrackOn
+              ? retrace?.nearest ?? null
+              : trusted
+                ? progress?.nearest ?? null
+                : null
+          }
           headingUp={headingUp && trusted && gps.fix?.heading != null}
           follow={trusted}
+          backtrack={backtrackOn ? crumbs : null}
+          waypoints={waypoints}
           className="absolute inset-0 h-full w-full"
         />
 
@@ -328,6 +419,7 @@ export default function NavigatePage() {
                 lng={gps.fix?.lng}
                 accuracyM={gps.fix?.accuracy}
                 trailName={pack.name}
+                packId={pack.id}
                 offTrailM={trusted ? progress?.offsetMeters : undefined}
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
                 bearingToStart={bearingToStart}
@@ -335,6 +427,11 @@ export default function NavigatePage() {
                 altitudeM={gps.fix?.altitude}
                 stale={!trusted && Boolean(gps.fix)}
                 recordedAt={gps.fix?.recordedAt}
+                backtrackEnabled={backtrackOn}
+                backtrackReady={trackPoints.length >= 2}
+                onToggleBacktrack={() => setBacktrackOn((v) => !v)}
+                onBeacon={() => setBeaconOn(true)}
+                onWaypointsChange={setWaypoints}
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
@@ -344,7 +441,7 @@ export default function NavigatePage() {
                 </p>
                 {gps.fix && (
                   <p className="font-mono text-[10px] text-muted-foreground">
-                    {formatCoords(gps.fix.lat, gps.fix.lng)}
+                    {formatUsng(gps.fix.lat, gps.fix.lng)}
                     {!trusted ? ` · last known ${formatFixAge(gps.fix.recordedAt)}` : ""}
                   </p>
                 )}
@@ -352,6 +449,12 @@ export default function NavigatePage() {
             </div>
           </div>
         </div>
+
+        {overdueBanner && !exitArmed && !beaconOn && (
+          <div className="pointer-events-none absolute inset-x-3 top-16 z-20 rounded-lg border border-destructive bg-destructive/90 px-3 py-2 text-sm font-medium text-white">
+            {overdueBanner}
+          </div>
+        )}
 
         {exitArmed && (
           <div className="pointer-events-none absolute inset-x-3 top-16 z-20 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs">
@@ -414,8 +517,14 @@ export default function NavigatePage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
-            label="Remaining"
-            value={trusted && progress ? formatDistance(progress.remainingMeters) : "—"}
+            label={backtrackOn ? "Backtrack" : "Remaining"}
+            value={
+              backtrackOn && retrace
+                ? formatDistance(retrace.remainingMeters)
+                : trusted && progress
+                  ? formatDistance(progress.remainingMeters)
+                  : "—"
+            }
           />
           <Stat
             icon={Mountain}

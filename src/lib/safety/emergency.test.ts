@@ -18,6 +18,8 @@ describe("emergency helpers", () => {
     expect(msg).toContain("HIKING EMERGENCY LOCATION");
     expect(msg).toContain("Test Trail");
     expect(msg).toContain("maps.google.com");
+    expect(msg).toContain("USNG:");
+    expect(msg).toContain("UTM:");
   });
 
   it("labels stale last-known coordinates so rescuers are not misled", () => {
