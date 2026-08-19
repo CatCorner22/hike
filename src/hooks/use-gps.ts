@@ -2,7 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
+<<<<<<< HEAD
+import {
+  DISPLAY_FIX_MS,
+  isTrustedFix,
+  isValidLatLng,
+  sanitizeFixTimestamp,
+} from "@/lib/safety/gps-quality";
+=======
 import { DISPLAY_FIX_MS, isTrustedFix } from "@/lib/safety/gps-quality";
+>>>>>>> origin/main
 
 export interface GpsFix {
   lat: number;
@@ -21,6 +30,7 @@ export interface GpsState {
 }
 
 const STALE_MS = 20_000;
+const WATCHDOG_MS = 25_000;
 
 export function useGps() {
   const [state, setState] = useState<GpsState>({
@@ -30,6 +40,8 @@ export function useGps() {
   });
   const watchIdRef = useRef<number | null>(null);
   const lastFixRef = useRef<GpsFix | null>(null);
+  const lastCallbackRef = useRef(Date.now());
+  const deniedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -45,7 +57,13 @@ export function useGps() {
 
     void getLastFix().then((stored) => {
       if (cancelled || !stored || lastFixRef.current) return;
+<<<<<<< HEAD
+      if (!isValidLatLng(stored.lat, stored.lng)) return;
       const recordedAt = new Date(stored.recordedAt).getTime();
+      if (!Number.isFinite(recordedAt) || recordedAt < 1e12) return;
+=======
+      const recordedAt = new Date(stored.recordedAt).getTime();
+>>>>>>> origin/main
       if (Date.now() - recordedAt > DISPLAY_FIX_MS) return;
       const fix: GpsFix = {
         lat: stored.lat,
@@ -59,17 +77,36 @@ export function useGps() {
       setState({
         fix,
         status: "stale",
+<<<<<<< HEAD
+        message:
+          "Showing last known position until a live GPS fix arrives. Do not treat this as your current location.",
+=======
         message: "Showing last known position until a live GPS fix arrives. Do not treat this as your current location.",
+>>>>>>> origin/main
       });
     });
 
     const applyFix = (position: GeolocationPosition) => {
+<<<<<<< HEAD
+      lastCallbackRef.current = Date.now();
+      const lat = position.coords.latitude;
+      const lng = position.coords.longitude;
+      if (!isValidLatLng(lat, lng)) return;
+
+=======
+>>>>>>> origin/main
       const prev = lastFixRef.current;
       let heading =
         position.coords.heading != null && Number.isFinite(position.coords.heading)
           ? position.coords.heading
           : undefined;
 
+<<<<<<< HEAD
+      if (heading == null && prev && isTrustedFix(prev.recordedAt, prev.stale)) {
+        const moved = haversineMeters(prev.lat, prev.lng, lat, lng);
+        if (moved >= 12) {
+          heading = bearingDegrees(prev.lat, prev.lng, lat, lng);
+=======
       if (
         heading == null &&
         prev &&
@@ -88,18 +125,30 @@ export function useGps() {
             position.coords.latitude,
             position.coords.longitude,
           );
+>>>>>>> origin/main
         } else if (prev.heading != null) {
           heading = prev.heading;
         }
       }
 
+<<<<<<< HEAD
+      const altitude =
+        position.coords.altitude != null && Number.isFinite(position.coords.altitude)
+          ? position.coords.altitude
+          : undefined;
+
+=======
+>>>>>>> origin/main
       const fix: GpsFix = {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude,
-        accuracy: position.coords.accuracy,
+        lat,
+        lng,
+        accuracy:
+          position.coords.accuracy != null && Number.isFinite(position.coords.accuracy)
+            ? position.coords.accuracy
+            : undefined,
         heading,
-        altitude: position.coords.altitude ?? undefined,
-        recordedAt: position.timestamp || Date.now(),
+        altitude,
+        recordedAt: sanitizeFixTimestamp(position.timestamp),
         stale: false,
       };
       lastFixRef.current = fix;
@@ -108,14 +157,16 @@ export function useGps() {
         fix,
         status: "live",
         message:
-          position.coords.accuracy > 25
+          (fix.accuracy ?? 0) > 25
             ? "GPS accuracy is poor. Use the trail line and off-route warning as a check, not a guarantee."
             : null,
       });
     };
 
     const onError = (error: GeolocationPositionError) => {
+      lastCallbackRef.current = Date.now();
       if (error.code === error.PERMISSION_DENIED) {
+        deniedRef.current = true;
         setState((prev) => ({
           ...prev,
           status: "denied",
@@ -133,11 +184,18 @@ export function useGps() {
       }));
     };
 
-    watchIdRef.current = navigator.geolocation.watchPosition(applyFix, onError, {
-      enableHighAccuracy: true,
-      maximumAge: 3000,
-      timeout: 20000,
-    });
+    const startWatch = () => {
+      if (watchIdRef.current != null) {
+        navigator.geolocation.clearWatch(watchIdRef.current);
+      }
+      watchIdRef.current = navigator.geolocation.watchPosition(applyFix, onError, {
+        enableHighAccuracy: true,
+        maximumAge: 3000,
+        timeout: 20000,
+      });
+    };
+
+    startWatch();
 
     const staleTimer = window.setInterval(() => {
       const current = lastFixRef.current;
@@ -153,12 +211,27 @@ export function useGps() {
       }
     }, 5000);
 
+    const watchdog = window.setInterval(() => {
+      if (cancelled || deniedRef.current) return;
+      if (Date.now() - lastCallbackRef.current < WATCHDOG_MS) return;
+      lastCallbackRef.current = Date.now();
+      startWatch();
+      setState((prev) => ({
+        ...prev,
+        status: prev.fix ? "stale" : "acquiring",
+        message: prev.fix
+          ? "GPS watch restarted after silence. Holding last known position."
+          : "Still waiting for GPS. Restarted location watch.",
+      }));
+    }, 10_000);
+
     return () => {
       cancelled = true;
       if (watchIdRef.current != null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
       window.clearInterval(staleTimer);
+      window.clearInterval(watchdog);
     };
   }, []);
 

@@ -86,7 +86,7 @@ export function progressAlongTrail(
     let cumulative = 0;
 
     for (const coords of geometry.coordinates) {
-      if (coords.length < 2) continue;
+      if (coords.length < 2 || !coords.every(isFinitePosition)) continue;
       const progress = progressOnSegment(
         point,
         coords,
@@ -103,15 +103,28 @@ export function progressAlongTrail(
     if (best) return best;
   }
 
-  return progressOnSegment(
-    point,
+  const coords =
     geometry.type === "LineString"
       ? geometry.coordinates
-      : geometry.coordinates.flat(),
-    elevationProfile,
-    0,
+      : geometry.coordinates.flat();
+
+  if (coords.length < 2) {
+    return emptyProgress(point, totalMeters);
+  }
+
+  return progressOnSegment(point, coords, elevationProfile, 0, totalMeters);
+}
+
+function emptyProgress(point: LatLng, totalMeters: number): TrailProgress {
+  return {
+    nearest: point,
+    offsetMeters: 0,
+    traveledMeters: 0,
+    remainingMeters: Math.max(totalMeters, 0),
     totalMeters,
-  );
+    remainingElevationMeters: 0,
+    bearingToTrail: 0,
+  };
 }
 
 export function remainingElevationGain(
@@ -180,18 +193,37 @@ export function safeBbox(
   ];
 }
 
+function isFinitePosition(pos: unknown): pos is GeoJSON.Position {
+  return (
+    Array.isArray(pos) &&
+    pos.length >= 2 &&
+    Number.isFinite(pos[0]) &&
+    Number.isFinite(pos[1]) &&
+    (pos[0] as number) >= -180 &&
+    (pos[0] as number) <= 180 &&
+    (pos[1] as number) >= -90 &&
+    (pos[1] as number) <= 90
+  );
+}
+
 export function isValidGeometry(
   geometry: unknown,
 ): geometry is GeoJSON.LineString | GeoJSON.MultiLineString {
   if (!geometry || typeof geometry !== "object") return false;
   const g = geometry as GeoJSON.LineString | GeoJSON.MultiLineString;
   if (g.type === "LineString") {
-    return Array.isArray(g.coordinates) && g.coordinates.length >= 2;
+    return (
+      Array.isArray(g.coordinates) &&
+      g.coordinates.length >= 2 &&
+      g.coordinates.every(isFinitePosition)
+    );
   }
   if (g.type === "MultiLineString") {
     return (
       Array.isArray(g.coordinates) &&
-      g.coordinates.some((line) => line.length >= 2)
+      g.coordinates.some(
+        (line) => Array.isArray(line) && line.length >= 2 && line.every(isFinitePosition),
+      )
     );
   }
   return false;

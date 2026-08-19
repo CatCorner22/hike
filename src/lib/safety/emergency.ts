@@ -1,3 +1,7 @@
+import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/safety/usng";
+import { formatZulu } from "@/lib/safety/landnav";
+import type { IceProfile } from "@/lib/safety/profile";
+
 export function formatCoords(lat: number, lng: number, accuracyM?: number): string {
   const latDir = lat >= 0 ? "N" : "S";
   const lngDir = lng >= 0 ? "E" : "W";
@@ -14,14 +18,30 @@ export function emergencyMessage(input: {
   offTrailM?: number;
   stale?: boolean;
   recordedAt?: number;
+<<<<<<< HEAD
+  profile?: IceProfile | null;
+  partyNote?: string;
+=======
+>>>>>>> origin/main
 }): string {
   const lines = ["HIKING EMERGENCY LOCATION"];
   if (input.lat != null && input.lng != null) {
     if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
+<<<<<<< HEAD
+    lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
+    lines.push(`USNG 8-digit: ${formatUsng(input.lat, input.lng)}`);
+    lines.push(`MGRS 10-digit: ${formatMgrs10(input.lat, input.lng)}`);
+    lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5))}`);
+    lines.push(`UTM: ${formatUtm(input.lat, input.lng)}`);
+    lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
+    if (input.recordedAt) {
+      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);
+=======
     lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
     if (input.recordedAt) {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
+>>>>>>> origin/main
     }
   } else {
     lines.push("No GPS fix available on this device.");
@@ -30,6 +50,16 @@ export function emergencyMessage(input: {
   if (input.offTrailM != null && input.offTrailM > 20 && !input.stale) {
     lines.push(`Approx. ${Math.round(input.offTrailM)} m off marked route`);
   }
+  const profile = input.profile;
+  if (profile) {
+    if (profile.name) lines.push(`Hiker: ${profile.name}`);
+    if (profile.partySize) lines.push(`Party size: ${profile.partySize}`);
+    if (profile.medical) lines.push(`Medical: ${profile.medical}`);
+    if (profile.iceName || profile.icePhone) {
+      lines.push(`ICE: ${profile.iceName} ${profile.icePhone}`.trim());
+    }
+  }
+  if (input.partyNote) lines.push(input.partyNote);
   lines.push("Sent from Hike app (offline-capable GPS).");
   return lines.join("\n");
 }
