@@ -10,6 +10,8 @@ import {
   obstacleBox,
   rangeAzimuth,
   resection,
+  resection3,
+  timeSpeedDistance,
 } from "./landnav";
 import { gmAngleCard, toTrueBearing } from "./declination";
 import { formatMgrs10, parseUsng, phonetic } from "./usng";
@@ -86,6 +88,27 @@ describe("land nav math", () => {
   it("computes a course correction toward the destination", () => {
     expect(courseCorrection(100, 100)).toBeCloseTo(45, 0);
     expect(courseCorrection(0, 200)).toBe(0);
+  });
+
+  it("triangulates with three-point resection", () => {
+    const here = { lat: 37.0, lng: -119.0 };
+    const north = { lat: 37.01, lng: -119.0 };
+    const east = { lat: 37.0, lng: -118.99 };
+    const south = { lat: 36.99, lng: -119.0 };
+    const fix = resection3([
+      { known: north, bearingTo: 0 },
+      { known: east, bearingTo: 90 },
+      { known: south, bearingTo: 180 },
+    ]);
+    expect(fix).not.toBeNull();
+    expect(fix!.point.lat).toBeCloseTo(here.lat, 2);
+    expect(fix!.point.lng).toBeCloseTo(here.lng, 2);
+  });
+
+  it("solves time-speed-distance", () => {
+    const tsd = timeSpeedDistance({ distanceM: 5000, speedKph: 5 });
+    expect(tsd).not.toBeNull();
+    expect(tsd!.minutes).toBeCloseTo(60, 0);
   });
 });
 

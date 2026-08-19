@@ -47,6 +47,7 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
+import { sereAssessment } from "@/lib/safety/sere";
 import { deadReckon, distanceFromPaces, formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
@@ -349,11 +350,18 @@ export default function NavigatePage() {
   const deniedWarning = gpsDenied
     ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : ""} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}. SOS still uses a live GPS fix if one exists.`
     : null;
+  const sereWarning = sereAssessment({
+    isDark: Boolean(daylight?.isDark),
+    altitudeM: gps.fix?.altitude,
+    stationaryMin: stillMin,
+    hasSignal: gpsTrusted,
+  });
 
   const skyWarning =
     deniedWarning ??
     fallWarning ??
     exposureWarning ??
+    sereWarning ??
     stillWarning ??
     ascentWarning ??
     hydrateWarning ??

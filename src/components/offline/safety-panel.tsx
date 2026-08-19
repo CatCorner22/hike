@@ -86,6 +86,17 @@ import {
   sitrep,
   type ImsafeFlag,
 } from "@/lib/safety/reports";
+import {
+  sereAssessment,
+  serePriorities,
+  sereQuickCard,
+  sereRuleOfThrees,
+  sereSections,
+  sereShelterChecklist,
+  sereSignalingMethods,
+  sereWaterGuidance,
+  type SerePillar,
+} from "@/lib/safety/sere";
 import { playWhistleBlasts, smsHref } from "@/lib/safety/strobe";
 import {
   formatDdm,
@@ -188,6 +199,8 @@ export function SafetyPanel({
   const [copiedReport, setCopiedReport] = useState<string | null>(null);
   const [imsafe, setImsafe] = useState<ImsafeFlag[]>([]);
   const [resectInfo, setResectInfo] = useState<string | null>(null);
+  const [copiedSere, setCopiedSere] = useState(false);
+  const [sereOpen, setSereOpen] = useState<SerePillar | "all">("survival");
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
@@ -290,6 +303,14 @@ export function SafetyPanel({
   const moon = useMemo(() => moonPhase(), []);
   const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
   const imsafeNote = imsafeWarning(imsafe);
+  const isDark = Boolean(daylightWarning?.match(/dark|sunset|headlamp|polar night/i));
+  const sereNote = sereAssessment({
+    isDark,
+    altitudeM,
+    partySize: profile.partySize,
+    hasSignal: gpsTrusted,
+  });
+  const sereSectionsList = useMemo(() => sereSections(), []);
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
@@ -923,6 +944,87 @@ export function SafetyPanel({
                 </label>
               ))}
             </div>
+          </div>
+
+          {sereNote && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {sereNote}
+            </div>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              SERE — survival · evasion · recovery · escape
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Civilian backcountry SERE: stay alive, reduce risk, keep your head, self-rescue only
+              when you know the way.
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {(["survival", "evasion", "recovery", "escape"] as SerePillar[]).map((p) => (
+                <Button
+                  key={p}
+                  size="sm"
+                  variant={sereOpen === p ? "default" : "outline"}
+                  onClick={() => setSereOpen(p)}
+                >
+                  {p}
+                </Button>
+              ))}
+            </div>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {sereSectionsList
+                .find((s) => s.pillar === sereOpen)
+                ?.bullets.map((line) => <li key={line}>{line}</li>)}
+            </ul>
+            <p className="text-xs font-medium text-foreground">Rule of threes</p>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {sereRuleOfThrees().map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <p className="text-xs font-medium text-foreground">
+              Priorities {isDark ? "(night / cold)" : "(day)"}
+            </p>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {serePriorities(isDark).map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Shelter · water · signal</summary>
+              <p className="mt-2 font-medium text-foreground">Shelter</p>
+              <ul className="list-disc pl-4">
+                {sereShelterChecklist().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Water</p>
+              <ul className="list-disc pl-4">
+                {sereWaterGuidance().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Signal</p>
+              <ul className="list-disc pl-4">
+                {sereSignalingMethods().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const ok = await copyEmergencyInfo(
+                  sereQuickCard({ lat, lng, isDark }),
+                );
+                setCopiedSere(ok);
+                window.setTimeout(() => setCopiedSere(false), 2500);
+              }}
+            >
+              <Copy className="mr-2 size-4" />
+              {copiedSere ? "SERE card copied" : "Copy full SERE card"}
+            </Button>
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">
