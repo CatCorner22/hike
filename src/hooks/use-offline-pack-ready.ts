@@ -15,16 +15,25 @@ export function useOfflinePackReady(packId: string | null) {
     let cancelled = false;
 
     async function check() {
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < 40; i++) {
         const exists = await hasRoutePack(packId!);
         if (cancelled) return;
         if (exists) {
           setReady(true);
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, 150));
+        await new Promise((resolve) => setTimeout(resolve, 250));
       }
-      if (!cancelled) setReady(false);
+
+      while (!cancelled) {
+        const exists = await hasRoutePack(packId!);
+        if (cancelled) return;
+        if (exists) {
+          setReady(true);
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
     }
 
     setReady(false);

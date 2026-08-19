@@ -3,10 +3,16 @@ export type OffTrailLevel = "ok" | "warn" | "critical";
 export function offTrailLevel(
   offsetMeters: number,
   accuracyMeters?: number,
+  options: { trustedFix?: boolean } = {},
 ): OffTrailLevel {
-  const adjusted = Math.max(0, offsetMeters - (accuracyMeters ?? 0) * 0.5);
+  if (options.trustedFix === false) return "ok";
+
+  const accuracy = accuracyMeters ?? 0;
+  const adjusted = Math.max(0, offsetMeters - accuracy * 0.5);
   if (adjusted > 80) return "critical";
   if (adjusted > 35) return "warn";
+  // Poor GPS can hide a real walk-off — still warn when raw offset is large.
+  if (offsetMeters > 100 && accuracy > 40) return "warn";
   return "ok";
 }
 

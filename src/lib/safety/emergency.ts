@@ -7,19 +7,27 @@ export function formatCoords(lat: number, lng: number, accuracyM?: number): stri
 }
 
 export function emergencyMessage(input: {
-  lat: number;
-  lng: number;
+  lat?: number;
+  lng?: number;
   accuracyM?: number;
   trailName?: string;
   offTrailM?: number;
+  stale?: boolean;
+  recordedAt?: number;
 }): string {
-  const lines = [
-    "HIKING EMERGENCY LOCATION",
-    formatCoords(input.lat, input.lng, input.accuracyM),
-    `https://maps.google.com/?q=${input.lat},${input.lng}`,
-  ];
+  const lines = ["HIKING EMERGENCY LOCATION"];
+  if (input.lat != null && input.lng != null) {
+    if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
+    lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
+    lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
+    if (input.recordedAt) {
+      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
+    }
+  } else {
+    lines.push("No GPS fix available on this device.");
+  }
   if (input.trailName) lines.push(`Route: ${input.trailName}`);
-  if (input.offTrailM != null && input.offTrailM > 20) {
+  if (input.offTrailM != null && input.offTrailM > 20 && !input.stale) {
     lines.push(`Approx. ${Math.round(input.offTrailM)} m off marked route`);
   }
   lines.push("Sent from Hike app (offline-capable GPS).");
@@ -27,10 +35,27 @@ export function emergencyMessage(input: {
 }
 
 export async function copyEmergencyInfo(text: string): Promise<boolean> {
-  if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) return false;
+  if (typeof navigator === "undefined") return false;
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    /* fall through to textarea copy */
+  }
+
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(area);
+    return ok;
   } catch {
     return false;
   }

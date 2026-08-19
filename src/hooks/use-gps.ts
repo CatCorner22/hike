@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
+import { DISPLAY_FIX_MS } from "@/lib/safety/gps-quality";
 
 export interface GpsFix {
   lat: number;
@@ -44,19 +45,21 @@ export function useGps() {
 
     void getLastFix().then((stored) => {
       if (cancelled || !stored || lastFixRef.current) return;
+      const recordedAt = new Date(stored.recordedAt).getTime();
+      if (Date.now() - recordedAt > DISPLAY_FIX_MS) return;
       const fix: GpsFix = {
         lat: stored.lat,
         lng: stored.lng,
         accuracy: stored.accuracy,
         heading: stored.heading,
-        recordedAt: new Date(stored.recordedAt).getTime(),
+        recordedAt,
         stale: true,
       };
       lastFixRef.current = fix;
       setState({
         fix,
         status: "stale",
-        message: "Showing last known position until a live GPS fix arrives.",
+        message: "Showing last known position until a live GPS fix arrives. Do not treat this as your current location.",
       });
     });
 
