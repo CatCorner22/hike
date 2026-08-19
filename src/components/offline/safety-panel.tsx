@@ -104,9 +104,23 @@ import {
   sectorSearchLegs,
 } from "@/lib/safety/search";
 import {
+  commsWindowReminder,
   fiveLineHeloBrief,
+  litterEvacTime,
+  lzAssessmentChecklist,
   saluteReport,
 } from "@/lib/safety/sar-advanced";
+import { slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import {
+  casevacDecision,
+  formatGmtCard,
+  fordSop,
+  lostPersonQuery,
+  nightMovementSop,
+  paceBeads,
+  polarisHint,
+  sunVsWatchCheck,
+} from "@/lib/safety/tactics";
 import { lostProcedure, nineLineMedevac, pacePlan, radioGrid } from "@/lib/safety/medevac";
 import { closeNavLeg, formatNavLog, listNavLegs, startNavLeg, type NavLeg } from "@/lib/safety/navlog";
 import {
@@ -169,7 +183,11 @@ interface SafetyPanelProps {
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
   remainingGainM?: number;
+  traveledMeters?: number;
+  elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   onSearchOverlay?: (line: GeoJSON.LineString | null) => void;
+  onCommsAttempt?: () => void;
+  lastCommsAt?: number | null;
 }
 
 export function SafetyPanel({
@@ -202,7 +220,11 @@ export function SafetyPanel({
   geometry,
   remainingMeters,
   remainingGainM,
+  traveledMeters,
+  elevationProfile = [],
   onSearchOverlay,
+  onCommsAttempt,
+  lastCommsAt = null,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -212,6 +234,8 @@ export function SafetyPanel({
     medical: "",
     partySize: 1,
     bloodType: "",
+    challenge: "",
+    password: "",
   });
   const [returnLocal, setReturnLocal] = useState("");
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
@@ -255,6 +279,10 @@ export function SafetyPanel({
   const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
   const [searchLeg, setSearchLeg] = useState("100");
   const [opsNote, setOpsNote] = useState<string | null>(null);
+  const [beads, setBeads] = useState(0);
+  const [lpqSeen, setLpqSeen] = useState("");
+  const [lpqClothes, setLpqClothes] = useState("");
+  const [canWalk, setCanWalk] = useState(true);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
@@ -365,6 +393,27 @@ export function SafetyPanel({
     hasSignal: gpsTrusted,
   });
   const sereSectionsList = useMemo(() => sereSections(), []);
+  const slopePct = useMemo(
+    () => slopeFromProfile(elevationProfile, traveledMeters ?? 0),
+    [elevationProfile, traveledMeters],
+  );
+  const commsNote = commsWindowReminder(lastCommsAt);
+  const gmt =
+    lat != null && lng != null && heading != null
+      ? formatGmtCard(heading, null, lat, lng)
+      : null;
+  const watchHint =
+    lat != null && lng != null
+      ? sunVsWatchCheck(new Date(), lat, lng, new Date().getHours())
+      : null;
+  const evac = casevacDecision({
+    injured: (Number(injured) || 0) > 0,
+    canWalk,
+    isDark,
+    remainingM: remainingMeters,
+    partySize: profile.partySize,
+  });
+  const beadsInfo = paceBeads(beads);
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
@@ -409,6 +458,18 @@ export function SafetyPanel({
           {imsafeNote && (
             <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
               {imsafeNote}
+            </div>
+          )}
+
+          {commsNote && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {commsNote}
+            </div>
+          )}
+
+          {slopePct != null && slopeWarning(slopePct) && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {slopeWarning(slopePct)}
             </div>
           )}
 
@@ -611,7 +672,26 @@ export function SafetyPanel({
               <Droplets className="mr-2 size-4" />
               I drank
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                onCommsAttempt?.();
+                setOpsNote("Comms attempt logged. Try SMS / share / 911 on the next ridge.");
+              }}
+            >
+              Log comms try
+            </Button>
+            <Button variant="outline" onClick={() => setBeads((n) => n + 1)}>
+              Pace bead +100 m
+            </Button>
+            <Button variant="ghost" onClick={() => setBeads(0)}>
+              Reset beads
+            </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Pace beads: {beadsInfo.label}
+            {gmt ? ` · ${gmt}` : ""}
+          </p>
 
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1101,9 +1181,66 @@ export function SafetyPanel({
                 Copy field OBS
               </Button>
             </div>
+            {watchHint && <p className="text-xs text-muted-foreground">{watchHint}</p>}
+            {lat != null && <p className="text-xs text-muted-foreground">{polarisHint(lat)}</p>}
+            <p className="text-xs text-muted-foreground">
+              CASEVAC: {evac.reason}
+            </p>
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={canWalk} onChange={(e) => setCanWalk(e.target.checked)} />
+              Injured person can walk
+            </label>
+            {remainingMeters != null && remainingMeters > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {litterEvacTime(remainingMeters, profile.partySize)}
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={lpqSeen} placeholder="Last seen" onChange={(e) => setLpqSeen(e.target.value)} />
+              <Input value={lpqClothes} placeholder="Clothing" onChange={(e) => setLpqClothes(e.target.value)} />
+            </div>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const ok = await copyEmergencyInfo(
+                  lostPersonQuery({
+                    name: profile.name,
+                    lastSeen: lpqSeen,
+                    clothing: lpqClothes,
+                    medical: profile.medical,
+                    lat,
+                    lng,
+                  }),
+                );
+                setOpsNote(ok ? "Lost-person query copied" : "Copy failed");
+              }}
+            >
+              Copy lost-person query
+            </Button>
             {opsNote && (
               <p className="whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">{opsNote}</p>
             )}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Ford / night / LZ</summary>
+              <p className="mt-2 font-medium text-foreground">Creek ford</p>
+              <ul className="list-disc pl-4">
+                {fordSop().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Night movement</p>
+              <ul className="list-disc pl-4">
+                {nightMovementSop().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">LZ check</p>
+              <ul className="list-disc pl-4">
+                {lzAssessmentChecklist().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
             <details className="text-xs text-muted-foreground">
               <summary className="cursor-pointer font-medium text-foreground">Leapfrog / rally SOP</summary>
               <ul className="mt-2 list-disc pl-4">
@@ -1434,6 +1571,20 @@ export function SafetyPanel({
               value={profile.bloodType ?? ""}
               placeholder="O+, A−, unknown"
               onChange={(e) => void persistProfile({ ...profile, bloodType: e.target.value })}
+            />
+            <Label htmlFor="challenge">Night challenge</Label>
+            <Input
+              id="challenge"
+              value={profile.challenge ?? ""}
+              placeholder="Word you shout"
+              onChange={(e) => void persistProfile({ ...profile, challenge: e.target.value })}
+            />
+            <Label htmlFor="password">Night password</Label>
+            <Input
+              id="password"
+              value={profile.password ?? ""}
+              placeholder="Expected reply"
+              onChange={(e) => void persistProfile({ ...profile, password: e.target.value })}
             />
             <Label htmlFor="medical">Medical notes</Label>
             <Input
