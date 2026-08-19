@@ -206,6 +206,40 @@ export function timeSpeedDistance(input: {
   return null;
 }
 
+/**
+ * Intersection: two observers at known points shoot true bearings TO the same unknown.
+ * The cut is the unknown (lost party, smoke, aircraft).
+ */
+export function intersection(
+  observerA: { lat: number; lng: number },
+  bearingFromA: number,
+  observerB: { lat: number; lng: number },
+  bearingFromB: number,
+): { point: { lat: number; lng: number }; cutDeg: number; warning: string | null } | null {
+  const rayA = turf.lineString([
+    [observerA.lng, observerA.lat],
+    turf.destination(turf.point([observerA.lng, observerA.lat]), 80, bearingFromA, {
+      units: "kilometers",
+    }).geometry.coordinates,
+  ]);
+  const rayB = turf.lineString([
+    [observerB.lng, observerB.lat],
+    turf.destination(turf.point([observerB.lng, observerB.lat]), 80, bearingFromB, {
+      units: "kilometers",
+    }).geometry.coordinates,
+  ]);
+  const hit = turf.lineIntersect(rayA, rayB).features[0];
+  if (!hit || hit.geometry.type !== "Point") return null;
+  const [lng, lat] = hit.geometry.coordinates;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const cutDeg = smallestAngle(bearingFromA, bearingFromB);
+  const warning =
+    cutDeg < 30 || cutDeg > 150
+      ? "Poor cut — observers should be 30–150° apart as seen from the target."
+      : null;
+  return { point: { lat, lng }, cutDeg, warning };
+}
+
 export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
   return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;
 }

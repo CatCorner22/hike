@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { expandingSquareLegs, expandingSquareLine, formatSearchPlan } from "./search";
+import {
+  creepingLineLegs,
+  expandingSquareLegs,
+  expandingSquareLine,
+  formatSearchPlan,
+  parallelTrackLegs,
+} from "./search";
 
 describe("search patterns", () => {
   it("builds an expanding square with doubling legs", () => {
@@ -17,5 +23,15 @@ describe("search patterns", () => {
   it("formats a search plan", () => {
     const text = formatSearchPlan("expanding square", expandingSquareLegs(100, 1));
     expect(text).toContain("EXPANDING SQUARE SEARCH");
+  });
+
+  it("builds a creeping line with cross-track offsets", () => {
+    const legs = creepingLineLegs(200, 40, 3, 90);
+    expect(legs[0].headingTrue).toBe(90);
+    expect(legs.some((l) => l.meters === 40)).toBe(true);
+  });
+
+  it("builds parallel tracks", () => {
+    expect(parallelTrackLegs(300, 50, 2).length).toBeGreaterThan(2);
   });
 });

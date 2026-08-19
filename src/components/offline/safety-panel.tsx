@@ -68,13 +68,45 @@ import {
   deliberateOffset,
   distanceFromPaces,
   formatRangeAzimuth,
+  formatTsd,
   formatZulu,
+  intersection,
   milRelationRange,
   obstacleBox,
   rangeAzimuth,
   resection,
+  resection3,
+  timeSpeedDistance,
   type PaceTerrain,
 } from "@/lib/safety/landnav";
+import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
+import {
+  aceReport,
+  fieldMetar,
+  leapfrogSop,
+  rallySop,
+  smeacBrief,
+} from "@/lib/safety/briefs";
+import { sunCompassHint } from "@/lib/safety/astro";
+import {
+  formatNaismith,
+  heatWarning,
+  lightningRule,
+  naismithMinutes,
+  windChillWarning,
+} from "@/lib/safety/field-ops";
+import {
+  creepingLineLegs,
+  expandingSquareLegs,
+  formatSearchPlan,
+  parallelTrackLegs,
+  searchLineFromLegs,
+  sectorSearchLegs,
+} from "@/lib/safety/search";
+import {
+  fiveLineHeloBrief,
+  saluteReport,
+} from "@/lib/safety/sar-advanced";
 import { lostProcedure, nineLineMedevac, pacePlan, radioGrid } from "@/lib/safety/medevac";
 import { closeNavLeg, formatNavLog, listNavLegs, startNavLeg, type NavLeg } from "@/lib/safety/navlog";
 import {
@@ -134,6 +166,10 @@ interface SafetyPanelProps {
   gpsDenied?: boolean;
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
+  geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
+  remainingMeters?: number;
+  remainingGainM?: number;
+  onSearchOverlay?: (line: GeoJSON.LineString | null) => void;
 }
 
 export function SafetyPanel({
@@ -163,6 +199,10 @@ export function SafetyPanel({
   gpsDenied = false,
   onToggleGpsDenied,
   onDeniedPaces,
+  geometry,
+  remainingMeters,
+  remainingGainM,
+  onSearchOverlay,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -201,6 +241,20 @@ export function SafetyPanel({
   const [resectInfo, setResectInfo] = useState<string | null>(null);
   const [copiedSere, setCopiedSere] = useState(false);
   const [sereOpen, setSereOpen] = useState<SerePillar | "all">("survival");
+  const [gridC, setGridC] = useState("");
+  const [brgC, setBrgC] = useState("");
+  const [tsdDist, setTsdDist] = useState("");
+  const [tsdSpeed, setTsdSpeed] = useState("4");
+  const [tsdMin, setTsdMin] = useState("");
+  const [flashSec, setFlashSec] = useState("30");
+  const [tempC, setTempC] = useState("5");
+  const [windKph, setWindKph] = useState("20");
+  const [rh, setRh] = useState("40");
+  const [waterL, setWaterL] = useState("2");
+  const [injured, setInjured] = useState("0");
+  const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
+  const [searchLeg, setSearchLeg] = useState("100");
+  const [opsNote, setOpsNote] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
   profileRef.current = profile;
@@ -711,6 +765,90 @@ export function SafetyPanel({
             >
               Plot resection
             </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={gridC} placeholder="Known C (3-pt)" onChange={(e) => setGridC(e.target.value)} />
+              <Input value={brgC} placeholder="Bearing to C" onChange={(e) => setBrgC(e.target.value)} />
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const hint = lat != null && lng != null ? { lat, lng } : undefined;
+                const a = parseUsng(gridA, hint);
+                const b = parseUsng(gridB, hint);
+                const c = parseUsng(gridC, hint);
+                if (!a || !b || !c) {
+                  setResectInfo("Need three valid USNG/MGRS points for 3-pt.");
+                  return;
+                }
+                const toTrue = (raw: string) => {
+                  let az = Number(raw);
+                  if (!Number.isFinite(az)) return null;
+                  if (bearingsMag && lat != null && lng != null) {
+                    const dec = magneticDeclination(lat, lng);
+                    if (dec != null) az = toTrueBearing(az, dec);
+                  }
+                  return az;
+                };
+                const azA = toTrue(brgA);
+                const azB = toTrue(brgB);
+                const azC = toTrue(brgC);
+                if (azA == null || azB == null || azC == null) {
+                  setResectInfo("All three bearings must be numbers.");
+                  return;
+                }
+                const fix = resection3([
+                  { known: a, bearingTo: azA },
+                  { known: b, bearingTo: azB },
+                  { known: c, bearingTo: azC },
+                ]);
+                if (!fix) {
+                  setResectInfo("No 3-pt cut.");
+                  return;
+                }
+                onGoto(fix.point);
+                setResectInfo(
+                  `3-pt ${formatUsng(fix.point.lat, fix.point.lng)} · spread ${Math.round(fix.spreadM)} m${fix.warning ? ` — ${fix.warning}` : ""}`,
+                );
+              }}
+            >
+              3-pt resection
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const hint = lat != null && lng != null ? { lat, lng } : undefined;
+                const a = parseUsng(gridA, hint);
+                const b = parseUsng(gridB, hint);
+                if (!a || !b) {
+                  setResectInfo("Intersection needs two observer grids (A/B) and bearings toward the unknown.");
+                  return;
+                }
+                let azA = Number(brgA);
+                let azB = Number(brgB);
+                if (!Number.isFinite(azA) || !Number.isFinite(azB)) {
+                  setResectInfo("Bearings must be numbers.");
+                  return;
+                }
+                if (bearingsMag && lat != null && lng != null) {
+                  const dec = magneticDeclination(lat, lng);
+                  if (dec != null) {
+                    azA = toTrueBearing(azA, dec);
+                    azB = toTrueBearing(azB, dec);
+                  }
+                }
+                const hit = intersection(a, azA, b, azB);
+                if (!hit) {
+                  setResectInfo("No intersection — rays do not cross.");
+                  return;
+                }
+                onGoto(hit.point);
+                setResectInfo(
+                  `Intersection ${formatUsng(hit.point.lat, hit.point.lng)} · cut ${Math.round(hit.cutDeg)}°${hit.warning ? ` — ${hit.warning}` : ""}`,
+                );
+              }}
+            >
+              Intersection (unknown)
+            </Button>
             {resectInfo && <p className="text-xs text-muted-foreground">{resectInfo}</p>}
             <div className="grid grid-cols-2 gap-2">
               <Input value={offsetM} onChange={(e) => setOffsetM(e.target.value)} placeholder="Offset m" />
@@ -785,6 +923,200 @@ export function SafetyPanel({
               {milRelationRange(Number(heightM) || 0, Number(mils) || 0)?.toFixed(0) ?? "—"} m
               (height × 1000 / mils). Person ~1.8 m.
             </p>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Field ops — TSD, SAR search, SMEAC, weather
+            </p>
+            {lat != null && lng != null && (
+              <p className="text-xs text-muted-foreground">{sunCompassHint(new Date(), lat, lng)}</p>
+            )}
+            {remainingMeters != null && remainingMeters > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {formatNaismith(naismithMinutes(remainingMeters, remainingGainM ?? 0))} remaining
+                (5 km/h + climb).
+              </p>
+            )}
+            <div className="grid grid-cols-3 gap-2">
+              <Input value={tsdDist} placeholder="m" onChange={(e) => setTsdDist(e.target.value)} />
+              <Input value={tsdSpeed} placeholder="km/h" onChange={(e) => setTsdSpeed(e.target.value)} />
+              <Input value={tsdMin} placeholder="min" onChange={(e) => setTsdMin(e.target.value)} />
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const tsd = timeSpeedDistance({
+                  distanceM: tsdDist ? Number(tsdDist) : remainingMeters,
+                  speedKph: tsdSpeed ? Number(tsdSpeed) : undefined,
+                  minutes: tsdMin ? Number(tsdMin) : undefined,
+                });
+                setOpsNote(tsd ? formatTsd(tsd) : "Enter any two of distance / speed / time.");
+              }}
+            >
+              Solve TSD
+            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <select
+                className="h-9 rounded-lg border bg-background px-2 text-sm"
+                value={searchKind}
+                onChange={(e) =>
+                  setSearchKind(e.target.value as typeof searchKind)
+                }
+              >
+                <option value="square">Expanding square</option>
+                <option value="sector">Sector</option>
+                <option value="creep">Creeping line</option>
+                <option value="parallel">Parallel track</option>
+              </select>
+              <Input value={searchLeg} placeholder="Leg m" onChange={(e) => setSearchLeg(e.target.value)} />
+            </div>
+            <Button
+              variant="outline"
+              disabled={lat == null}
+              onClick={() => {
+                if (lat == null || lng == null) return;
+                const L = Number(searchLeg) || 100;
+                const hdg = heading ?? 0;
+                const legs =
+                  searchKind === "square"
+                    ? expandingSquareLegs(L, 3)
+                    : searchKind === "sector"
+                      ? sectorSearchLegs(L, hdg, 3)
+                      : searchKind === "creep"
+                        ? creepingLineLegs(L * 3, L, 4, hdg)
+                        : parallelTrackLegs(L * 3, L, 3, hdg);
+                const line = searchLineFromLegs({ lat, lng }, legs);
+                onSearchOverlay?.(line);
+                setOpsNote(formatSearchPlan(searchKind, legs));
+              }}
+            >
+              Plot search
+            </Button>
+            <Button variant="ghost" onClick={() => { onSearchOverlay?.(null); setOpsNote(null); }}>
+              Clear search
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!geometry}
+              onClick={async () => {
+                if (!geometry) return;
+                const card = formatRouteCard(trailName, routeCardLegs(geometry));
+                const ok = await copyEmergencyInfo(card);
+                setOpsNote(ok ? card.split("\n").slice(0, 4).join("\n") + "\n… copied" : "Copy failed");
+              }}
+            >
+              Copy route card
+            </Button>
+            <div className="grid grid-cols-3 gap-2">
+              <Input value={tempC} placeholder="°C" onChange={(e) => setTempC(e.target.value)} />
+              <Input value={windKph} placeholder="wind km/h" onChange={(e) => setWindKph(e.target.value)} />
+              <Input value={rh} placeholder="RH %" onChange={(e) => setRh(e.target.value)} />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {windChillWarning(Number(tempC), Number(windKph)) ??
+                heatWarning(Number(tempC), Number(rh)) ??
+                "Enter temp / wind / RH for wind-chill or heat index."}
+            </p>
+            <div className="flex gap-2">
+              <Input value={flashSec} placeholder="flash-to-bang s" onChange={(e) => setFlashSec(e.target.value)} />
+              <Button
+                variant="outline"
+                onClick={() => setOpsNote(lightningRule(Number(flashSec) || 0).warning)}
+              >
+                30–30
+              </Button>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <Input value={waterL} placeholder="Water L" onChange={(e) => setWaterL(e.target.value)} />
+              <Input value={injured} placeholder="Injured" onChange={(e) => setInjured(e.target.value)} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    smeacBrief({ lat, lng, trailName, profile, returnAt: returnLocal || undefined }),
+                  );
+                  setOpsNote(ok ? "SMEAC copied" : "Copy failed");
+                }}
+              >
+                Copy SMEAC
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    aceReport({
+                      waterLiters: Number(waterL) || undefined,
+                      injured: Number(injured) || 0,
+                      partySize: profile.partySize,
+                      lat,
+                      lng,
+                    }),
+                  );
+                  setOpsNote(ok ? "ACE copied" : "Copy failed");
+                }}
+              >
+                Copy ACE
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(saluteReport({ lat, lng, activity: trailName }));
+                  setOpsNote(ok ? "SALUTE copied" : "Copy failed");
+                }}
+              >
+                Copy SALUTE
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    fiveLineHeloBrief({
+                      lat,
+                      lng,
+                      elevationFt: altitudeM != null ? altitudeM * 3.28084 : undefined,
+                    }),
+                  );
+                  setOpsNote(ok ? "5-line LZ copied" : "Copy failed");
+                }}
+              >
+                Copy 5-line LZ
+              </Button>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  const ok = await copyEmergencyInfo(
+                    fieldMetar({
+                      sky: "SCT",
+                      windKph: Number(windKph) || undefined,
+                      lat,
+                      lng,
+                    }),
+                  );
+                  setOpsNote(ok ? "Field OBS copied" : "Copy failed");
+                }}
+              >
+                Copy field OBS
+              </Button>
+            </div>
+            {opsNote && (
+              <p className="whitespace-pre-wrap font-mono text-[11px] text-muted-foreground">{opsNote}</p>
+            )}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Leapfrog / rally SOP</summary>
+              <ul className="mt-2 list-disc pl-4">
+                {leapfrogSop().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <ul className="mt-2 list-disc pl-4">
+                {rallySop().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">
