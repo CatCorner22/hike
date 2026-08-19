@@ -14,6 +14,7 @@ import {
   stateCampgroundToRecord,
 } from "@/lib/state-parks";
 import { searchBackcountryCamps } from "@/lib/osm/overpass";
+import { filterSeedCampgrounds } from "@/lib/camping/seed";
 
 async function syncCampgrounds(query?: string, state?: string) {
   if (!hasDatabase()) return;
@@ -99,13 +100,14 @@ export async function GET(request: Request) {
     }
 
     if (!hasDatabase()) {
-      const stateCamps = await fetchAllStateCampgrounds();
-      const npsCamps = await searchCampgrounds({ q, stateCode: state, limit: 30 });
-      const results = [
-        ...stateCamps.map(stateCampgroundToRecord),
-        ...npsCamps.map(npsCampgroundToRecord).filter(Boolean),
-      ];
-      return NextResponse.json({ campgrounds: results });
+      const seeded = filterSeedCampgrounds({
+        q,
+        state,
+        campingType,
+        permitRequired,
+        source,
+      });
+      return NextResponse.json({ campgrounds: seeded });
     }
 
     const db = getDb();

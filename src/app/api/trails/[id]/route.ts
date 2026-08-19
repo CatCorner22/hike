@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { findOrCreateTrail, getTrailById } from "@/lib/trails/service";
 import { fetchElevationProfile } from "@/lib/geo";
+import { parseOsmTrailId } from "@/lib/ids";
 
 export async function GET(
   _request: Request,
@@ -9,9 +10,9 @@ export async function GET(
   const { id } = await params;
 
   try {
-    if (id.startsWith("osm-")) {
-      const [, osmType, osmId] = id.split("-");
-      const result = await findOrCreateTrail(osmId, osmType);
+    const osm = parseOsmTrailId(id);
+    if (osm) {
+      const result = await findOrCreateTrail(osm.osmId, osm.osmType);
       if (!result) {
         return NextResponse.json({ error: "Trail not found" }, { status: 404 });
       }
@@ -29,6 +30,7 @@ export async function GET(
       return NextResponse.json({ error: "Trail not found" }, { status: 404 });
     }
 
+    const bbox = (trail.bbox as number[] | null) ?? [];
     const profile = await fetchElevationProfile(
       trail.geometry as GeoJSON.LineString | GeoJSON.MultiLineString,
     );
@@ -41,8 +43,8 @@ export async function GET(
       geometry: trail.geometry,
       bbox: trail.bbox,
       center: {
-        lat: (trail.bbox as number[])?.[1] ?? 0,
-        lng: (trail.bbox as number[])?.[0] ?? 0,
+        lat: (bbox[1] + bbox[3]) / 2 || 0,
+        lng: (bbox[0] + bbox[2]) / 2 || 0,
       },
       lengthMeters: trail.lengthMeters,
       elevationGainMeters: trail.elevationGainMeters,

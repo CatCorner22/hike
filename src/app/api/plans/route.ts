@@ -2,45 +2,67 @@ import { NextResponse } from "next/server";
 import { desc } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
+import { createPlan, listPlans } from "@/lib/store/local";
 
 export async function GET() {
-  if (!hasDatabase()) {
-    return NextResponse.json({ plans: [] });
+  try {
+    if (hasDatabase()) {
+      const db = getDb();
+      const plans = await db.query.hikePlans.findMany({
+        orderBy: [desc(hikePlans.updatedAt)],
+        limit: 50,
+      });
+      return NextResponse.json({ plans });
+    }
+
+    const plans = await listPlans();
+    return NextResponse.json({ plans });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to list plans" },
+      { status: 500 },
+    );
   }
-
-  const db = getDb();
-  const plans = await db.query.hikePlans.findMany({
-    orderBy: [desc(hikePlans.updatedAt)],
-    limit: 50,
-  });
-
-  return NextResponse.json({ plans });
 }
 
 export async function POST(request: Request) {
-  if (!hasDatabase()) {
-    return NextResponse.json(
-      { error: "Database not configured" },
-      { status: 503 },
-    );
-  }
+  try {
+    const body = await request.json();
+    if (!body.name || typeof body.name !== "string") {
+      return NextResponse.json({ error: "Plan name is required" }, { status: 400 });
+    }
 
-  const body = await request.json();
-  const db = getDb();
+    if (hasDatabase()) {
+      const db = getDb();
+      const [plan] = await db
+        .insert(hikePlans)
+        .values({
+          name: body.name,
+          trailId: body.trailId ?? null,
+          plannedDate: body.plannedDate ? new Date(body.plannedDate) : null,
+          notes: body.notes ?? null,
+          waypoints: body.waypoints ?? null,
+          campgroundIds: body.campgroundIds ?? [],
+          customGeometry: body.customGeometry ?? null,
+        })
+        .returning();
+      return NextResponse.json(plan);
+    }
 
-  const [plan] = await db
-    .insert(hikePlans)
-    .values({
+    const plan = await createPlan({
       name: body.name,
       trailId: body.trailId ?? null,
-      plannedDate: body.plannedDate ? new Date(body.plannedDate) : null,
+      plannedDate: body.plannedDate ?? null,
       notes: body.notes ?? null,
       waypoints: body.waypoints ?? null,
       campgroundIds: body.campgroundIds ?? [],
       customGeometry: body.customGeometry ?? null,
-    })
-    .returning();
-
-  return NextResponse.json(plan);
+    });
+    return NextResponse.json(plan);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to create plan" },
+      { status: 500 },
+    );
+  }
 }
-

@@ -54,7 +54,7 @@ export default function CampingPage() {
 
   const search = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ sync: "true" });
+    const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (filters.state !== "all") params.set("state", filters.state);
     if (filters.campingType !== "all") params.set("campingType", filters.campingType);

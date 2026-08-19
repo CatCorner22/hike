@@ -10,12 +10,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ElevationChart } from "@/components/trails/elevation-chart";
 import { ResearchBrief } from "@/components/trails/research-brief";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
-import { formatDistance, formatElevation, gpxFromLineString } from "@/lib/geo";
-import { cacheTrailOffline } from "@/lib/offline";
+import { formatDistance, formatElevation } from "@/lib/geo";
+import { PrepareOffline } from "@/components/offline/prepare-offline";
+import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import {
   Calendar,
-  Download,
   Loader2,
   Navigation,
   Plus,
@@ -61,6 +61,18 @@ export default function TrailDetailPage() {
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setTrail(data);
+        if (data.geometry) {
+          await saveRoutePack(
+            buildRoutePack({
+              id: `trail-${trailId}`,
+              aliases: [`trail-${data.id}`, trailId, data.id],
+              name: data.name,
+              geometry: data.geometry,
+              bbox: data.bbox,
+              elevationProfile: data.elevationProfile || [],
+            }),
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
       } finally {
@@ -103,18 +115,6 @@ export default function TrailDetailPage() {
     }
   }
 
-  async function downloadOffline() {
-    if (!trail) return;
-    const gpx = gpxFromLineString(trail.name, trail.geometry);
-    await cacheTrailOffline({
-      id: trail.id,
-      name: trail.name,
-      geometry: trail.geometry,
-      gpx,
-    });
-    alert("Trail saved for offline use");
-  }
-
   if (loading) {
     return (
       <div className="space-y-4">
@@ -154,18 +154,22 @@ export default function TrailDetailPage() {
             Add to plan
           </Button>
           <Link
-            href={`/navigate/trail-${trail.id}`}
+            href={`/navigate/trail-${trailId}`}
             className={buttonVariants({ variant: "outline" })}
           >
             <Navigation className="mr-2 h-4 w-4" />
             Navigate
           </Link>
-          <Button variant="outline" onClick={downloadOffline}>
-            <Download className="mr-2 h-4 w-4" />
-            Offline
-          </Button>
+          <PrepareOffline
+            packId={`trail-${trailId}`}
+            aliases={[`trail-${trail.id}`, trailId, trail.id]}
+            name={trail.name}
+            geometry={trail.geometry}
+            bbox={trail.bbox}
+            elevationProfile={trail.elevationProfile}
+          />
           <a
-            href={`/api/sync/offline?trailId=${trail.id}`}
+            href={`/api/sync/offline?trailId=${trailId}`}
             download
             className={buttonVariants({ variant: "outline" })}
           >

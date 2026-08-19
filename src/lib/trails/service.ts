@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trails } from "@/lib/db/schema";
+import { osmTrailId } from "@/lib/ids";
 import {
   getTrailDetail,
   searchTrails,
@@ -21,7 +22,7 @@ export async function findOrCreateTrail(
   if (!detail) return null;
 
   if (!hasDatabase()) {
-    return { id: osmId, detail };
+    return { id: osmTrailId(osmType, osmId), detail };
   }
 
   const db = getDb();

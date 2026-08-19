@@ -173,11 +173,15 @@ export async function fetchElevationProfile(
     points.push({ lat: pt.geometry.coordinates[1], lng: pt.geometry.coordinates[0] });
   }
 
-  const locations = points.map((p) => `${p.lat},${p.lng}`).join("|");
-  const url = `https://api.open-elevation.com/api/v1/lookup?locations=${encodeURIComponent(locations)}`;
-
   try {
-    const response = await fetch(url, { next: { revalidate: 86400 } });
+    const response = await fetch("https://api.open-elevation.com/api/v1/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        locations: points.map((p) => ({ latitude: p.lat, longitude: p.lng })),
+      }),
+      next: { revalidate: 86400 },
+    });
     if (!response.ok) return [];
     const data = await response.json();
     return (data.results || []).map(
