@@ -44,8 +44,23 @@ import {
   type IceProfile,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
+import {
+  deadReckon,
+  distanceFromPaces,
+  formatRangeAzimuth,
+  formatZulu,
+  rangeAzimuth,
+} from "@/lib/safety/landnav";
+import { lostProcedure, nineLineMedevac, pacePlan, radioGrid } from "@/lib/safety/medevac";
 import { smsHref } from "@/lib/safety/strobe";
-import { formatUsng, formatUtm } from "@/lib/safety/usng";
+import {
+  formatDdm,
+  formatDms,
+  formatMgrs10,
+  formatUsng,
+  formatUtm,
+  parseUsng,
+} from "@/lib/safety/usng";
 
 interface SafetyPanelProps {
   lat?: number;
@@ -65,6 +80,8 @@ interface SafetyPanelProps {
   onToggleBacktrack: () => void;
   onBeacon: () => void;
   onWaypointsChange: (points: SafetyWaypoint[]) => void;
+  heading?: number;
+  onGoto: (point: { lat: number; lng: number } | null) => void;
 }
 
 export function SafetyPanel({
@@ -85,6 +102,8 @@ export function SafetyPanel({
   onToggleBacktrack,
   onBeacon,
   onWaypointsChange,
+  heading,
+  onGoto,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -97,6 +116,11 @@ export function SafetyPanel({
   const [returnLocal, setReturnLocal] = useState("");
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
   const [overdue, setOverdue] = useState(false);
+  const [gotoGrid, setGotoGrid] = useState("");
+  const [gotoInfo, setGotoInfo] = useState<string | null>(null);
+  const [paces, setPaces] = useState("65");
+  const [paceLen, setPaceLen] = useState("65");
+  const [copiedNine, setCopiedNine] = useState(false);
 
   useEffect(() => {
     void getIceProfile().then(setProfile);
@@ -238,7 +262,12 @@ export function SafetyPanel({
               <>
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
                 <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
+                <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
+                <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
+                <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     GPS fix {formatFixAge(recordedAt)}
@@ -310,6 +339,128 @@ export function SafetyPanel({
               <Flag className="mr-2 size-4" />
               Mark junction
             </Button>
+            <Button
+              variant="outline"
+              disabled={lat == null}
+              onClick={() => void markWaypoint("lkp")}
+            >
+              Mark LKP
+            </Button>
+            <Button
+              variant="outline"
+              disabled={lat == null}
+              onClick={() => void markWaypoint("rp")}
+            >
+              Mark RP
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Field nav — go-to grid
+            </p>
+            <Input
+              value={gotoGrid}
+              placeholder="11S MJ 1234 5678"
+              onChange={(e) => setGotoGrid(e.target.value)}
+            />
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  const parsed = parseUsng(
+                    gotoGrid,
+                    lat != null && lng != null ? { lat, lng } : undefined,
+                  );
+                  if (!parsed) {
+                    setGotoInfo("Could not parse that USNG/MGRS grid.");
+                    return;
+                  }
+                  onGoto(parsed);
+                  if (lat != null && lng != null) {
+                    setGotoInfo(formatRangeAzimuth(rangeAzimuth({ lat, lng }, parsed)));
+                  } else {
+                    setGotoInfo("Grid plotted. Waiting for GPS for range/azimuth.");
+                  }
+                }}
+              >
+                Plot go-to
+              </Button>
+              <Button variant="ghost" onClick={() => { onGoto(null); setGotoInfo(null); }}>
+                Clear
+              </Button>
+            </div>
+            {gotoInfo && <p className="text-xs text-muted-foreground">{gotoInfo}</p>}
+            {lat != null && lng != null && heading != null && (
+              <p className="text-xs text-muted-foreground">
+                Current heading {Math.round(heading)}° true. Dead-reckon{" "}
+                {Math.round(distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65))} m
+                on that heading with the pace boxes below.
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="paces">Paces</Label>
+                <Input id="paces" value={paces} onChange={(e) => setPaces(e.target.value)} />
+              </div>
+              <div>
+                <Label htmlFor="pace-len">Paces / 100 m</Label>
+                <Input id="pace-len" value={paceLen} onChange={(e) => setPaceLen(e.target.value)} />
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              disabled={lat == null || heading == null}
+              onClick={() => {
+                if (lat == null || lng == null || heading == null) return;
+                const dest = deadReckon(
+                  { lat, lng },
+                  heading,
+                  distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65),
+                );
+                onGoto(dest);
+                setGotoInfo(
+                  formatRangeAzimuth(rangeAzimuth({ lat, lng }, dest)) + " (dead reckon)",
+                );
+              }}
+            >
+              Dead reckon
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              9-line / lost procedure
+            </p>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const ok = await copyEmergencyInfo(
+                  nineLineMedevac({
+                    lat,
+                    lng,
+                    trailName,
+                    profile,
+                  }),
+                );
+                setCopiedNine(ok);
+                setTimeout(() => setCopiedNine(false), 2000);
+              }}
+            >
+              <Copy className="mr-2 size-4" />
+              {copiedNine ? "9-line copied" : "Copy 9-line MEDEVAC"}
+            </Button>
+            <ol className="list-decimal space-y-1 pl-4 text-xs text-muted-foreground">
+              {lostProcedure().map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+            <ul className="space-y-1 text-xs text-muted-foreground">
+              {pacePlan().map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">

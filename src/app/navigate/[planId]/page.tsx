@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Compass, MapPin, Mountain, Radio } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain, Radio } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
@@ -45,6 +45,7 @@ import {
   overdueStatus,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
+import { formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
 
@@ -77,6 +78,9 @@ export default function NavigatePage() {
     Array<{ lat: number; lng: number; altitude?: number; recordedAt: string }>
   >([]);
   const [overdueBanner, setOverdueBanner] = useState<string | null>(null);
+  const [nightMode, setNightMode] = useState<"off" | "red" | "nvg">("off");
+  const [goto, setGoto] = useState<{ lat: number; lng: number } | null>(null);
+  const [zulu, setZulu] = useState(formatZulu());
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -90,6 +94,11 @@ export default function NavigatePage() {
   >([]);
 
   const gps = useGps();
+
+  useEffect(() => {
+    const id = window.setInterval(() => setZulu(formatZulu()), 15000);
+    return () => window.clearInterval(id);
+  }, []);
   const batteryWarning = useBatteryWarning();
   const trusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
@@ -376,7 +385,15 @@ export default function NavigatePage() {
       : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background">
+    <div
+      className={`fixed inset-0 z-50 flex flex-col bg-background ${
+        nightMode === "red"
+          ? "[&_*]:!border-red-900 [&]:bg-[#140303]"
+          : nightMode === "nvg"
+            ? "[&]:bg-[#03140a]"
+            : ""
+      }`}
+    >
       <div className="relative min-h-0 flex-1">
         {beaconOn && <SosBeacon onClose={() => setBeaconOn(false)} />}
         <SafetyNavMap
@@ -393,6 +410,9 @@ export default function NavigatePage() {
           follow={trusted}
           backtrack={backtrackOn ? crumbs : null}
           waypoints={waypoints}
+          goto={goto}
+          showGrid
+          nightMode={nightMode}
           className="absolute inset-0 h-full w-full"
         />
 
@@ -432,6 +452,8 @@ export default function NavigatePage() {
                 onToggleBacktrack={() => setBacktrackOn((v) => !v)}
                 onBeacon={() => setBeaconOn(true)}
                 onWaypointsChange={setWaypoints}
+                heading={trusted ? gps.fix?.heading : undefined}
+                onGoto={setGoto}
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
@@ -443,6 +465,7 @@ export default function NavigatePage() {
                   <p className="font-mono text-[10px] text-muted-foreground">
                     {formatUsng(gps.fix.lat, gps.fix.lng)}
                     {!trusted ? ` · last known ${formatFixAge(gps.fix.recordedAt)}` : ""}
+                    {` · ${zulu}`}
                   </p>
                 )}
               </div>
@@ -503,15 +526,27 @@ export default function NavigatePage() {
             />
             {gps.fix ? gpsAccuracyLabel(gps.fix.accuracy) : "Waiting for GPS…"}
           </div>
-          <Button
-            variant={headingUp ? "default" : "outline"}
-            size="sm"
-            onClick={() => setHeadingUp((v) => !v)}
-            disabled={!trusted || gps.fix?.heading == null}
-          >
-            <Compass className="size-3.5" />
-            {headingUp && trusted && gps.fix?.heading != null ? "Heading up" : "North up"}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant={nightMode === "off" ? "outline" : "default"}
+              size="sm"
+              onClick={() =>
+                setNightMode((m) => (m === "off" ? "red" : m === "red" ? "nvg" : "off"))
+              }
+            >
+              <Moon className="size-3.5" />
+              {nightMode === "off" ? "Day" : nightMode === "red" ? "Red" : "NVG"}
+            </Button>
+            <Button
+              variant={headingUp ? "default" : "outline"}
+              size="sm"
+              onClick={() => setHeadingUp((v) => !v)}
+              disabled={!trusted || gps.fix?.heading == null}
+            >
+              <Compass className="size-3.5" />
+              {headingUp && trusted && gps.fix?.heading != null ? "Heading up" : "North up"}
+            </Button>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

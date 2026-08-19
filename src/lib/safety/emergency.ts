@@ -1,4 +1,5 @@
-import { formatUsng, formatUtm } from "@/lib/safety/usng";
+import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/safety/usng";
+import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
 
 export function formatCoords(lat: number, lng: number, accuracyM?: number): string {
@@ -24,11 +25,14 @@ export function emergencyMessage(input: {
   if (input.lat != null && input.lng != null) {
     if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
-    lines.push(`USNG: ${formatUsng(input.lat, input.lng)}`);
+    lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
+    lines.push(`USNG 8°: ${formatUsng(input.lat, input.lng)}`);
+    lines.push(`MGRS 10°: ${formatMgrs10(input.lat, input.lng)}`);
+    lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5))}`);
     lines.push(`UTM: ${formatUtm(input.lat, input.lng)}`);
     lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
     if (input.recordedAt) {
-      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
+      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);
     }
   } else {
     lines.push("No GPS fix available on this device.");

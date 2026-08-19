@@ -11,7 +11,7 @@ export interface IceProfile {
 export interface SafetyWaypoint {
   id: string;
   packId: string;
-  kind: "water" | "junction" | "camp" | "note";
+  kind: "water" | "junction" | "camp" | "note" | "lkp" | "rp" | "orp";
   lat: number;
   lng: number;
   note?: string;
