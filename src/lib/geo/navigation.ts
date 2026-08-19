@@ -29,16 +29,23 @@ export function toLineString(
 export function trailLengthMeters(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
-  return turf.length(turf.feature(toLineString(geometry)), { units: "meters" });
+  if (geometry.type === "MultiLineString") {
+    return geometry.coordinates.reduce((sum, coords) => {
+      if (coords.length < 2) return sum;
+      return sum + turf.length(turf.lineString(coords), { units: "meters" });
+    }, 0);
+  }
+  return turf.length(turf.feature(geometry), { units: "meters" });
 }
 
-export function progressAlongTrail(
+function progressOnSegment(
   point: LatLng,
-  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
-  elevationProfile: Array<{ distanceMeters: number; elevation: number }> = [],
+  coordinates: GeoJSON.Position[],
+  elevationProfile: Array<{ distanceMeters: number; elevation: number }>,
+  traveledOffsetMeters: number,
+  totalMeters: number,
 ): TrailProgress {
-  const line = toLineString(geometry);
-  const lineFeature = turf.lineString(line.coordinates);
+  const lineFeature = turf.lineString(coordinates);
   const pt = turf.point([point.lng, point.lat]);
   const snapped = turf.nearestPointOnLine(lineFeature, pt, { units: "meters" });
   const nearest = {
@@ -46,9 +53,11 @@ export function progressAlongTrail(
     lat: snapped.geometry.coordinates[1],
   };
   const offsetMeters = snapped.properties.dist ?? 0;
-  const totalMeters = turf.length(lineFeature, { units: "meters" });
-  const location = snapped.properties.location ?? 0;
-  const traveledMeters = Math.min(Math.max(location, 0), totalMeters);
+  const segmentTraveled = snapped.properties.location ?? 0;
+  const traveledMeters = Math.min(
+    traveledOffsetMeters + segmentTraveled,
+    totalMeters,
+  );
   const remainingMeters = Math.max(totalMeters - traveledMeters, 0);
 
   return {
@@ -63,6 +72,46 @@ export function progressAlongTrail(
     ),
     bearingToTrail: turf.bearing(pt, turf.point([nearest.lng, nearest.lat])),
   };
+}
+
+export function progressAlongTrail(
+  point: LatLng,
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+  elevationProfile: Array<{ distanceMeters: number; elevation: number }> = [],
+): TrailProgress {
+  const totalMeters = trailLengthMeters(geometry);
+
+  if (geometry.type === "MultiLineString") {
+    let best: TrailProgress | null = null;
+    let cumulative = 0;
+
+    for (const coords of geometry.coordinates) {
+      if (coords.length < 2) continue;
+      const progress = progressOnSegment(
+        point,
+        coords,
+        elevationProfile,
+        cumulative,
+        totalMeters,
+      );
+      if (!best || progress.offsetMeters < best.offsetMeters) {
+        best = progress;
+      }
+      cumulative += turf.length(turf.lineString(coords), { units: "meters" });
+    }
+
+    if (best) return best;
+  }
+
+  return progressOnSegment(
+    point,
+    geometry.type === "LineString"
+      ? geometry.coordinates
+      : geometry.coordinates.flat(),
+    elevationProfile,
+    0,
+    totalMeters,
+  );
 }
 
 export function remainingElevationGain(

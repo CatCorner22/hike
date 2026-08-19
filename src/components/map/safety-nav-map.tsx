@@ -18,6 +18,15 @@ function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
     : geometry.coordinates;
 }
 
+function followWindow(user: LatLng, radiusDeg = 0.003): [number, number, number, number] {
+  return [
+    user.lng - radiusDeg,
+    user.lat - radiusDeg,
+    user.lng + radiusDeg,
+    user.lat + radiusDeg,
+  ];
+}
+
 function project(
   lng: number,
   lat: number,
@@ -44,10 +53,21 @@ export function SafetyNavMap({
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
-  const bbox = useMemo(
-    () => safeBbox(geometry, follow && user ? user : undefined),
-    [geometry, follow, user],
-  );
+  const endpoints = useMemo(() => {
+    const first = lines.find((line) => line.length >= 2)?.[0];
+    const lastLine = [...lines].reverse().find((line) => line.length >= 2);
+    const last = lastLine?.[lastLine.length - 1];
+    if (!first || !last) return null;
+    return {
+      start: { lng: first[0], lat: first[1] },
+      end: { lng: last[0], lat: last[1] },
+    };
+  }, [lines]);
+
+  const bbox = useMemo(() => {
+    if (follow && user) return followWindow(user);
+    return safeBbox(geometry, user ?? undefined);
+  }, [geometry, follow, user]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -67,13 +87,17 @@ export function SafetyNavMap({
       ctx.fillStyle = "#0b1220";
       ctx.fillRect(0, 0, width, height);
 
+      const userPx = user
+        ? project(user.lng, user.lat, bbox, width, height, 28)
+        : { x: width / 2, y: height / 2 };
+
       const rotation =
         headingUp && user?.heading != null ? (user.heading * Math.PI) / 180 : 0;
       if (rotation) {
         ctx.save();
-        ctx.translate(width / 2, height / 2);
+        ctx.translate(userPx.x, userPx.y);
         ctx.rotate(-rotation);
-        ctx.translate(-width / 2, -height / 2);
+        ctx.translate(-userPx.x, -userPx.y);
       }
 
       ctx.strokeStyle = "#1f2937";
@@ -104,6 +128,19 @@ export function SafetyNavMap({
         ctx.stroke();
       }
 
+      if (endpoints) {
+        const start = project(endpoints.start.lng, endpoints.start.lat, bbox, width, height, 28);
+        const end = project(endpoints.end.lng, endpoints.end.lat, bbox, width, height, 28);
+        ctx.fillStyle = "#22c55e";
+        ctx.beginPath();
+        ctx.arc(start.x, start.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#ef4444";
+        ctx.beginPath();
+        ctx.arc(end.x, end.y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
       if (user && nearest) {
         const from = project(user.lng, user.lat, bbox, width, height, 28);
         const to = project(nearest.lng, nearest.lat, bbox, width, height, 28);
@@ -126,7 +163,7 @@ export function SafetyNavMap({
         if (user.accuracy && user.accuracy > 0) {
           const [minLng, , maxLng] = bbox;
           const metersPerDeg = 111320 * Math.cos((user.lat * Math.PI) / 180);
-          const pxPerMeter = ((width - 56) / Math.max((maxLng - minLng) * metersPerDeg, 1));
+          const pxPerMeter = (width - 56) / Math.max((maxLng - minLng) * metersPerDeg, 1);
           ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
           ctx.arc(p.x, p.y, Math.min(user.accuracy * pxPerMeter, 80), 0, Math.PI * 2);
@@ -155,19 +192,21 @@ export function SafetyNavMap({
       ctx.fillStyle = "#e5e7eb";
       ctx.font = "12px sans-serif";
       ctx.fillText(headingUp ? "Heading up" : "North up", 12, 20);
-      ctx.fillText("N", width / 2 - 4, 18);
-      ctx.strokeStyle = "#9ca3af";
-      ctx.beginPath();
-      ctx.moveTo(width / 2, 22);
-      ctx.lineTo(width / 2, 34);
-      ctx.stroke();
+      if (!headingUp) {
+        ctx.fillText("N", width / 2 - 4, 18);
+        ctx.strokeStyle = "#9ca3af";
+        ctx.beginPath();
+        ctx.moveTo(width / 2, 22);
+        ctx.lineTo(width / 2, 34);
+        ctx.stroke();
+      }
     };
 
     draw();
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [bbox, follow, headingUp, lines, nearest, user]);
+  }, [bbox, endpoints, follow, headingUp, lines, nearest, user]);
 
   return (
     <canvas
