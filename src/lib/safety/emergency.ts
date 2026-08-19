@@ -18,13 +18,17 @@ export function emergencyMessage(input: {
   offTrailM?: number;
   stale?: boolean;
   recordedAt?: number;
+<<<<<<< HEAD
   profile?: IceProfile | null;
   partyNote?: string;
+=======
+>>>>>>> origin/main
 }): string {
   const lines = ["HIKING EMERGENCY LOCATION"];
   if (input.lat != null && input.lng != null) {
     if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
+<<<<<<< HEAD
     lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
     lines.push(`USNG 8-digit: ${formatUsng(input.lat, input.lng)}`);
     lines.push(`MGRS 10-digit: ${formatMgrs10(input.lat, input.lng)}`);
@@ -33,6 +37,11 @@ export function emergencyMessage(input: {
     lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
     if (input.recordedAt) {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);
+=======
+    lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
+    if (input.recordedAt) {
+      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
+>>>>>>> origin/main
     }
   } else {
     lines.push("No GPS fix available on this device.");

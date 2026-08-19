@@ -4,6 +4,7 @@ export const TRUSTED_FIX_MS = 2 * 60 * 1000;
 /** Older last-known positions may still be shown, but never as current location. */
 export const DISPLAY_FIX_MS = 24 * 60 * 60 * 1000;
 
+<<<<<<< HEAD
 export function isValidLatLng(lat: number, lng: number): boolean {
   return (
     Number.isFinite(lat) &&
@@ -32,6 +33,8 @@ export function sanitizeFixTimestamp(
   return t;
 }
 
+=======
+>>>>>>> origin/main
 export function fixAgeMs(recordedAt: number, now = Date.now()): number {
   return Math.max(0, now - recordedAt);
 }

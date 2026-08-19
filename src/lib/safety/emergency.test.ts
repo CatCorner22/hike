@@ -41,4 +41,21 @@ describe("emergency helpers", () => {
     expect(msg).toContain("No GPS fix");
     expect(msg).toContain("Half Dome");
   });
+
+  it("labels stale last-known coordinates so rescuers are not misled", () => {
+    const msg = emergencyMessage({
+      lat: 37.1,
+      lng: -119.2,
+      stale: true,
+      recordedAt: Date.parse("2026-08-19T18:00:00Z"),
+    });
+    expect(msg).toContain("LAST KNOWN POSITION");
+    expect(msg).toContain("2026-08-19T18:00:00.000Z");
+  });
+
+  it("still produces a message when GPS has never arrived", () => {
+    const msg = emergencyMessage({ trailName: "Half Dome" });
+    expect(msg).toContain("No GPS fix");
+    expect(msg).toContain("Half Dome");
+  });
 });

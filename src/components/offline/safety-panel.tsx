@@ -35,6 +35,7 @@ import {
   emergencyMessage,
   formatCoords,
 } from "@/lib/safety/emergency";
+<<<<<<< HEAD
 import {
   breadcrumbGpx,
   downloadTextFile,
@@ -73,6 +74,9 @@ import {
   formatUtm,
   parseUsng,
 } from "@/lib/safety/usng";
+=======
+import { formatFixAge } from "@/lib/safety/gps-quality";
+>>>>>>> origin/main
 
 interface SafetyPanelProps {
   lat?: number;
@@ -87,6 +91,7 @@ interface SafetyPanelProps {
   altitudeM?: number;
   stale?: boolean;
   recordedAt?: number;
+<<<<<<< HEAD
   backtrackEnabled: boolean;
   backtrackReady: boolean;
   onToggleBacktrack: () => void;
@@ -98,6 +103,8 @@ interface SafetyPanelProps {
   trackPoints?: Array<{ lat: number; lng: number; altitude?: number; recordedAt: string }>;
   onDrank?: () => void;
   gpsTrusted?: boolean;
+=======
+>>>>>>> origin/main
 }
 
 export function SafetyPanel({
@@ -113,6 +120,7 @@ export function SafetyPanel({
   altitudeM,
   stale,
   recordedAt,
+<<<<<<< HEAD
   backtrackEnabled,
   backtrackReady,
   onToggleBacktrack,
@@ -192,6 +200,21 @@ export function SafetyPanel({
     [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile],
   );
 
+=======
+}: SafetyPanelProps) {
+  const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
+
+  const message = emergencyMessage({
+    lat,
+    lng,
+    accuracyM,
+    trailName,
+    offTrailM,
+    stale,
+    recordedAt,
+  });
+
+>>>>>>> origin/main
   async function handleCopy() {
     const ok = await copyEmergencyInfo(message);
     setCopied(ok ? "ok" : "fail");
@@ -204,7 +227,11 @@ export function SafetyPanel({
         await navigator.share({ title: "My hiking location", text: message });
         return;
       } catch {
+<<<<<<< HEAD
         /* cancelled */
+=======
+        /* user cancelled or share failed — fall through */
+>>>>>>> origin/main
       }
     }
     await handleCopy();
@@ -265,7 +292,11 @@ export function SafetyPanel({
             Safety &amp; SOS
           </SheetTitle>
           <SheetDescription>
+<<<<<<< HEAD
             Offline tools for rescue: USNG, ICE card, beacon, backtrack, overdue timer.
+=======
+            Works offline. Copy coordinates even if share is unavailable.
+>>>>>>> origin/main
           </SheetDescription>
         </SheetHeader>
 
@@ -277,6 +308,7 @@ export function SafetyPanel({
             </div>
           )}
 
+<<<<<<< HEAD
           {overdueLabel && (
             <div
               className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
@@ -290,6 +322,8 @@ export function SafetyPanel({
             </div>
           )}
 
+=======
+>>>>>>> origin/main
           {offTrailM != null && offTrailM > 35 && !stale && (
             <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
@@ -314,6 +348,7 @@ export function SafetyPanel({
             {lat != null && lng != null ? (
               <>
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
+<<<<<<< HEAD
                 <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
                 <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
@@ -321,6 +356,8 @@ export function SafetyPanel({
                 <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
+=======
+>>>>>>> origin/main
                 {recordedAt != null && (
                   <p className="mt-1 text-xs text-muted-foreground">
                     GPS fix {formatFixAge(recordedAt)}
@@ -338,9 +375,12 @@ export function SafetyPanel({
                     {compassLabel(bearingToStart)})
                   </p>
                 )}
+<<<<<<< HEAD
                 {nearest && (
                   <p className="mt-2 text-xs text-muted-foreground">{nearest.label}</p>
                 )}
+=======
+>>>>>>> origin/main
               </>
             ) : (
               <p className="mt-1 text-sm text-muted-foreground">
@@ -352,7 +392,11 @@ export function SafetyPanel({
           <div className="grid grid-cols-2 gap-2">
             <Button onClick={() => void handleCopy()} variant="outline">
               <Copy className="mr-2 size-4" />
+<<<<<<< HEAD
               {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy"}
+=======
+              {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy coords"}
+>>>>>>> origin/main
             </Button>
             <Button onClick={() => void handleShare()} variant="outline">
               <Share2 className="mr-2 size-4" />
@@ -444,6 +488,7 @@ export function SafetyPanel({
             </Button>
           </div>
 
+<<<<<<< HEAD
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Field nav — go-to grid
@@ -639,6 +684,12 @@ export function SafetyPanel({
               Route: {trailName}. GPS can be wrong in canyons — confirm with terrain.
             </p>
           </div>
+=======
+          <p className="text-xs text-muted-foreground">
+            Route: {trailName}. Bearings are true north, not magnetic. GPS can be wrong in
+            canyons — confirm with the green trail line and terrain.
+          </p>
+>>>>>>> origin/main
         </div>
       </SheetContent>
     </Sheet>

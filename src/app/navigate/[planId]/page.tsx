@@ -8,7 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
+<<<<<<< HEAD
 import { SosBeacon } from "@/components/offline/sos-beacon";
+=======
+>>>>>>> origin/main
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
@@ -30,6 +33,7 @@ import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/na
 import type { RoutePack } from "@/lib/offline/route-pack";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
+<<<<<<< HEAD
 import {
   backtrackProgress,
   rapidAscentWarning,
@@ -48,6 +52,12 @@ import {
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
 import { formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
+=======
+import { formatWalkBearing, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
+import { daylightStatus } from "@/lib/safety/daylight";
+import { formatCoords } from "@/lib/safety/emergency";
+import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
+>>>>>>> origin/main
 import * as turf from "@turf/turf";
 
 type LoadState =
@@ -72,6 +82,7 @@ export default function NavigatePage() {
   const [progress, setProgress] = useState<TrailProgress | null>(null);
   const [headingUp, setHeadingUp] = useState(true);
   const [exitArmed, setExitArmed] = useState(false);
+<<<<<<< HEAD
   const [backtrackOn, setBacktrackOn] = useState(false);
   const [beaconOn, setBeaconOn] = useState(false);
   const [waypoints, setWaypoints] = useState<SafetyWaypoint[]>([]);
@@ -83,6 +94,8 @@ export default function NavigatePage() {
   const [goto, setGoto] = useState<{ lat: number; lng: number } | null>(null);
   const [zulu, setZulu] = useState(formatZulu());
   const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
+=======
+>>>>>>> origin/main
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -96,6 +109,8 @@ export default function NavigatePage() {
   >([]);
 
   const gps = useGps();
+  const batteryWarning = useBatteryWarning();
+  const trusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
   useEffect(() => {
     const id = window.setInterval(() => setZulu(formatZulu()), 15000);
@@ -296,6 +311,7 @@ export default function NavigatePage() {
     );
   }, [trusted, progress, daylight]);
 
+<<<<<<< HEAD
   const stillMin = useMemo(
     () => (trusted ? stationaryMinutes(trackPoints) : 0),
     [trusted, trackPoints],
@@ -374,6 +390,9 @@ export default function NavigatePage() {
       window.clearInterval(id);
     };
   }, [loadState]);
+=======
+  const skyWarning = turnaround ?? daylight?.warning ?? null;
+>>>>>>> origin/main
 
   if (loadState.status === "loading") {
     return (
@@ -437,6 +456,7 @@ export default function NavigatePage() {
         <SafetyNavMap
           geometry={pack.geometry}
           user={user}
+<<<<<<< HEAD
           nearest={
             backtrackOn
               ? retrace?.nearest ?? null
@@ -451,6 +471,11 @@ export default function NavigatePage() {
           goto={goto}
           showGrid
           nightMode={nightMode}
+=======
+          nearest={trusted ? progress?.nearest ?? null : null}
+          headingUp={headingUp && trusted && gps.fix?.heading != null}
+          follow={trusted}
+>>>>>>> origin/main
           className="absolute inset-0 h-full w-full"
         />
 
@@ -477,7 +502,10 @@ export default function NavigatePage() {
                 lng={gps.fix?.lng}
                 accuracyM={gps.fix?.accuracy}
                 trailName={pack.name}
+<<<<<<< HEAD
                 packId={pack.id}
+=======
+>>>>>>> origin/main
                 offTrailM={trusted ? progress?.offsetMeters : undefined}
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
                 bearingToStart={bearingToStart}
@@ -485,6 +513,7 @@ export default function NavigatePage() {
                 altitudeM={gps.fix?.altitude}
                 stale={!trusted && Boolean(gps.fix)}
                 recordedAt={gps.fix?.recordedAt}
+<<<<<<< HEAD
                 backtrackEnabled={backtrackOn}
                 backtrackReady={trackPoints.length >= 2}
                 onToggleBacktrack={() => setBacktrackOn((v) => !v)}
@@ -504,6 +533,8 @@ export default function NavigatePage() {
                   }
                 }}
                 gpsTrusted={trusted}
+=======
+>>>>>>> origin/main
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
@@ -513,9 +544,14 @@ export default function NavigatePage() {
                 </p>
                 {gps.fix && (
                   <p className="font-mono text-[10px] text-muted-foreground">
+<<<<<<< HEAD
                     {formatUsng(gps.fix.lat, gps.fix.lng)}
                     {!trusted ? ` · last known ${formatFixAge(gps.fix.recordedAt)}` : ""}
                     {` · ${zulu}`}
+=======
+                    {formatCoords(gps.fix.lat, gps.fix.lng)}
+                    {!trusted ? ` · last known ${formatFixAge(gps.fix.recordedAt)}` : ""}
+>>>>>>> origin/main
                   </p>
                 )}
               </div>
@@ -523,12 +559,15 @@ export default function NavigatePage() {
           </div>
         </div>
 
+<<<<<<< HEAD
         {overdueBanner && !exitArmed && !beaconOn && (
           <div className="pointer-events-none absolute inset-x-3 top-16 z-20 rounded-lg border border-destructive bg-destructive/90 px-3 py-2 text-sm font-medium text-white">
             {overdueBanner}
           </div>
         )}
 
+=======
+>>>>>>> origin/main
         {exitArmed && (
           <div className="pointer-events-none absolute inset-x-3 top-16 z-20 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs">
             Tap back again to leave navigation. The route pack stays on this device.
@@ -576,6 +615,7 @@ export default function NavigatePage() {
             />
             {gps.fix ? gpsAccuracyLabel(gps.fix.accuracy) : "Waiting for GPS…"}
           </div>
+<<<<<<< HEAD
           <div className="flex gap-2">
             <Button
               variant={nightMode === "off" ? "outline" : "default"}
@@ -597,11 +637,23 @@ export default function NavigatePage() {
               {headingUp && trusted && gps.fix?.heading != null ? "Heading up" : "North up"}
             </Button>
           </div>
+=======
+          <Button
+            variant={headingUp ? "default" : "outline"}
+            size="sm"
+            onClick={() => setHeadingUp((v) => !v)}
+            disabled={!trusted || gps.fix?.heading == null}
+          >
+            <Compass className="size-3.5" />
+            {headingUp && trusted && gps.fix?.heading != null ? "Heading up" : "North up"}
+          </Button>
+>>>>>>> origin/main
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
+<<<<<<< HEAD
             label={backtrackOn ? "Backtrack" : "Remaining"}
             value={
               backtrackOn && retrace
@@ -610,6 +662,10 @@ export default function NavigatePage() {
                   ? formatDistance(progress.remainingMeters)
                   : "—"
             }
+=======
+            label="Remaining"
+            value={trusted && progress ? formatDistance(progress.remainingMeters) : "—"}
+>>>>>>> origin/main
           />
           <Stat
             icon={Mountain}
