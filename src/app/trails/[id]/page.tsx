@@ -11,13 +11,14 @@ import { ElevationChart } from "@/components/trails/elevation-chart";
 import { ResearchBrief } from "@/components/trails/research-brief";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { formatDistance, formatElevation } from "@/lib/geo";
+import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
+import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import {
   Calendar,
   Loader2,
-  Navigation,
   Plus,
   RefreshCw,
 } from "lucide-react";
@@ -53,6 +54,7 @@ export default function TrailDetailPage() {
   const [loading, setLoading] = useState(true);
   const [researchLoading, setResearchLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const packReady = useOfflinePackReady(trail ? `trail-${trailId}` : null);
 
   useEffect(() => {
     async function load() {
@@ -153,13 +155,10 @@ export default function TrailDetailPage() {
             <Plus className="mr-2 h-4 w-4" />
             Add to plan
           </Button>
-          <Link
+          <NavigateLink
             href={`/navigate/trail-${trailId}`}
-            className={buttonVariants({ variant: "outline" })}
-          >
-            <Navigation className="mr-2 h-4 w-4" />
-            Navigate
-          </Link>
+            ready={packReady}
+          />
           <PrepareOffline
             packId={`trail-${trailId}`}
             aliases={[`trail-${trail.id}`, trailId, trail.id]}

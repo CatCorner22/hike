@@ -6,12 +6,28 @@ import {
   progressAlongTrail,
   remainingElevationGain,
 } from "./navigation";
+import { daylightWarning, minutesUntilSunset } from "@/lib/safety/daylight";
+import { offTrailLevel, shouldRepeatAlert } from "@/lib/safety/alerts";
 
 const straightLine: GeoJSON.LineString = {
   type: "LineString",
   coordinates: [
     [-119.0, 37.0],
     [-119.0, 37.01],
+  ],
+};
+
+const multiLine: GeoJSON.MultiLineString = {
+  type: "MultiLineString",
+  coordinates: [
+    [
+      [-119.0, 37.0],
+      [-119.0, 37.005],
+    ],
+    [
+      [-119.0, 37.005],
+      [-119.0, 37.01],
+    ],
   ],
 };
 
@@ -35,6 +51,12 @@ describe("progressAlongTrail", () => {
   it("treats the start as zero traveled distance", () => {
     const progress = progressAlongTrail({ lat: 37.0, lng: -119.0 }, straightLine);
     expect(progress.traveledMeters).toBeLessThan(20);
+  });
+
+  it("picks the closest segment on MultiLineString geometry", () => {
+    const onSecond = progressAlongTrail({ lat: 37.0075, lng: -119.0 }, multiLine);
+    expect(onSecond.offsetMeters).toBeLessThan(5);
+    expect(onSecond.traveledMeters).toBeGreaterThan(multiLine.coordinates[0].length);
   });
 });
 
@@ -69,5 +91,31 @@ describe("isValidGeometry", () => {
     expect(isValidGeometry(null)).toBe(false);
     expect(isValidGeometry({ type: "LineString", coordinates: [] })).toBe(false);
     expect(isValidGeometry(straightLine)).toBe(true);
+  });
+});
+
+describe("safety alerts", () => {
+  it("escalates off-trail severity with distance", () => {
+    expect(offTrailLevel(10)).toBe("ok");
+    expect(offTrailLevel(50)).toBe("warn");
+    expect(offTrailLevel(120)).toBe("critical");
+  });
+
+  it("debounces repeated vibration alerts", () => {
+    expect(shouldRepeatAlert(null, "warn")).toBe(true);
+    expect(shouldRepeatAlert(Date.now() - 1000, "warn")).toBe(false);
+    expect(shouldRepeatAlert(Date.now() - 40_000, "critical")).toBe(true);
+  });
+});
+
+describe("daylight warnings", () => {
+  it("warns within an hour of sunset", () => {
+    const lat = 37.77;
+    const lng = -122.42;
+    const sunset = new Date();
+    sunset.setUTCHours(3, 0, 0, 0);
+    const mins = minutesUntilSunset(sunset, lat, lng);
+    const warning = daylightWarning(Math.min(mins, 45));
+    expect(warning).toMatch(/sunset/i);
   });
 });

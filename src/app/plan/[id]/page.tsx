@@ -4,14 +4,16 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
+import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
-import { Navigation, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 const MapView = dynamic(
   () => import("@/components/map/map-view").then((m) => m.MapView),
@@ -43,6 +45,7 @@ export default function PlanDetailPage() {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [trail, setTrail] = useState<TrailData | null>(null);
   const [saving, setSaving] = useState(false);
+  const packReady = useOfflinePackReady(plan ? `plan-${planId}` : null);
 
   useEffect(() => {
     fetch(`/api/plans/${planId}`)
@@ -135,13 +138,10 @@ export default function PlanDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">Edit plan</h1>
         <div className="flex flex-wrap gap-2">
-          <Link
+          <NavigateLink
             href={`/navigate/plan-${plan.id}`}
-            className={buttonVariants({ variant: "outline" })}
-          >
-            <Navigation className="mr-2 h-4 w-4" />
-            Navigate
-          </Link>
+            ready={packReady}
+          />
           <Button variant="outline" onClick={importGpx}>
             Import GPX
           </Button>
