@@ -1,4 +1,5 @@
 let activeLock: { release: () => void } | null = null;
+let lockHeld = false;
 
 export async function requestWakeLock(): Promise<{ release: () => void }> {
   const nav = navigator as Navigator & {
@@ -14,8 +15,10 @@ export async function requestWakeLock(): Promise<{ release: () => void }> {
   const acquire = async () => {
     try {
       sentinel = await nav.wakeLock!.request("screen");
+      lockHeld = sentinel != null;
     } catch {
       sentinel = null;
+      lockHeld = false;
     }
   };
 
@@ -30,6 +33,7 @@ export async function requestWakeLock(): Promise<{ release: () => void }> {
     release() {
       document.removeEventListener("visibilitychange", onVisible);
       void sentinel?.release();
+      lockHeld = false;
       if (activeLock === lock) activeLock = null;
     },
   };
@@ -38,7 +42,12 @@ export async function requestWakeLock(): Promise<{ release: () => void }> {
   return lock;
 }
 
+export function isWakeLockHeld(): boolean {
+  return lockHeld && activeLock != null;
+}
+
 export async function releaseWakeLock() {
   activeLock?.release();
   activeLock = null;
+  lockHeld = false;
 }

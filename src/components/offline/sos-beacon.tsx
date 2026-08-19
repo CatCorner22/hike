@@ -8,13 +8,18 @@ export function SosBeacon({ onClose }: { onClose: () => void }) {
   const [flash, setFlash] = useState(true);
 
   useEffect(() => {
+    const abort = new AbortController();
     const timer = window.setInterval(() => setFlash((v) => !v), 280);
     vibrateSos();
-    void playSosTone(3);
+    void playSosTone("loop", abort.signal);
     const vibe = window.setInterval(() => vibrateSos(), 4000);
     return () => {
+      abort.abort();
       window.clearInterval(timer);
       window.clearInterval(vibe);
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(0);
+      }
     };
   }, []);
 
@@ -27,7 +32,7 @@ export function SosBeacon({ onClose }: { onClose: () => void }) {
     >
       <p className={`text-4xl font-black ${flash ? "text-black" : "text-white"}`}>SOS</p>
       <p className={`mt-2 text-sm ${flash ? "text-black" : "text-white"}`}>
-        Screen strobe + tone. Use to be seen or heard.
+        Screen strobe + looping tone. Use to be seen or heard. Stop cancels the sound.
       </p>
       <Button className="mt-8" variant="secondary" onClick={onClose}>
         Stop beacon

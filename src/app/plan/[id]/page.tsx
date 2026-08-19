@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
-import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
+import { packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import { Trash2 } from "lucide-react";
 
 const MapView = dynamic(
@@ -56,26 +56,24 @@ export default function PlanDetailPage() {
           const tr = await fetch(`/api/trails/${p.trailId}`).then((r) => r.json());
           if (tr.geometry) {
             setTrail(tr);
-            await saveRoutePack(
-              buildRoutePack({
-                id: `plan-${planId}`,
-                aliases: [planId, p.trailId, `trail-${p.trailId}`],
-                name: p.name,
-                geometry: tr.geometry,
-                bbox: tr.bbox,
-                elevationProfile: tr.elevationProfile || [],
-              }),
-            );
+            const built = packFromPlanApi(`plan-${planId}`, p, tr);
+            if (built) {
+              try {
+                await persistRoutePack(built);
+              } catch {
+                /* Navigate stays gated until a valid pack is on device */
+              }
+            }
           }
         } else if (p.customGeometry) {
-          await saveRoutePack(
-            buildRoutePack({
-              id: `plan-${planId}`,
-              aliases: [planId],
-              name: p.name,
-              geometry: p.customGeometry,
-            }),
-          );
+          const custom = packFromPlanApi(`plan-${planId}`, p, null);
+          if (custom) {
+            try {
+              await persistRoutePack(custom);
+            } catch {
+              /* Navigate stays gated until a valid pack is on device */
+            }
+          }
         }
       });
   }, [planId]);
@@ -116,14 +114,18 @@ export default function PlanDetailPage() {
       const data = await response.json();
       if (data.geometry) {
         await save({ customGeometry: data.geometry, name: data.name });
-        await saveRoutePack(
-          buildRoutePack({
-            id: `plan-${planId}`,
-            aliases: [planId],
-            name: data.name || plan?.name || "Imported route",
-            geometry: data.geometry,
-          }),
+        const imported = packFromPlanApi(
+          `plan-${planId}`,
+          { id: planId, name: data.name || plan?.name || "Imported route", customGeometry: data.geometry },
+          null,
         );
+        if (imported) {
+          try {
+            await persistRoutePack(imported);
+          } catch {
+            /* invalid GPX geometry is rejected */
+          }
+        }
       }
     };
     input.click();

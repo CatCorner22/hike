@@ -45,6 +45,7 @@ import {
   overdueStatus,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
+import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
 import { formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
@@ -81,6 +82,7 @@ export default function NavigatePage() {
   const [nightMode, setNightMode] = useState<"off" | "red" | "nvg">("off");
   const [goto, setGoto] = useState<{ lat: number; lng: number } | null>(null);
   const [zulu, setZulu] = useState(formatZulu());
+  const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -99,6 +101,18 @@ export default function NavigatePage() {
     const id = window.setInterval(() => setZulu(formatZulu()), 15000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`hike-drink-${navId}`);
+      if (raw) {
+        const t = Number(raw);
+        if (Number.isFinite(t)) setLastDrinkAt(t);
+      }
+    } catch {
+      /* private mode */
+    }
+  }, [navId]);
   const batteryWarning = useBatteryWarning();
   const trusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
@@ -122,7 +136,10 @@ export default function NavigatePage() {
 
     try {
       if (target.kind === "trail") {
-        const res = await withNetworkTimeout(fetch(`/api/trails/${target.id}`), 8000);
+        const res = await withNetworkTimeout(
+          (signal) => fetch(`/api/trails/${target.id}`, { signal }),
+          8000,
+        );
         if (!res.ok) throw new Error("Trail not found on server");
         const data = await res.json();
         const pack = await persistRoutePack(packFromTrailApi(navId, data));
@@ -130,12 +147,18 @@ export default function NavigatePage() {
         return;
       }
 
-      const planRes = await withNetworkTimeout(fetch(`/api/plans/${target.id}`), 8000);
+      const planRes = await withNetworkTimeout(
+        (signal) => fetch(`/api/plans/${target.id}`, { signal }),
+        8000,
+      );
       if (!planRes.ok) throw new Error("Plan not found on server");
       const plan = await planRes.json();
       let trail = null;
       if (plan.trailId) {
-        const trailRes = await withNetworkTimeout(fetch(`/api/trails/${plan.trailId}`), 8000);
+        const trailRes = await withNetworkTimeout(
+          (signal) => fetch(`/api/trails/${plan.trailId}`, { signal }),
+          8000,
+        );
         if (trailRes.ok) trail = await trailRes.json();
       }
       const built = packFromPlanApi(navId, plan, trail);
@@ -283,9 +306,24 @@ export default function NavigatePage() {
   );
   const stillWarning =
     stillMin >= 20 ? `No movement for ${stillMin} min. If you are hurt, open SOS.` : null;
+  const exposureWarning = hypothermiaWarning({
+    isDark: Boolean(daylight?.isDark),
+    altitudeM: gps.fix?.altitude,
+    stationaryMin: stillMin,
+  });
+  const fallWarning = trusted ? suddenStopWarning(trackPoints) : null;
+  const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
+  const hydrateWarning = waterReminder(lastDrinkAt, hikeStartedAt);
 
   const skyWarning =
-    stillWarning ?? ascentWarning ?? turnaround ?? daylight?.warning ?? null;
+    fallWarning ??
+    exposureWarning ??
+    stillWarning ??
+    ascentWarning ??
+    hydrateWarning ??
+    turnaround ??
+    daylight?.warning ??
+    null;
 
   const crumbs = useMemo(
     () => reverseTrackLine(trackPoints),
@@ -454,6 +492,18 @@ export default function NavigatePage() {
                 onWaypointsChange={setWaypoints}
                 heading={trusted ? gps.fix?.heading : undefined}
                 onGoto={setGoto}
+                waypoints={waypoints}
+                trackPoints={trackPoints}
+                onDrank={() => {
+                  const t = Date.now();
+                  setLastDrinkAt(t);
+                  try {
+                    sessionStorage.setItem(`hike-drink-${navId}`, String(t));
+                  } catch {
+                    /* private mode */
+                  }
+                }}
+                gpsTrusted={trusted}
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>

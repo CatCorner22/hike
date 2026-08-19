@@ -61,9 +61,10 @@ export function rapidAscentWarning(
     return now - t <= 60 * 60 * 1000;
   });
   if (recent.length < 4) return null;
-  const start = recent[0].altitude!;
-  const end = recent[recent.length - 1].altitude!;
-  const gain = end - start;
+  const alts = recent.map((p) => p.altitude as number);
+  const minAlt = Math.min(...alts);
+  const end = alts[alts.length - 1];
+  const gain = end - minAlt;
   if (end >= 2400 && gain >= 400) {
     return `You gained ~${Math.round(gain)} m in the last hour above 2,400 m. Slow down and watch for altitude illness.`;
   }

@@ -4,6 +4,34 @@ export const TRUSTED_FIX_MS = 2 * 60 * 1000;
 /** Older last-known positions may still be shown, but never as current location. */
 export const DISPLAY_FIX_MS = 24 * 60 * 60 * 1000;
 
+export function isValidLatLng(lat: number, lng: number): boolean {
+  return (
+    Number.isFinite(lat) &&
+    Number.isFinite(lng) &&
+    lat >= -90 &&
+    lat <= 90 &&
+    lng >= -180 &&
+    lng <= 180
+  );
+}
+
+/**
+ * Phone GPS timestamps are sometimes 0, seconds-since-epoch, or clock-skewed.
+ * Those must not become “epoch” or a future time — both break trust/stale logic.
+ */
+export function sanitizeFixTimestamp(
+  timestamp: number | undefined | null,
+  now = Date.now(),
+): number {
+  if (timestamp == null || !Number.isFinite(timestamp) || timestamp <= 0) return now;
+  let t = timestamp;
+  // 10-digit values are seconds; 13-digit values are milliseconds.
+  if (t < 1e11) t *= 1000;
+  if (t > now + 120_000) return now;
+  if (now - t > DISPLAY_FIX_MS) return now;
+  return t;
+}
+
 export function fixAgeMs(recordedAt: number, now = Date.now()): number {
   return Math.max(0, now - recordedAt);
 }

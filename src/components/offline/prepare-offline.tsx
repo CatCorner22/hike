@@ -3,12 +3,8 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
-import {
-  buildRoutePack,
-  hasRoutePack,
-  saveRoutePack,
-  type RoutePack,
-} from "@/lib/offline/route-pack";
+import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 
 interface PrepareOfflineProps {
   packId: string;
@@ -55,7 +51,7 @@ export function PrepareOffline({
         bbox,
         elevationProfile,
       });
-      await saveRoutePack(pack);
+      await persistRoutePack(pack);
       setReady(true);
       setMessage(
         "Route saved on this device. Navigation will work without cell service.",

@@ -1,12 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  CheckCircle2,
   Copy,
+  Download,
   Droplets,
   Flag,
   LifeBuoy,
+  Megaphone,
   MessageSquare,
   Share2,
   Siren,
@@ -32,7 +35,16 @@ import {
   emergencyMessage,
   formatCoords,
 } from "@/lib/safety/emergency";
+import {
+  breadcrumbGpx,
+  downloadTextFile,
+  isIceFilled,
+  nearestWaypoint,
+  safeFilename,
+  safetySelfCheck,
+} from "@/lib/safety/field";
 import { formatFixAge } from "@/lib/safety/gps-quality";
+import { isWakeLockHeld } from "@/lib/offline/wake-lock";
 import {
   dropWaypoint,
   getIceProfile,
@@ -52,7 +64,7 @@ import {
   rangeAzimuth,
 } from "@/lib/safety/landnav";
 import { lostProcedure, nineLineMedevac, pacePlan, radioGrid } from "@/lib/safety/medevac";
-import { smsHref } from "@/lib/safety/strobe";
+import { playWhistleBlasts, smsHref } from "@/lib/safety/strobe";
 import {
   formatDdm,
   formatDms,
@@ -82,6 +94,10 @@ interface SafetyPanelProps {
   onWaypointsChange: (points: SafetyWaypoint[]) => void;
   heading?: number;
   onGoto: (point: { lat: number; lng: number } | null) => void;
+  waypoints?: SafetyWaypoint[];
+  trackPoints?: Array<{ lat: number; lng: number; altitude?: number; recordedAt: string }>;
+  onDrank?: () => void;
+  gpsTrusted?: boolean;
 }
 
 export function SafetyPanel({
@@ -104,6 +120,10 @@ export function SafetyPanel({
   onWaypointsChange,
   heading,
   onGoto,
+  waypoints = [],
+  trackPoints = [],
+  onDrank,
+  gpsTrusted = false,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -121,6 +141,11 @@ export function SafetyPanel({
   const [paces, setPaces] = useState("65");
   const [paceLen, setPaceLen] = useState("65");
   const [copiedNine, setCopiedNine] = useState(false);
+  const [gpxStatus, setGpxStatus] = useState<string | null>(null);
+  const [whistleBusy, setWhistleBusy] = useState(false);
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileRef = useRef(profile);
+  profileRef.current = profile;
 
   useEffect(() => {
     void getIceProfile().then(setProfile);
@@ -128,6 +153,12 @@ export function SafetyPanel({
       if (!alarm) return;
       setReturnLocal(toLocalInput(alarm.returnAt));
     });
+    return () => {
+      if (persistTimer.current) {
+        clearTimeout(persistTimer.current);
+        void saveIceProfile(profileRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -179,10 +210,32 @@ export function SafetyPanel({
     await handleCopy();
   }
 
-  async function persistProfile(next: IceProfile) {
+  function persistProfile(next: IceProfile) {
     setProfile(next);
-    await saveIceProfile(next);
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      persistTimer.current = null;
+      void saveIceProfile(next);
+    }, 400);
   }
+
+  const nearest = useMemo(
+    () => (lat != null && lng != null ? nearestWaypoint({ lat, lng }, waypoints) : null),
+    [lat, lng, waypoints],
+  );
+
+  const checks = useMemo(
+    () =>
+      safetySelfCheck({
+        packReady: true,
+        gpsTrusted,
+        iceFilled: isIceFilled(profile),
+        returnSet: Boolean(returnLocal),
+        wakeLock: isWakeLockHeld(),
+        crumbs: trackPoints.length,
+      }),
+    [gpsTrusted, profile, returnLocal, trackPoints.length],
+  );
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
@@ -285,6 +338,9 @@ export function SafetyPanel({
                     {compassLabel(bearingToStart)})
                   </p>
                 )}
+                {nearest && (
+                  <p className="mt-2 text-xs text-muted-foreground">{nearest.label}</p>
+                )}
               </>
             ) : (
               <p className="mt-1 text-sm text-muted-foreground">
@@ -352,6 +408,39 @@ export function SafetyPanel({
               onClick={() => void markWaypoint("rp")}
             >
               Mark RP
+            </Button>
+            <Button
+              variant="outline"
+              disabled={trackPoints.length < 2}
+              onClick={async () => {
+                const gpx = breadcrumbGpx(`${trailName} breadcrumbs`, trackPoints);
+                try {
+                  downloadTextFile(`${safeFilename(trailName)}-track.gpx`, gpx);
+                  setGpxStatus("GPX downloaded");
+                } catch {
+                  const ok = await copyEmergencyInfo(gpx);
+                  setGpxStatus(ok ? "GPX copied" : "GPX export failed");
+                }
+                window.setTimeout(() => setGpxStatus(null), 2500);
+              }}
+            >
+              <Download className="mr-2 size-4" />
+              {gpxStatus ?? "Export GPX"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={whistleBusy}
+              onClick={() => {
+                setWhistleBusy(true);
+                void playWhistleBlasts(3).finally(() => setWhistleBusy(false));
+              }}
+            >
+              <Megaphone className="mr-2 size-4" />
+              {whistleBusy ? "Whistle…" : "3-blast whistle"}
+            </Button>
+            <Button variant="outline" onClick={() => onDrank?.()}>
+              <Droplets className="mr-2 size-4" />
+              I drank
             </Button>
           </div>
 
@@ -459,6 +548,25 @@ export function SafetyPanel({
             <ul className="space-y-1 text-xs text-muted-foreground">
               {pacePlan().map((line) => (
                 <li key={line}>{line}</li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Offline self-check
+            </p>
+            <ul className="space-y-1 text-xs">
+              {checks.map((item) => (
+                <li
+                  key={item.id}
+                  className={item.ok ? "text-muted-foreground" : "text-amber-700 dark:text-amber-400"}
+                >
+                  <CheckCircle2
+                    className={`mr-1 inline size-3 ${item.ok ? "text-primary" : "opacity-40"}`}
+                  />
+                  {item.label}
+                </li>
               ))}
             </ul>
           </div>

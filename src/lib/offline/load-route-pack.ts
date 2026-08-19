@@ -99,19 +99,20 @@ export function packFromPlanApi(
 }
 
 export async function withNetworkTimeout<T>(
-  promise: Promise<T>,
+  factory: (signal: AbortSignal) => Promise<T>,
   timeoutMs: number,
 ): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Network timeout")), timeoutMs);
-      }),
-    ]);
+    return await factory(controller.signal);
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new Error("Network timeout");
+    }
+    throw err;
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 

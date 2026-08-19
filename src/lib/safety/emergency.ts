@@ -26,8 +26,8 @@ export function emergencyMessage(input: {
     if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
     lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
-    lines.push(`USNG 8°: ${formatUsng(input.lat, input.lng)}`);
-    lines.push(`MGRS 10°: ${formatMgrs10(input.lat, input.lng)}`);
+    lines.push(`USNG 8-digit: ${formatUsng(input.lat, input.lng)}`);
+    lines.push(`MGRS 10-digit: ${formatMgrs10(input.lat, input.lng)}`);
     lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5))}`);
     lines.push(`UTM: ${formatUtm(input.lat, input.lng)}`);
     lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);

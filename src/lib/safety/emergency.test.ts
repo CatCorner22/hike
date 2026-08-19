@@ -18,8 +18,10 @@ describe("emergency helpers", () => {
     expect(msg).toContain("HIKING EMERGENCY LOCATION");
     expect(msg).toContain("Test Trail");
     expect(msg).toContain("maps.google.com");
-    expect(msg).toContain("USNG");
-    expect(msg).toContain("MGRS");
+    expect(msg).toContain("USNG 8-digit");
+    expect(msg).toContain("MGRS 10-digit");
+    expect(msg).not.toContain("USNG 8°");
+    expect(msg).not.toContain("MGRS 10°");
     expect(msg).toContain("UTM:");
   });
 

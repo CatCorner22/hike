@@ -91,6 +91,41 @@ describe("isValidGeometry", () => {
     expect(isValidGeometry({ type: "LineString", coordinates: [] })).toBe(false);
     expect(isValidGeometry(straightLine)).toBe(true);
   });
+
+  it("rejects NaN or out-of-range coordinates that would crash Turf", () => {
+    expect(
+      isValidGeometry({
+        type: "LineString",
+        coordinates: [
+          [-119, 37],
+          [Number.NaN, 37],
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isValidGeometry({
+        type: "MultiLineString",
+        coordinates: [
+          [
+            [999, 37],
+            [1000, 38],
+          ],
+        ],
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("progressAlongTrail empty geometry", () => {
+  it("does not throw on a MultiLineString with only stub segments", () => {
+    const empty: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [[[-119, 37]], []],
+    };
+    const progress = progressAlongTrail({ lat: 37, lng: -119 }, empty);
+    expect(progress.traveledMeters).toBe(0);
+    expect(progress.offsetMeters).toBe(0);
+  });
 });
 
 describe("safety alerts", () => {

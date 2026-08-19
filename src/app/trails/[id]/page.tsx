@@ -14,7 +14,7 @@ import { formatDistance, formatElevation } from "@/lib/geo";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
-import { buildRoutePack, saveRoutePack } from "@/lib/offline/route-pack";
+import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import {
   Calendar,
@@ -64,16 +64,11 @@ export default function TrailDetailPage() {
         if (!response.ok) throw new Error(data.error);
         setTrail(data);
         if (data.geometry) {
-          await saveRoutePack(
-            buildRoutePack({
-              id: `trail-${trailId}`,
-              aliases: [`trail-${data.id}`, trailId, data.id],
-              name: data.name,
-              geometry: data.geometry,
-              bbox: data.bbox,
-              elevationProfile: data.elevationProfile || [],
-            }),
-          );
+          try {
+            await persistRoutePack(packFromTrailApi(`trail-${trailId}`, data));
+          } catch {
+            /* Navigate stays gated until a valid pack is on device */
+          }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Failed to load");
