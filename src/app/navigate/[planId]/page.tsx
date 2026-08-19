@@ -47,8 +47,8 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
-import { formatNaismith, gpsAnomalyWarning, naismithMinutes } from "@/lib/safety/field-ops";
-import { buddySeparationWarning } from "@/lib/safety/sar-advanced";
+import { formatNaismith, gpsAnomalyWarning, naismithMinutes, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-advanced";
 import { sereAssessment } from "@/lib/safety/sere";
 import { deadReckon, distanceFromPaces, formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
@@ -88,6 +88,7 @@ export default function NavigatePage() {
   const [searchOverlay, setSearchOverlay] = useState<GeoJSON.LineString | null>(null);
   const [zulu, setZulu] = useState(formatZulu());
   const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
+  const [lastCommsAt, setLastCommsAt] = useState<number | null>(null);
   const [gpsDenied, setGpsDenied] = useState(false);
   const [deniedAnchor, setDeniedAnchor] = useState<{
     lat: number;
@@ -122,6 +123,11 @@ export default function NavigatePage() {
       if (raw) {
         const t = Number(raw);
         if (Number.isFinite(t)) setLastDrinkAt(t);
+      }
+      const comms = sessionStorage.getItem(`hike-comms-${navId}`);
+      if (comms) {
+        const t = Number(comms);
+        if (Number.isFinite(t)) setLastCommsAt(t);
       }
     } catch {
       /* private mode */
@@ -362,6 +368,12 @@ export default function NavigatePage() {
   const gpsSpoof = gpsTrusted ? gpsAnomalyWarning(trackPoints) : null;
   const buddyWarn =
     trusted && navFix ? buddySeparationWarning({ lat: navFix.lat, lng: navFix.lng }, waypoints) : null;
+  const commsWarn = lastCommsAt != null ? commsWindowReminder(lastCommsAt) : null;
+  const slopePct =
+    loadState.status === "ready" && progress
+      ? slopeFromProfile(loadState.pack.elevationProfile, progress.traveledMeters)
+      : null;
+  const slopeWarn = slopePct != null ? slopeWarning(slopePct) : null;
 
   const skyWarning =
     deniedWarning ??
@@ -370,6 +382,8 @@ export default function NavigatePage() {
     exposureWarning ??
     sereWarning ??
     buddyWarn ??
+    slopeWarn ??
+    commsWarn ??
     stillWarning ??
     ascentWarning ??
     hydrateWarning ??
@@ -592,7 +606,19 @@ export default function NavigatePage() {
                 geometry={pack.geometry}
                 remainingMeters={trusted ? progress?.remainingMeters : undefined}
                 remainingGainM={trusted ? progress?.remainingElevationMeters : undefined}
+                traveledMeters={trusted ? progress?.traveledMeters : undefined}
+                elevationProfile={pack.elevationProfile}
                 onSearchOverlay={setSearchOverlay}
+                lastCommsAt={lastCommsAt}
+                onCommsAttempt={() => {
+                  const t = Date.now();
+                  setLastCommsAt(t);
+                  try {
+                    sessionStorage.setItem(`hike-comms-${navId}`, String(t));
+                  } catch {
+                    /* private mode */
+                  }
+                }}
               />
               <div className="max-w-[55%] text-right">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>

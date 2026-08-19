@@ -7,6 +7,8 @@ export interface IceProfile {
   medical: string;
   partySize: number;
   bloodType?: string;
+  challenge?: string;
+  password?: string;
 }
 
 export interface SafetyWaypoint {
