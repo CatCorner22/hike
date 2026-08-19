@@ -46,6 +46,7 @@ export function emergencyMessage(input: {
     if (profile.name) lines.push(`Hiker: ${profile.name}`);
     if (profile.partySize) lines.push(`Party size: ${profile.partySize}`);
     if (profile.medical) lines.push(`Medical: ${profile.medical}`);
+    if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
     if (profile.iceName || profile.icePhone) {
       lines.push(`ICE: ${profile.iceName} ${profile.icePhone}`.trim());
     }

@@ -25,6 +25,22 @@ describe("emergency helpers", () => {
     expect(msg).toContain("UTM:");
   });
 
+  it("includes blood type when the ICE card has it", () => {
+    const msg = emergencyMessage({
+      lat: 37.1,
+      lng: -119.2,
+      profile: {
+        name: "Pat",
+        iceName: "",
+        icePhone: "",
+        medical: "",
+        partySize: 1,
+        bloodType: "O+",
+      },
+    });
+    expect(msg).toContain("Blood type: O+");
+  });
+
   it("labels stale last-known coordinates so rescuers are not misled", () => {
     const msg = emergencyMessage({
       lat: 37.1,

@@ -34,6 +34,35 @@ export function toMagneticBearing(trueBearing: number, declination: number): num
   return ((trueBearing - declination) % 360 + 360) % 360;
 }
 
+export function toTrueBearing(magneticBearing: number, declination: number): number {
+  return ((magneticBearing + declination) % 360 + 360) % 360;
+}
+
+/** G-M card: east declination means magnetic is east of true/grid. */
+export function gmAngleCard(lat: number, lng: number): {
+  declination: number;
+  east: boolean;
+  gridToMagnetic: string;
+  magneticToGrid: string;
+  lars: string;
+} | null {
+  const declination = magneticDeclination(lat, lng);
+  if (declination == null) return null;
+  const east = declination >= 0;
+  const abs = Math.abs(declination).toFixed(1);
+  return {
+    declination,
+    east,
+    gridToMagnetic: east
+      ? `Grid → mag: subtract ${abs}° (east is least)`
+      : `Grid → mag: add ${abs}° (west is best)`,
+    magneticToGrid: east
+      ? `Mag → grid: add ${abs}°`
+      : `Mag → grid: subtract ${abs}°`,
+    lars: "LARS: Left Add, Right Subtract — when the G-M arrow is left/right of grid north.",
+  };
+}
+
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
   const trueLabel = `${Math.round(trueBearing)}° true`;
   if (lat == null || lng == null) return trueLabel;
