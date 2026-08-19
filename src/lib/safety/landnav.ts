@@ -128,6 +128,88 @@ export function resection(
   return { point: { lat, lng }, cutDeg, warning };
 }
 
+export interface ResectionObservation {
+  known: { lat: number; lng: number };
+  bearingTo: number;
+}
+
+function resectionRay(obs: ResectionObservation, km = 80): GeoJSON.Feature<GeoJSON.LineString> {
+  const back = backAzimuth(obs.bearingTo);
+  return turf.lineString([
+    [obs.known.lng, obs.known.lat],
+    turf.destination(turf.point([obs.known.lng, obs.known.lat]), km, back, {
+      units: "kilometers",
+    }).geometry.coordinates,
+  ]);
+}
+
+/** Three-point resection — centroid of pairwise cuts; reports spread as error hint. */
+export function resection3(
+  obs: [ResectionObservation, ResectionObservation, ResectionObservation],
+): {
+  point: { lat: number; lng: number };
+  spreadM: number;
+  warning: string | null;
+} | null {
+  const hits: Array<{ lat: number; lng: number }> = [];
+  for (let i = 0; i < 3; i++) {
+    for (let j = i + 1; j < 3; j++) {
+      const a = resectionRay(obs[i]);
+      const b = resectionRay(obs[j]);
+      const hit = turf.lineIntersect(a, b).features[0];
+      if (hit?.geometry.type === "Point") {
+        const [lng, lat] = hit.geometry.coordinates;
+        if (Number.isFinite(lat) && Number.isFinite(lng)) hits.push({ lat, lng });
+      }
+    }
+  }
+  if (hits.length === 0) return null;
+  const lng = hits.reduce((s, p) => s + p.lng, 0) / hits.length;
+  const lat = hits.reduce((s, p) => s + p.lat, 0) / hits.length;
+  let spreadM = 0;
+  for (const h of hits) {
+    spreadM = Math.max(spreadM, rangeAzimuth({ lat, lng }, h).meters);
+  }
+  const cut12 = smallestAngle(obs[0].bearingTo, obs[1].bearingTo);
+  const cut23 = smallestAngle(obs[1].bearingTo, obs[2].bearingTo);
+  const cut31 = smallestAngle(obs[2].bearingTo, obs[0].bearingTo);
+  const poor = [cut12, cut23, cut31].some((c) => c < 30 || c > 150);
+  const warning =
+    spreadM > 80
+      ? `Cuts disagree by ~${Math.round(spreadM)} m — re-shoot bearings.`
+      : poor
+        ? "Poor triangle — spread known points around you."
+        : spreadM > 25
+          ? `Fix spread ~${Math.round(spreadM)} m — typical compass error.`
+          : null;
+  return { point: { lat, lng }, spreadM, warning };
+}
+
+/** Time · speed · distance — any one missing value from the other two. */
+export function timeSpeedDistance(input: {
+  distanceM?: number;
+  speedKph?: number;
+  minutes?: number;
+}): { distanceM: number; speedKph: number; minutes: number } | null {
+  const { distanceM, speedKph, minutes } = input;
+  const have = [distanceM, speedKph, minutes].filter((v) => v != null && v > 0).length;
+  if (have < 2) return null;
+  if (distanceM != null && speedKph != null && speedKph > 0) {
+    return { distanceM, speedKph, minutes: (distanceM / 1000 / speedKph) * 60 };
+  }
+  if (distanceM != null && minutes != null && minutes > 0) {
+    return { distanceM, speedKph: distanceM / 1000 / (minutes / 60), minutes };
+  }
+  if (speedKph != null && minutes != null && speedKph > 0) {
+    return { distanceM: speedKph * (minutes / 60) * 1000, speedKph, minutes };
+  }
+  return null;
+}
+
+export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
+  return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;
+}
+
 export function deliberateOffset(
   from: { lat: number; lng: number },
   to: { lat: number; lng: number },
