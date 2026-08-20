@@ -78,6 +78,8 @@ export function PrepareOffline({
           : "Route and navigation screen saved. Navigation will work without cell service.",
       );
     } catch (error) {
+      setReady(false);
+      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       setMessage(
         error instanceof Error
           ? error.message

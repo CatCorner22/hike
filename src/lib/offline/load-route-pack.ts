@@ -1,6 +1,6 @@
 import {
   buildRoutePack,
-  getRoutePack,
+  getRoutePackStatus,
   packCandidateIds,
   saveRoutePack,
   type RoutePack,
@@ -20,8 +20,11 @@ export async function loadCachedRoutePack(
 
   for (let attempt = 0; attempt <= retries; attempt++) {
     for (const id of packCandidateIds(navId)) {
-      const pack = await getRoutePack(id);
-      if (pack) return pack;
+      const lookup = await getRoutePackStatus(id);
+      if (lookup.status === "invalid") {
+        throw new Error(lookup.error ?? "Saved route pack is corrupt — re-download while you have signal.");
+      }
+      if (lookup.status === "ready" && lookup.pack) return lookup.pack;
     }
     if (attempt < retries) await sleep(retryMs);
   }
@@ -30,9 +33,6 @@ export async function loadCachedRoutePack(
 }
 
 export async function persistRoutePack(pack: RoutePack): Promise<RoutePack> {
-  if (!isValidGeometry(pack.geometry)) {
-    throw new Error("Route geometry is invalid — cannot navigate safely");
-  }
   await saveRoutePack(pack);
   const verified = await loadCachedRoutePack(pack.id, { retries: 5, retryMs: 100 });
   if (!verified) throw new Error("Route pack failed to save on device");
@@ -88,9 +88,9 @@ export function packFromPlanApi(
 
   return buildRoutePack({
     id: navId,
-    aliases: [plan.id, plan.trailId, plan.trailId ? `trail-${plan.trailId}` : navId].filter(
-      Boolean,
-    ) as string[],
+    // A plan is its own safety route. Do not claim a shared trail alias here:
+    // two plans for one trail can differ in direction or custom geometry.
+    aliases: [plan.id],
     name: plan.name,
     geometry,
     bbox: trail?.bbox,

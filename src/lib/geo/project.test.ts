@@ -142,6 +142,10 @@ describe("UTM grid overlay", () => {
       [61.2, -149.9],
     ] as const) {
       const utm = latLngToUtm(lat, lng);
+      // latLngToUtm now refuses latitudes outside UTM's 80S-84N validity range.
+      // Every fixture here is well inside it, so a null means a real regression.
+      expect(utm).not.toBeNull();
+      if (!utm) continue;
       const projector = createProjector(followWindow({ lat, lng }), 390, 700, 28);
 
       const originE = Math.floor(utm.easting / 100) * 100;

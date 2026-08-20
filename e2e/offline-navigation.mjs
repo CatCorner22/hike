@@ -62,20 +62,41 @@ async function createPlan(page, geometry) {
   return plan.plan.id;
 }
 
-/** Verify device-scoped ownership actually isolates: a foreign plan must 404. */
-async function assertOwnershipIsolation(page) {
-  const res = await fetch(`${BASE}/api/plans`, {
+/**
+ * Device-scoped ownership must isolate two ways:
+ *   1. A cookie-less API call is refused outright (401) rather than being
+ *      handed a fresh owner — otherwise a script could mint owners forever.
+ *   2. A plan owned by one device is invisible (404) to another device, even
+ *      though the UUID is known.
+ * GPS tracks are a precise movement history tied to home trailheads, so this
+ * is a location-privacy boundary, not just an access-control nicety.
+ */
+async function assertOwnershipIsolation(browser, page, planId) {
+  const anon = await fetch(`${BASE}/api/plans`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "foreign owner plan", customGeometry: GEOMETRY }),
+    body: JSON.stringify({ name: "no-cookie plan", customGeometry: GEOMETRY }),
   });
-  if (!res.ok) return { ok: false, detail: `setup failed: ${res.status}` };
-  const foreign = await res.json();
-  const status = await page.evaluate(async (id) => {
-    const r = await fetch(`/api/plans/${id}`, { credentials: "same-origin" });
-    return r.status;
-  }, foreign.id);
-  return { ok: status === 404, detail: `foreign plan GET from browser -> ${status}` };
+  const refusesAnonymous = anon.status === 401;
+
+  // A genuinely separate device: its own context, hence its own cookie jar.
+  const other = await browser.newContext();
+  const otherPage = await other.newPage();
+  await otherPage.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
+  const crossDeviceStatus = await otherPage.evaluate(
+    async (id) => (await fetch(`/api/plans/${id}`, { credentials: "same-origin" })).status,
+    planId,
+  );
+  const ownerSeesIt = await page.evaluate(
+    async (id) => (await fetch(`/api/plans/${id}`, { credentials: "same-origin" })).status,
+    planId,
+  );
+  await other.close();
+
+  return {
+    ok: refusesAnonymous && crossDeviceStatus === 404 && ownerSeesIt === 200,
+    detail: `anon POST -> ${anon.status} (want 401); other device GET -> ${crossDeviceStatus} (want 404); owner GET -> ${ownerSeesIt} (want 200)`,
+  };
 }
 
 async function waitForServiceWorker(page) {
@@ -156,7 +177,7 @@ async function run() {
     const planId = await createPlan(page, GEOMETRY);
     const navUrl = `${BASE}/navigate/plan-${planId}`;
 
-    const isolation = await assertOwnershipIsolation(page);
+    const isolation = await assertOwnershipIsolation(browser, page, planId);
     log("A0 device-scoped ownership isolates", isolation.ok ? "PASS" : "FAIL", isolation.detail);
     results.push(["A0: ownership isolation", isolation.ok]);
 

@@ -38,14 +38,19 @@ async function screen(page) {
  */
 let ownerCookieObj = null;
 async function establishOwner() {
-  const res = await fetch(`${BASE}/api/plans`, { redirect: "manual" });
+  // Sessions are minted only on DOCUMENT navigations (a cookie-less API call
+  // is refused with 401 by design), so ask for HTML the way a browser does.
+  const res = await fetch(`${BASE}/plan`, {
+    redirect: "manual",
+    headers: { accept: "text/html", "sec-fetch-dest": "document" },
+  });
   const raw = res.headers.getSetCookie?.() ?? [];
-  const found = raw.map(c => c.split(";")[0]).find(c => c.startsWith("hike_device_owner="));
+  const found = raw.map(c => c.split(";")[0]).find(c => c.startsWith("hike_owner="));
   if (!found) throw new Error("server did not issue an owner cookie");
   ownerCookie = found;
   const [name, ...rest] = found.split("=");
   const url = new URL(BASE);
-  ownerCookieObj = { name, value: rest.join("="), domain: url.hostname, path: "/", httpOnly: true, secure: false, sameSite: "Lax" };
+  ownerCookieObj = { name, value: rest.join("="), domain: url.hostname, path: "/", httpOnly: true, secure: new URL(BASE).protocol === "https:", sameSite: "Lax" };
 }
 
 /** browser.newContext + the shared owner cookie. */
@@ -76,7 +81,7 @@ async function replacePack(page, navId, mutator) {
   return await page.evaluate(async ({ navId, mutatorSource }) => {
     const mutate = (0, eval)(`(${mutatorSource})`);
     await new Promise((resolve, reject) => {
-      const req = indexedDB.open("hike-nav-packs", 4);
+      const req = indexedDB.open("hike-nav-packs");
       req.onerror = () => reject(req.error);
       req.onsuccess = () => {
         const db = req.result;
@@ -142,7 +147,7 @@ try {
   {
     const planId = await createPlan("alias conflict"); const env = await openSeeded(planId);
     const r = await env.page.evaluate(async ({ navId }) => new Promise((resolve, reject) => {
-      const req = indexedDB.open("hike-nav-packs", 4); req.onerror = () => reject(req.error); req.onsuccess = () => {
+      const req = indexedDB.open("hike-nav-packs"); req.onerror = () => reject(req.error); req.onsuccess = () => {
         const db = req.result; const tx = db.transaction(["routePacks", "aliases"], "readwrite"); const ps = tx.objectStore("routePacks"), as = tx.objectStore("aliases");
         const g = ps.get(navId); g.onsuccess = () => { const p = g.result; ps.put({ ...p, id: "evil-canonical", aliases: ["unrelated"] }); as.put({ alias: navId, canonicalId: "evil-canonical" }); as.put({ alias: "shared", canonicalId: navId }); as.put({ alias: "shared", canonicalId: "evil-canonical" }); };
         tx.oncomplete = () => resolve(true); tx.onerror = () => reject(tx.error);
@@ -158,7 +163,7 @@ try {
   {
     const planId = await createPlan("alias fail"); const env = await openSeeded(planId);
     await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => {
-      const o = indexedDB.open("hike-nav-packs", 4);
+      const o = indexedDB.open("hike-nav-packs");
       o.onsuccess = () => {
         const tx = o.result.transaction(["routePacks", "aliases"], "readwrite");
         tx.objectStore("routePacks").delete(id);
@@ -183,7 +188,7 @@ try {
       } finally { /* restored after caller observes write */ }
     });
     await env.page.getByRole("button", { name: /prepare offline|update offline pack/i }).click(); await env.page.waitForTimeout(800);
-    const state = await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => { const o = indexedDB.open("hike-nav-packs", 4); o.onsuccess = () => { const tx = o.result.transaction(["routePacks", "aliases"], "readonly"); const p = tx.objectStore("routePacks").get(id); const a = tx.objectStore("aliases").get(id); tx.oncomplete = () => resolve({ pack: p.result != null, alias: a.result != null }); tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); }), { id: `plan-${planId}` });
+    const state = await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => { const o = indexedDB.open("hike-nav-packs"); o.onsuccess = () => { const tx = o.result.transaction(["routePacks", "aliases"], "readonly"); const p = tx.objectStore("routePacks").get(id); const a = tx.objectStore("aliases").get(id); tx.oncomplete = () => resolve({ pack: p.result != null, alias: a.result != null }); tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); }), { id: `plan-${planId}` });
     const text = await env.page.locator("body").innerText();
     log("quota/synchronous-alias-failure-honest-ui", /synthetic alias quota failure|Could not save|failed to save/i.test(text), text.match(/.{0,30}(synthetic alias quota failure|Could not save|failed to save).{0,80}/i)?.[0] ?? "message absent");
     log("quota/synchronous-alias-failure-atomic", !(state.pack && !state.alias), `${JSON.stringify(outcome)} state=${JSON.stringify(state)}`);
@@ -219,11 +224,11 @@ try {
   for (const [name, appliedAt, returnAt] of [["future", "2099-01-01T00:00:00.000Z", "2099-01-01T00:00:00.000Z"], ["epoch", "1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z"]]) {
     const planId = await createPlan(`clock ${name}`); const env = await openSeeded(planId);
     await env.page.evaluate(async ({ appliedAt, returnAt }) => {
-      const put = (dbName, store, value) => new Promise((resolve, reject) => { const o = indexedDB.open(dbName, 1); o.onupgradeneeded = () => o.result.createObjectStore(store, { keyPath: "id" }); o.onsuccess = () => { const tx = o.result.transaction(store, "readwrite"); tx.objectStore(store).put(value); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); });
+      const put = (dbName, store, value) => new Promise((resolve, reject) => { const o = indexedDB.open(dbName); o.onupgradeneeded = () => { if (!o.result.objectStoreNames.contains(store)) o.result.createObjectStore(store, { keyPath: "id" }); }; o.onsuccess = () => { const tx = o.result.transaction(store, "readwrite"); tx.objectStore(store).put(value); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); });
       await put("hike-tourniquet", "tourniquet", { id: "current", appliedAt, limb: "leg" }); await put("hike-safety", "overdue", { id: "current", returnAt });
     }, { appliedAt, returnAt });
     await env.page.reload({ waitUntil: "domcontentloaded" }); await env.page.waitForTimeout(400); const t = (await screen(env.page)).text;
-    log(`clock/${name}/overdue-not-reassuring`, name === "epoch" ? /OVERDUE by/.test(t) : !/Return in 0 min/.test(t), t.match(/OVERDUE by \d+ min|Return in \d+ min/)?.[0] ?? "no banner");
+    log(`clock/${name}/overdue-not-reassuring`, name === "epoch" ? /OVERDUE by/.test(t) : !/Return in 0 min/.test(t), t.match(/OVERDUE by [^—]+|Return in [^—]+/)?.[0]?.trim() ?? "no banner");
     await env.context.close();
   }
 } finally {

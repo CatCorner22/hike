@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 
 interface PendingPoint {
   id: string;
@@ -38,12 +38,18 @@ export function getOfflineDb() {
           const points = transaction.objectStore("pendingPoints");
           if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
           points.createIndex("by-synced", "synced");
-          void points.openCursor().then(function rewrite(cursor): Promise<void> | void {
+          // Use native cursor callbacks inside the versionchange transaction.
+          // Detached promises can finish after the upgrade commits, leaving legacy
+          // boolean values outside the numeric by-synced index.
+          const nativePoints = unwrap(points);
+          const cursorRequest = nativePoints.openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
             if (!cursor) return;
             const value = cursor.value as PendingPoint & { synced: boolean | number };
-            void cursor.update({ ...value, synced: value.synced ? 1 : 0 });
-            return cursor.continue().then(rewrite);
-          });
+            cursor.update({ ...value, synced: value.synced ? 1 : 0 });
+            cursor.continue();
+          };
         }
       },
     });
@@ -231,3 +237,5 @@ export async function __resetOfflineDbForTests() {
     request.onblocked = () => resolve();
   });
 }
+
+export const resetOfflineDbForTests = __resetOfflineDbForTests;

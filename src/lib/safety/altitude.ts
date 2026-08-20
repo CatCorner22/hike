@@ -66,6 +66,8 @@ function validProfile(profile: Array<{ distanceMeters: number; elevation: number
       Number.isFinite(point.distanceMeters) &&
       Number.isFinite(point.elevation) &&
       point.distanceMeters >= 0 &&
+      point.elevation >= -500 &&
+      point.elevation <= 9000 &&
       (index === 0 || point.distanceMeters >= profile[index - 1].distanceMeters),
   );
 }
@@ -209,8 +211,10 @@ export function ascentRateAdvice(input: {
     !input ||
     !Number.isFinite(input.currentElevationM) ||
     !Number.isFinite(input.previousNightElevationM) ||
-    input.currentElevationM < 0 ||
-    input.previousNightElevationM < 0
+    input.currentElevationM < -500 ||
+    input.currentElevationM > 9000 ||
+    input.previousNightElevationM < -500 ||
+    input.previousNightElevationM > 9000
   ) {
     return null;
   }
@@ -249,6 +253,8 @@ export function ascentRateAdvice(input: {
  * guide with wide individual variation; symptoms and trend matter more than one pulse-oximeter reading.
  */
 export function expectedSpo2(elevationM: number): number | null {
+  // The reference table starts at sea level; below-zero elevations must not
+  // be extrapolated into a more-than-100% oxygen saturation estimate.
   if (!Number.isFinite(elevationM) || elevationM < 0 || elevationM > 8000) return null;
   for (let index = 1; index < SPO2_BY_ELEVATION.length; index += 1) {
     const lower = SPO2_BY_ELEVATION[index - 1];

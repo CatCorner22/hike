@@ -14,9 +14,25 @@ function result(ok, label, detail = "") {
 
 function client() {
   let cookie = "";
+  /**
+   * Sessions are minted only on document navigations; a cookie-less API call is
+   * refused with 401 by design (that is what stops a script minting owners
+   * without limit). So each simulated device must first load a page, exactly
+   * like a browser, before it can call the API.
+   */
+  const bootstrap = async () => {
+    if (cookie) return;
+    const res = await fetch(`${BASE}/plan`, {
+      headers: { accept: "text/html", "sec-fetch-dest": "document" },
+      redirect: "manual",
+    });
+    const setCookie = res.headers.get("set-cookie");
+    if (setCookie) cookie = setCookie.split(";")[0];
+  };
   return async (path, options = {}) => {
+    if (path.startsWith("/api/") && options.anonymous !== true) await bootstrap();
     const headers = new Headers(options.headers);
-    if (cookie) headers.set("cookie", cookie);
+    if (cookie && options.anonymous !== true) headers.set("cookie", cookie);
     const response = await fetch(`${BASE}${path}`, { ...options, headers });
     const setCookie = response.headers.get("set-cookie");
     if (setCookie) cookie = setCookie.split(";")[0];
@@ -60,9 +76,9 @@ async function main() {
     }));
   }
   const page = await ownerA(`/api/activities/${activityId}/points?limit=2`);
-  result(page.status === 200 && page.body.points.length === 2 && page.body.hasMore === true && typeof page.body.nextCursor === "string", "F-06 point endpoint is bounded and cursor paginated");
-  const secondPage = await ownerA(`/api/activities/${activityId}/points?limit=2&cursor=${encodeURIComponent(page.body.nextCursor)}`);
-  result(secondPage.status === 200 && secondPage.body.points.length === 1 && secondPage.body.hasMore === false, "F-06 stable point cursor advances");
+  result(page.status === 200 && page.body.points.length === 2 && page.body.pagination?.hasMore === true && typeof page.body.pagination?.nextCursor === "string", "F-06 point endpoint is bounded and cursor paginated", `points=${page.body.points?.length} pagination=${JSON.stringify(page.body.pagination)}`);
+  const secondPage = await ownerA(`/api/activities/${activityId}/points?limit=2&cursor=${encodeURIComponent(page.body.pagination.nextCursor)}`);
+  result(secondPage.status === 200 && secondPage.body.points.length === 1 && secondPage.body.pagination?.hasMore === false, "F-06 stable point cursor advances", `points=${secondPage.body.points?.length} pagination=${JSON.stringify(secondPage.body.pagination)}`);
 
   const huge = "x".repeat(1024 * 1024);
   const oversized = await ownerA("/api/plans", json({ name: "oversized", waypoints: [{ lat: 1, lng: 2, notes: huge }] }));

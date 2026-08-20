@@ -24,9 +24,10 @@ describe("field weather / movement", () => {
 
   it("applies the 30–30 lightning rule", () => {
     const close = lightningRule(15);
-    expect(close.km).toBeCloseTo(5, 0);
-    expect(close.warning).toMatch(/NOW/);
-    expect(lightningRule(90).warning).toMatch(/30–30/);
+    expect(close).not.toBeNull();
+    expect(close!.km).toBeCloseTo(5, 0);
+    expect(close!.warning).toMatch(/NOW/);
+    expect(lightningRule(90)?.warning).toMatch(/30–30/);
   });
 
   it("uses Naismith for time with climb", () => {

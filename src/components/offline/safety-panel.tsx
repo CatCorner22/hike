@@ -54,6 +54,8 @@ import {
   overdueStatus,
   saveIceProfile,
   setOverdueAlarm,
+  resolveLocalDateTime,
+  type ResolvedLocalTime,
   type IceProfile,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
@@ -261,6 +263,9 @@ export function SafetyPanel({
     password: "",
   });
   const [returnLocal, setReturnLocal] = useState("");
+  const [returnResolution, setReturnResolution] = useState<ResolvedLocalTime | null>(null);
+  const [returnTimeMessage, setReturnTimeMessage] = useState<string | null>(null);
+  const [returnTimeChoices, setReturnTimeChoices] = useState<[ResolvedLocalTime, ResolvedLocalTime] | null>(null);
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
   const [overdue, setOverdue] = useState(false);
   const [gotoGrid, setGotoGrid] = useState("");
@@ -334,6 +339,14 @@ export function SafetyPanel({
     void getOverdueAlarm().then((alarm) => {
       if (!alarm) return;
       setReturnLocal(toLocalInput(alarm.returnAt));
+      if (alarm.resolvedLocal && alarm.timeZone && alarm.utcOffset) {
+        setReturnResolution({
+          instant: new Date(alarm.returnAt),
+          resolvedLocal: alarm.resolvedLocal,
+          timeZone: alarm.timeZone,
+          utcOffset: alarm.utcOffset,
+        });
+      }
     });
     return () => {
       if (persistTimer.current) {
@@ -361,10 +374,14 @@ export function SafetyPanel({
 
   useEffect(() => {
     const tick = () => {
-      const iso = localInputToIso(returnLocal);
-      const status = iso ? overdueStatus(iso) : null;
-      if (!status) {
+      if (!returnResolution) {
         setOverdueLabel(null);
+        setOverdue(false);
+        return;
+      }
+      const status = overdueStatus(returnResolution.instant.toISOString());
+      if (!status) {
+        setOverdueLabel("Return time is invalid — set a new local return time.");
         setOverdue(false);
         return;
       }
@@ -374,7 +391,7 @@ export function SafetyPanel({
     tick();
     const id = window.setInterval(tick, 30000);
     return () => window.clearInterval(id);
-  }, [returnLocal]);
+  }, [returnResolution]);
 
   const message = useMemo(
     () =>
@@ -487,7 +504,31 @@ export function SafetyPanel({
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
-    await setOverdueAlarm(value ? new Date(value) : null);
+    setReturnTimeMessage(null);
+    setReturnTimeChoices(null);
+    if (!value) {
+      setReturnResolution(null);
+      await setOverdueAlarm(null);
+      return;
+    }
+    const resolved = resolveLocalDateTime(value);
+    if (resolved.kind === "resolved") {
+      setReturnResolution(resolved.value);
+      setReturnTimeMessage(`Deadline: ${resolved.value.resolvedLocal} (${resolved.value.utcOffset}, ${resolved.value.timeZone}).`);
+      await setOverdueAlarm(resolved.value);
+      return;
+    }
+    setReturnResolution(null);
+    setReturnTimeMessage(resolved.message);
+    if (resolved.kind === "ambiguous") setReturnTimeChoices(resolved.choices);
+    await setOverdueAlarm(null);
+  }
+
+  async function chooseReturnOccurrence(choice: ResolvedLocalTime) {
+    setReturnResolution(choice);
+    setReturnTimeChoices(null);
+    setReturnTimeMessage(`Deadline: ${choice.resolvedLocal} (${choice.utcOffset}, ${choice.timeZone}).`);
+    await setOverdueAlarm(choice);
   }
 
   async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
@@ -592,7 +633,7 @@ export function SafetyPanel({
                 <p className="font-medium text-destructive">
                   {Math.round(offTrailM)} m off route
                 </p>
-                {bearingToTrail != null && (
+                {bearingToTrail != null && Number.isFinite(bearingToTrail) && (
                   <p className="mt-1 text-muted-foreground">
                     Walk {formatWalkBearing(bearingToTrail, lat, lng)} (
                     {compassLabel(bearingToTrail)}) toward the dashed orange line.
@@ -609,11 +650,19 @@ export function SafetyPanel({
             {lat != null && lng != null ? (
               <>
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
-                <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
-                <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                {formatUsng(lat, lng) ? (
+                  <>
+                    <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
+                    <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.
+                  </p>
+                )}
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
-                <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>
+                {formatUtm(lat, lng) && <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>}
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
@@ -627,7 +676,7 @@ export function SafetyPanel({
                     Altitude ~{Math.round(altitudeM * 3.28084).toLocaleString()} ft
                   </p>
                 )}
-                {bearingToStart != null && !stale && (
+                {bearingToStart != null && Number.isFinite(bearingToStart) && !stale && (
                   <p className="mt-2 text-sm text-muted-foreground">
                     Trailhead: {formatWalkBearing(bearingToStart, lat, lng)} (
                     {compassLabel(bearingToStart)})
@@ -797,7 +846,7 @@ export function SafetyPanel({
                   stale,
                   recordedAt,
                   offTrailM,
-                  returnAt: localInputToIso(returnLocal),
+                  returnAt: returnResolution?.instant.toISOString() ?? null,
                   checkins,
                   navLegs: legs,
                   waypoints,
@@ -1375,7 +1424,7 @@ export function SafetyPanel({
               <Input value={flashSec} placeholder="flash-to-bang s" onChange={(e) => setFlashSec(e.target.value)} />
               <Button
                 variant="outline"
-                onClick={() => setOpsNote(lightningRule(Number(flashSec) || 0).warning)}
+                onClick={() => setOpsNote(lightningRule(Number(flashSec) || 0)?.warning ?? "Enter a valid flash-to-bang time.")}
               >
                 30–30
               </Button>
@@ -1801,8 +1850,17 @@ export function SafetyPanel({
               value={returnLocal}
               onChange={(e) => void persistReturn(e.target.value)}
             />
+            {returnTimeChoices && (
+              <div className="flex gap-2">
+                {returnTimeChoices.map((choice, index) => (
+                  <Button key={choice.instant.toISOString()} size="sm" variant="outline" onClick={() => void chooseReturnOccurrence(choice)}>
+                    {index === 0 ? "First" : "Second"} ({choice.utcOffset})
+                  </Button>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              Stored on this phone. When time passes, navigation shows OVERDUE.
+              {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
           </div>
 
@@ -1923,11 +1981,4 @@ function toLocalInput(iso: string) {
   if (!Number.isFinite(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/** Never throws: an invalid local datetime string yields null rather than a RangeError. */
-function localInputToIso(local: string): string | null {
-  if (!local) return null;
-  const ms = new Date(local).getTime();
-  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 }

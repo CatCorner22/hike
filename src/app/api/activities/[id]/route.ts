@@ -15,6 +15,33 @@ const activityPatchSchema = z.object({
   notes: z.string().max(20_000).nullable().optional(),
 });
 
+/**
+ * The detail screen draws a single track line, so it does not need every fix
+ * from a multi-day recording — and shipping hundreds of thousands of points to
+ * a phone to render a few hundred pixels of polyline is wasteful and slow.
+ *
+ * Keep the endpoints and take an even stride through the middle, then report the
+ * true count and whether the response was reduced. Callers that need full
+ * fidelity page through /api/activities/:id/points.
+ */
+const DISPLAY_POINT_BUDGET = 2000;
+
+function downsampleForDisplay<T>(points: T[]): {
+  points: T[];
+  pointCount: number;
+  downsampled: boolean;
+} {
+  if (points.length <= DISPLAY_POINT_BUDGET) {
+    return { points, pointCount: points.length, downsampled: false };
+  }
+  const stride = Math.ceil(points.length / DISPLAY_POINT_BUDGET);
+  const reduced: T[] = [];
+  for (let index = 0; index < points.length; index += stride) reduced.push(points[index]);
+  const last = points[points.length - 1];
+  if (reduced[reduced.length - 1] !== last) reduced.push(last);
+  return { points: reduced, pointCount: points.length, downsampled: true };
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const owner = await requireOwner(request);
@@ -30,11 +57,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         where: eq(activityPoints.activityId, id),
         orderBy: (p, { asc }) => [asc(p.recordedAt)],
       });
-      return NextResponse.json({ activity, points });
+      return NextResponse.json({ activity, ...downsampleForDisplay(points) });
     }
     const activity = await getActivity(id, owner.ownerId);
     if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ activity, points: await listActivityPoints(id) });
+    return NextResponse.json({
+      activity,
+      ...downsampleForDisplay(await listActivityPoints(id)),
+    });
   } catch (error) {
     return errorResponse(error, "Failed to load activity");
   }

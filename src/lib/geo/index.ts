@@ -1,4 +1,5 @@
 import * as turf from "@turf/turf";
+import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 
 export function lineLengthMeters(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
@@ -17,17 +18,20 @@ export function coordsToLineString(
 }
 
 export function formatDistance(meters: number): string {
+  if (!Number.isFinite(meters) || meters < 0) return "—";
   const miles = meters / 1609.34;
   if (miles >= 0.1) return `${miles.toFixed(1)} mi`;
   return `${Math.round(meters)} m`;
 }
 
 export function formatElevation(meters: number): string {
+  if (!Number.isFinite(meters)) return "—";
   const feet = meters * 3.28084;
   return `${Math.round(feet).toLocaleString()} ft`;
 }
 
 export function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
@@ -37,6 +41,7 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatPace(minPerKm: number): string {
+  if (!Number.isFinite(minPerKm) || minPerKm < 0) return "—";
   const minPerMile = minPerKm * 1.60934;
   const mins = Math.floor(minPerMile);
   const secs = Math.round((minPerMile - mins) * 60);
@@ -159,17 +164,23 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-function parsePoints(xml: string, tag: "trkpt" | "rtept"): GeoJSON.Position[] {
+const STRICT_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function parsePoints(xml: string, tag: "trkpt" | "rtept"): GeoJSON.Position[] | null {
   const points: GeoJSON.Position[] = [];
   const tagRegex = new RegExp(`<${tag}\\b([^>]*)/?>`, "gi");
   for (const match of xml.matchAll(tagRegex)) {
     const attributes = match[1];
     const lat = attributes.match(/\blat\s*=\s*(["'])(.*?)\1/i)?.[2];
     const lng = attributes.match(/\blon\s*=\s*(["'])(.*?)\1/i)?.[2];
-    if (lat == null || lng == null) continue;
-    const parsedLat = Number.parseFloat(lat);
-    const parsedLng = Number.parseFloat(lng);
-    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) continue;
+    const normalizedLat = lat?.trim();
+    const normalizedLng = lng?.trim();
+    // parseFloat accepts numeric prefixes (for example "12evil"). GPX
+    // coordinates must be complete strict decimal values, never a best effort.
+    if (!normalizedLat || !normalizedLng || !STRICT_DECIMAL.test(normalizedLat) || !STRICT_DECIMAL.test(normalizedLng)) return null;
+    const parsedLat = Number(normalizedLat);
+    const parsedLng = Number(normalizedLng);
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
     points.push([parsedLng, parsedLat]);
   }
   return points;
@@ -177,15 +188,18 @@ function parsePoints(xml: string, tag: "trkpt" | "rtept"): GeoJSON.Position[] {
 
 export function parseGpx(gpxContent: string): GeoJSON.LineString | GeoJSON.MultiLineString | null {
   if (typeof gpxContent !== "string") return null;
-  const segments = [...gpxContent.matchAll(/<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi)]
-    .map((match) => parsePoints(match[1], "trkpt"))
-    .filter((segment) => segment.length >= 2);
+  const parsedSegments = [...gpxContent.matchAll(/<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi)]
+    .map((match) => parsePoints(match[1], "trkpt"));
+  if (parsedSegments.some((segment) => segment === null)) return null;
+  const segments = parsedSegments.filter((segment): segment is GeoJSON.Position[] => segment !== null && segment.length >= 2);
   if (segments.length === 0) {
     const trackPoints = parsePoints(gpxContent, "trkpt");
+    if (trackPoints === null) return null;
     if (trackPoints.length >= 2) segments.push(trackPoints);
   }
   if (segments.length === 0) {
     const routePoints = parsePoints(gpxContent, "rtept");
+    if (routePoints === null) return null;
     if (routePoints.length >= 2) segments.push(routePoints);
   }
   if (segments.length === 0) return null;
@@ -197,28 +211,36 @@ export function parseGpx(gpxContent: string): GeoJSON.LineString | GeoJSON.Multi
 export function bboxFromGeometry(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   padding = 0.01,
-): [number, number, number, number] {
+): [number, number, number, number] | null {
+  if (!Number.isFinite(padding) || padding < 0) return null;
+  if (!geometry || typeof geometry !== "object") return null;
   const coords =
     geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
+      ? Array.isArray(geometry.coordinates) ? geometry.coordinates : null
+      : geometry.type === "MultiLineString" && Array.isArray(geometry.coordinates)
+        ? geometry.coordinates.flat()
+        : null;
+  if (!coords) return null;
 
-  let minLng = Infinity;
   let minLat = Infinity;
-  let maxLng = -Infinity;
   let maxLat = -Infinity;
 
-  for (const [lng, lat] of coords) {
-    minLng = Math.min(minLng, lng);
+  for (const coordinate of coords) {
+    if (!Array.isArray(coordinate)) return null;
+    const [lng, lat] = coordinate;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat) || lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+      return null;
+    }
     minLat = Math.min(minLat, lat);
-    maxLng = Math.max(maxLng, lng);
     maxLat = Math.max(maxLat, lat);
   }
+  const longitude = minimumLongitudeInterval(coords.map(([lng]) => lng));
+  if (!longitude || !Number.isFinite(minLat) || !Number.isFinite(maxLat)) return null;
 
   return [
-    minLng - padding,
+    longitude.minLng - padding,
     minLat - padding,
-    maxLng + padding,
+    longitude.maxLng + padding,
     maxLat + padding,
   ];
 }

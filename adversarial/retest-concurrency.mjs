@@ -9,7 +9,20 @@ async function call(path, method='GET', data) {
   const text = await r.text(); let body; try { body = JSON.parse(text); } catch { body = {}; }
   return {status:r.status, body};
 }
-const activity = (await call('/api/activities','POST',{name:'retest',startedAt:'2026-08-20T10:00:00Z'})).body;
+// Sessions are minted only on document navigations; a cookie-less API call is
+// refused with 401 by design. Load a page first, exactly like a browser.
+{
+  const doc = await fetch(b + '/plan', { headers: { accept: 'text/html', 'sec-fetch-dest': 'document' } });
+  const setCookie = doc.headers.get('set-cookie');
+  if (setCookie) cookie = setCookie.split(';')[0];
+  if (!cookie) { console.error('no owner cookie issued; cannot run concurrency probe'); process.exit(2); }
+}
+const activityRes = await call('/api/activities','POST',{name:'retest',startedAt:'2026-08-20T10:00:00Z'});
+if (activityRes.status !== 200 || !activityRes.body?.id) {
+  console.error('activity create failed', activityRes.status, JSON.stringify(activityRes.body));
+  process.exit(2);
+}
+const activity = activityRes.body;
 const pointResponses = await Promise.all([...Array(50)].map((_,i)=>call('/api/activities/'+activity.id+'/points','POST',{lat:10+i/1000,lng:20,elevation:1,recordedAt:'2026-08-20T10:00:00Z'})));
 const pointFinal = await call('/api/activities/'+activity.id+'/points');
 const plans=[]; for(let i=0;i<50;i++) plans.push((await call('/api/plans','POST',{name:'p'+i})).body);

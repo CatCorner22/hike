@@ -1,4 +1,5 @@
 import type { Severity } from "@/lib/safety/severity";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export const DISCLAIMER =
   "Training aid, not medical direction. Call emergency services, evacuate, and get professional care as soon as possible.";
@@ -53,7 +54,7 @@ export interface CasualtyCardInput {
   pulse?: string;
   resp?: string;
   avpu?: string;
-  treatments?: CasualtyTreatment[];
+  treatments?: ReadonlyArray<CasualtyTreatment>;
   tourniquets?: CasualtyTourniquet[];
 }
 
@@ -140,8 +141,9 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
   if (!Number.isFinite(appliedAtMs) || !Number.isFinite(now) || appliedAtMs < 0 || now < appliedAtMs) {
     return null;
   }
-  const minutes = Math.round(((now - appliedAtMs) / 60_000) * 10) / 10;
-  if (minutes < 120) {
+  const rawMinutes = (now - appliedAtMs) / 60_000;
+  const minutes = Math.round(rawMinutes * 10) / 10;
+  if (rawMinutes < 120) {
     return {
       minutes,
       severity: "warning",
@@ -150,7 +152,7 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
       conversionWindow: true,
     };
   }
-  if (minutes < 360) {
+  if (rawMinutes < 360) {
     return {
       minutes,
       severity: "critical",
@@ -170,10 +172,10 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
 
 /** CoTCCC documentation practice: mark a tourniquet with the limb and application time in Zulu time. */
 export function formatTourniquetMark(appliedAt: Date, limb: string): string | null {
-  if (!Number.isFinite(appliedAt.getTime()) || limb.trim().length === 0) return null;
+  if (!Number.isFinite(appliedAt.getTime()) || typeof limb !== "string" || limb.trim().length === 0) return null;
   const hours = String(appliedAt.getUTCHours()).padStart(2, "0");
   const minutes = String(appliedAt.getUTCMinutes()).padStart(2, "0");
-  return `TQ ${limb.trim().toUpperCase()} ${hours}${minutes}Z`;
+  return `TQ ${reportField(limb).toUpperCase()} ${hours}${minutes}Z`;
 }
 
 /** CoTCCC external-hemorrhage control guidance: use limb tourniquets for life-threatening extremity bleeding and packing plus pressure for junctional wounds. */
@@ -313,22 +315,22 @@ export function hypothermiaWrapSteps(): string[] {
 /** CoTCCC casualty documentation principles and DD Form 1380 fields, adapted as a concise civilian wilderness handoff. */
 export function casualtyCard(input: CasualtyCardInput): string {
   const treatments = input.treatments?.length
-    ? input.treatments.map((entry) => `${entry.time} ${entry.treatment}`).join(" | ")
+    ? input.treatments.map((entry) => `${reportField(entry.time, 80)} ${reportField(entry.treatment, 160)}`).join(" | ")
     : "NONE STATED";
   const tourniquets = input.tourniquets?.length
-    ? input.tourniquets.map((entry) => `${entry.limb} ${entry.time}`).join(" | ")
+    ? input.tourniquets.map((entry) => `${reportField(entry.limb, 80)} ${reportField(entry.time, 80)}`).join(" | ")
     : "NONE STATED";
 
-  return [
+  return formatReport([
     "CASUALTY CARD / TCCC",
-    `NAME: ${input.name ?? "UNKNOWN"}`,
-    `TIME: ${input.time ?? "UNKNOWN"}`,
-    `MECHANISM: ${input.mechanism ?? "NOT STATED"}`,
-    `INJURIES: ${input.injuries ?? "NOT STATED"}`,
-    `SIGNS: PULSE ${input.pulse ?? "NOT STATED"} / RESP ${input.resp ?? "NOT STATED"} / AVPU ${input.avpu ?? "NOT STATED"}`,
-    `TREATMENTS: ${treatments}`,
-    `TOURNIQUETS: ${tourniquets}`,
-  ].join("\n");
+    `NAME: ${reportField(input.name ?? "UNKNOWN")}`,
+    `TIME: ${reportField(input.time ?? "UNKNOWN")}`,
+    `MECHANISM: ${reportField(input.mechanism ?? "NOT STATED")}`,
+    `INJURIES: ${reportField(input.injuries ?? "NOT STATED")}`,
+    `SIGNS: PULSE ${reportField(input.pulse ?? "NOT STATED", 80)} / RESP ${reportField(input.resp ?? "NOT STATED", 80)} / AVPU ${reportField(input.avpu ?? "NOT STATED", 80)}`,
+    `TREATMENTS: ${reportField(treatments)}`,
+    `TOURNIQUETS: ${reportField(tourniquets)}`,
+  ]);
 }
 
 /** START triage: walking wounded are green; no breathing is black after airway positioning; a respiratory rate over 30, an absent radial pulse, or inability to obey commands is red; remaining casualties are yellow. */

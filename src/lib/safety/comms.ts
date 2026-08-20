@@ -1,4 +1,5 @@
 import type { Severity } from "@/lib/safety/severity";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export const DISCLAIMER =
   "Planning aid, not a guarantee of radio coverage or rescue. Carry a satellite SOS device for remote travel and call local emergency services when possible.";
@@ -31,16 +32,17 @@ export interface PacePlan {
 
 const HORIZON_COEFFICIENT = 3.57;
 const MAX_CHECK_INS = 48;
+const MAX_ANTENNA_HEIGHT_M = 300;
 
 /** Radio line-of-sight geometry: d(km) ≈ 3.57 × √height(m). A 4/3-Earth-radius refraction model gives a modestly longer radio horizon. */
 export function radioHorizonKm(antennaHeightM: number): number | null {
-  if (!Number.isFinite(antennaHeightM) || antennaHeightM < 0) return null;
+  if (!Number.isFinite(antennaHeightM) || antennaHeightM < 0 || antennaHeightM > MAX_ANTENNA_HEIGHT_M) return null;
   return Math.round(HORIZON_COEFFICIENT * Math.sqrt(antennaHeightM) * 10) / 10;
 }
 
 /** Radio line-of-sight geometry: practical simplex range is the sum of each station's geometric horizon, before terrain and vegetation loss. */
 export function lineOfSightRangeKm(h1M: number, h2M: number): number | null {
-  if (!Number.isFinite(h1M) || !Number.isFinite(h2M) || h1M < 0 || h2M < 0) return null;
+  if (!Number.isFinite(h1M) || !Number.isFinite(h2M) || h1M < 0 || h2M < 0 || h1M > MAX_ANTENNA_HEIGHT_M || h2M > MAX_ANTENNA_HEIGHT_M) return null;
   return Math.round(HORIZON_COEFFICIENT * (Math.sqrt(h1M) + Math.sqrt(h2M)) * 10) / 10;
 }
 
@@ -150,22 +152,22 @@ export function emergencyChannels(): EmergencyChannel[] {
 /** PACE communications planning doctrine: define an independent Primary, Alternate, Contingency, and Emergency method before departure. */
 export function pacePlan(input: PacePlan): PacePlan {
   return {
-    primary: input.primary.trim(),
-    alternate: input.alternate.trim(),
-    contingency: input.contingency.trim(),
-    emergency: input.emergency.trim(),
+    primary: reportField(input.primary),
+    alternate: reportField(input.alternate),
+    contingency: reportField(input.contingency),
+    emergency: reportField(input.emergency),
   };
 }
 
 /** PACE communications planning doctrine: a concise, labelled plan is easier for a party and home contact to use under stress. */
 export function formatPacePlan(plan: PacePlan): string {
-  return [
+  return formatReport([
     "PACE COMMUNICATIONS PLAN",
-    `P — PRIMARY: ${plan.primary}`,
-    `A — ALTERNATE: ${plan.alternate}`,
-    `C — CONTINGENCY: ${plan.contingency}`,
-    `E — EMERGENCY: ${plan.emergency}`,
-  ].join("\n");
+    `P — PRIMARY: ${reportField(plan.primary)}`,
+    `A — ALTERNATE: ${reportField(plan.alternate)}`,
+    `C — CONTINGENCY: ${reportField(plan.contingency)}`,
+    `E — EMERGENCY: ${reportField(plan.emergency)}`,
+  ]);
 }
 
 /** PACE communications planning doctrine adapted for US backcountry travel; use independent communications paths rather than four versions of a phone. */

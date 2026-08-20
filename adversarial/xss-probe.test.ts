@@ -10,7 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import React from "react";
-import { trailResearchBriefSchema } from "@/lib/research/schema";
+import { safeSourceUrl, trailResearchBriefSchema } from "@/lib/research/schema";
 
 function briefWithUrl(url: string) {
   return {
@@ -57,22 +57,32 @@ describe("URL sink: framework-level mitigation", () => {
 });
 
 describe("URL sink: our own validation", () => {
-  it("FINDING: research brief schema accepts any string as a source URL", () => {
-    const hostile = [
+  it("rejects every dangerous scheme at the render sink", () => {
+    // The schema only validates URL *shape*; scheme allow-listing happens at
+    // the sink via safeSourceUrl, which is where research-brief.tsx calls it.
+    // Defence at the sink is the property that actually matters, because the
+    // brief is persisted and replayed to every viewer for 24 h.
+    for (const url of [
       "javascript:alert(1)",
+      "JaVaScRiPt:alert(1)",
+      "  javascript:alert(1)",
       "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==",
       "vbscript:msgbox(1)",
       "file:///etc/passwd",
-      "not a url at all",
-      "",
-      "http://" + "a".repeat(5000),
-    ];
-    const accepted = hostile.filter(
-      (url) => trailResearchBriefSchema.safeParse(briefWithUrl(url)).success,
-    );
-    // url is `z.string()` with no .url() and no scheme allow-list, so every
-    // one of these is persisted and rendered. Should be an https-only check.
-    expect(accepted).toEqual(hostile);
+    ]) {
+      expect(safeSourceUrl(url)).toBeNull();
+    }
+  });
+
+  it("still passes legitimate http(s) sources through", () => {
+    expect(safeSourceUrl("https://www.nps.gov/yose")).toBe("https://www.nps.gov/yose");
+    expect(safeSourceUrl("http://example.org/trail")).toBe("http://example.org/trail");
+  });
+
+  it("schema rejects malformed URLs before they are ever stored", () => {
+    for (const url of ["not a url at all", ""]) {
+      expect(trailResearchBriefSchema.safeParse(briefWithUrl(url)).success).toBe(false);
+    }
   });
 
   it("FINDING: schema imposes no length bound on any brief field", () => {
