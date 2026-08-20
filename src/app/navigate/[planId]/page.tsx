@@ -17,6 +17,7 @@ import {
   gpsAccuracyLabel,
   normalizeHeading,
   progressAlongTrail,
+  travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -348,6 +349,17 @@ export default function NavigatePage() {
     };
   }, []);
 
+  // Which end of the route the hiker is actually walking toward. The stored line
+  // direction is arbitrary, so without this "Remaining" counts up as you approach your
+  // destination. Recomputed from the breadcrumb track, not on every fix.
+  const travelDirection = useMemo(() => {
+    if (loadState.status !== "ready") return "unknown" as const;
+    return travelDirectionAlong(
+      loadState.pack.geometry,
+      trackPoints.map((point) => ({ lat: point.lat, lng: point.lng })),
+    );
+  }, [loadState, trackPoints]);
+
   useEffect(() => {
     if (loadState.status !== "ready" || !navFix || !trusted) {
       if (!trusted) queueMicrotask(() => setProgress(null));
@@ -357,9 +369,10 @@ export default function NavigatePage() {
       { lat: navFix.lat, lng: navFix.lng },
       loadState.pack.geometry,
       loadState.pack.elevationProfile,
+      travelDirection,
     );
     queueMicrotask(() => setProgress(p));
-  }, [navFix, loadState, trusted]);
+  }, [navFix, loadState, trusted, travelDirection]);
 
   useEffect(() => {
     if (loadState.status !== "ready") return;
@@ -937,7 +950,13 @@ export default function NavigatePage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
-            label={backtrackOn ? "Backtrack" : "Remaining"}
+            label={
+              backtrackOn
+                ? "Backtrack"
+                : progress && progress.remainingDirection === "unknown"
+                  ? "To nearer end"
+                  : "Remaining"
+            }
             value={
               backtrackOn && retrace
                 ? formatDistance(retrace.remainingMeters)
