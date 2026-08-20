@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { safeBbox, type LatLng } from "@/lib/geo/navigation";
+import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 
 interface SafetyNavMapProps {
@@ -52,7 +53,8 @@ function project(
   const [minLng, minLat, maxLng, maxLat] = bbox;
   const xSpan = Math.max(maxLng - minLng, 0.0001);
   const ySpan = Math.max(maxLat - minLat, 0.0001);
-  const x = padding + ((lng - minLng) / xSpan) * (width - padding * 2);
+  const unwrappedLng = unwrapLongitude(lng, { minLng, maxLng });
+  const x = padding + (((unwrappedLng ?? minLng) - minLng) / xSpan) * (width - padding * 2);
   const y = padding + (1 - (lat - minLat) / ySpan) * (height - padding * 2);
   return { x, y };
 }
@@ -122,13 +124,19 @@ export function SafetyNavMap({
       ctx.fillStyle =
         nightMode === "red" ? "#140303" : nightMode === "nvg" ? "#03140a" : "#0b1220";
       ctx.fillRect(0, 0, width, height);
+      if (!bbox) {
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "12px sans-serif";
+        ctx.fillText("Route data invalid", 12, topInsetPx + 20);
+        return;
+      }
 
       const userPx = user
         ? project(user.lng, user.lat, bbox, width, height, 28)
         : { x: width / 2, y: height / 2 };
 
       const rotation =
-        headingUp && user?.heading != null ? (user.heading * Math.PI) / 180 : 0;
+        headingUp && user?.heading != null && Number.isFinite(user.heading) ? (user.heading * Math.PI) / 180 : 0;
       if (rotation) {
         ctx.save();
         ctx.translate(userPx.x, userPx.y);
@@ -141,6 +149,11 @@ export function SafetyNavMap({
       ctx.lineWidth = 1;
       if (showGrid && user) {
         const u = latLngToUtm(user.lat, user.lng);
+        if (!u) {
+          ctx.fillStyle = "#e5e7eb";
+          ctx.font = "12px sans-serif";
+          ctx.fillText("UTM grid unavailable at this latitude", 12, topInsetPx + 38);
+        } else {
         const step = 100;
         const reach = 500;
         const startE = Math.floor((u.easting - reach) / step) * step;
@@ -164,6 +177,7 @@ export function SafetyNavMap({
             else ctx.lineTo(p.x, p.y);
           }
           ctx.stroke();
+        }
         }
       } else {
         for (let i = 1; i < 8; i++) {
@@ -307,7 +321,7 @@ export function SafetyNavMap({
         ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        if (user.heading != null) {
+        if (user.heading != null && Number.isFinite(user.heading)) {
           ctx.fillStyle = "#93c5fd";
           ctx.beginPath();
           ctx.moveTo(p.x, p.y - 16);

@@ -12,7 +12,7 @@ describe("USNG / UTM", () => {
   });
 
   it("formats an 8-digit USNG grid for SAR", () => {
-    const usng = formatUsng(37.7459, -119.5936);
+    const usng = formatUsng(37.7459, -119.5936)!;
     expect(usng).toMatch(/^\d{2}[C-HJ-NP-X] [A-Z]{2} \d{4} \d{4}$/);
   });
 });

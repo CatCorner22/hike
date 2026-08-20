@@ -25,9 +25,19 @@ production build:
 
 ```bash
 npm run build
-npx next start --port 3111 &
+OWNER_TOKEN_SECRET="$(openssl rand -base64 32)" \
+  ALLOW_LOCAL_STORE_IN_PRODUCTION=true \
+  npx next start --port 3111 &
 BASE=http://127.0.0.1:3111 npm run test:offline
 ```
+
+Two env vars are needed because the server intentionally fails closed:
+
+- `OWNER_TOKEN_SECRET` signs the anonymous device-owner cookie. Without it the
+  server refuses to serve device-scoped data at all.
+- `ALLOW_LOCAL_STORE_IN_PRODUCTION` opts into the JSON file fallback, which is
+  otherwise refused in production so it can never masquerade as a real
+  database. A normal deployment sets `DATABASE_URL` instead.
 
 Requires a Chromium browser for Playwright:
 
@@ -39,6 +49,7 @@ npx playwright install chromium
 
 | Check | Meaning |
 | --- | --- |
+| A0 | A plan created on one device is invisible (404) to another |
 | A1 | Navigate screen works online |
 | A2 | Navigate screen survives an offline reload after a warm visit |
 | B1 | Prepare-offline completes from the plan screen |

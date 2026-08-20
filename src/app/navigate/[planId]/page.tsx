@@ -15,7 +15,6 @@ import { formatDistance, formatElevation } from "@/lib/geo";
 import {
   compassLabel,
   gpsAccuracyLabel,
-  progressAlongTrail,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -29,6 +28,7 @@ import {
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
+import { createRouteProgressCache, progressWithRouteCache, type RouteProgressCache } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
@@ -105,6 +105,7 @@ export default function NavigatePage() {
   const [headerHeight, setHeaderHeight] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
+  const progressCacheRef = useRef<RouteProgressCache | null>(null);
   const pendingPointsRef = useRef<
     Array<{
       lat: number;
@@ -186,67 +187,80 @@ export default function NavigatePage() {
   const navFix = gpsDenied && drFix ? drFix : gps.fix;
 
   const loadPack = useCallback(async () => {
+    let terminal = false;
+    const complete = (next: LoadState) => {
+      if (terminal) return;
+      terminal = true;
+      setLoadState(next);
+    };
     setLoadState({ status: "loading" });
-
-    const cached = await loadCachedRoutePack(navId);
-    if (cached) {
-      setLoadState({ status: "ready", pack: cached, source: "cache" });
-      return;
-    }
-
-    const target = parseNavigateTarget(navId);
-    if (!target) {
-      setLoadState({
+    const timeout = window.setTimeout(() => {
+      complete({
         status: "error",
-        message: "Invalid route id. Open the trail or plan and tap Prepare offline first.",
+        message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
       });
-      return;
-    }
-
+    }, 12_000);
     try {
-      if (target.kind === "trail") {
-        const res = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${target.id}`, { signal }),
-          8000,
-        );
-        if (!res.ok) throw new Error("Trail not found on server");
-        const data = await res.json();
-        const pack = await persistRoutePack(packFromTrailApi(navId, data));
-        setLoadState({ status: "ready", pack, source: "network" });
+      let cached: RoutePack | null;
+      try {
+        cached = await loadCachedRoutePack(navId);
+      } catch (error) {
+        complete({
+          status: "error",
+          message: error instanceof Error
+            ? error.message
+            : "Saved route does not match this trail — re-download while you have signal.",
+        });
+        return;
+      }
+      if (cached) {
+        complete({ status: "ready", pack: cached, source: "cache" });
         return;
       }
 
-      const planRes = await withNetworkTimeout(
-        (signal) => fetch(`/api/plans/${target.id}`, { signal }),
-        8000,
-      );
-      if (!planRes.ok) throw new Error("Plan not found on server");
-      const plan = await planRes.json();
-      let trail = null;
-      if (plan.trailId) {
-        const trailRes = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${plan.trailId}`, { signal }),
-          8000,
-        );
-        if (trailRes.ok) trail = await trailRes.json();
-      }
-      const built = packFromPlanApi(navId, plan, trail);
-      if (!built) throw new Error("Plan has no route geometry");
-      const pack = await persistRoutePack(built);
-      setLoadState({ status: "ready", pack, source: "network" });
-    } catch (err) {
-      const retry = await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 });
-      if (retry) {
-        setLoadState({ status: "ready", pack: retry, source: "cache" });
+      const target = parseNavigateTarget(navId);
+      if (!target) {
+        complete({ status: "error", message: "Invalid route id. Open the trail or plan and tap Prepare offline first." });
         return;
       }
-      setLoadState({
-        status: "error",
-        message:
-          err instanceof Error
-            ? `${err.message}. Prepare offline on Wi‑Fi before you lose service.`
-            : "Route unavailable offline. Prepare offline before heading out.",
-      });
+      try {
+        if (target.kind === "trail") {
+          const res = await withNetworkTimeout((signal) => fetch(`/api/trails/${target.id}`, { signal }), 8000);
+          if (!res.ok) throw new Error("Trail not found on server");
+          const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
+          complete({ status: "ready", pack, source: "network" });
+          return;
+        }
+        const planRes = await withNetworkTimeout((signal) => fetch(`/api/plans/${target.id}`, { signal }), 8000);
+        if (!planRes.ok) throw new Error("Plan not found on server");
+        const plan = await planRes.json();
+        let trail = null;
+        if (plan.trailId) {
+          const trailRes = await withNetworkTimeout((signal) => fetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          if (trailRes.ok) trail = await trailRes.json();
+        }
+        const built = packFromPlanApi(navId, plan, trail);
+        if (!built) throw new Error("Plan has no route geometry");
+        const pack = await persistRoutePack(built);
+        complete({ status: "ready", pack, source: "network" });
+      } catch (error) {
+        let retry: RoutePack | null = null;
+        let cacheError: Error | null = null;
+        try { retry = await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 }); }
+        catch (retryError) { cacheError = retryError instanceof Error ? retryError : new Error("Saved route pack is corrupt."); }
+        if (retry) {
+          complete({ status: "ready", pack: retry, source: "cache" });
+          return;
+        }
+        complete({
+          status: "error",
+          message: cacheError?.message ?? (error instanceof Error
+            ? `${error.message}. Prepare offline on Wi‑Fi before you lose service.`
+            : "Route unavailable offline. Prepare offline before heading out."),
+        });
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   }, [navId]);
 
@@ -274,11 +288,10 @@ export default function NavigatePage() {
       if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
-    const p = progressAlongTrail(
-      { lat: navFix.lat, lng: navFix.lng },
-      loadState.pack.geometry,
-      loadState.pack.elevationProfile,
-    );
+    if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
+      progressCacheRef.current = createRouteProgressCache(loadState.pack);
+    }
+    const p = progressWithRouteCache(progressCacheRef.current, { lat: navFix.lat, lng: navFix.lng });
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted]);
 

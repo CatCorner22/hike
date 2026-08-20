@@ -27,11 +27,12 @@ export interface HydrationPlan {
   liters: number;
   kg: number;
   note: string;
+  days: number;
 }
 
 /** CDC drinking-water guidance: bring water to a rolling boil for 1 minute; at elevations above about 2,000 m (6,500 ft), boil for 3 minutes. WHO also recognizes boiling as effective disinfection. */
 export function boilTimeMinutes(elevationM: number): number | null {
-  if (!Number.isFinite(elevationM)) return null;
+  if (!Number.isFinite(elevationM) || elevationM < -500 || elevationM > 9000) return null;
   return elevationM >= 2000 ? 3 : 1;
 }
 
@@ -102,6 +103,7 @@ export function chemicalDoseWaitMinutes(input: {
   cloudy: boolean;
 }): number | null {
   if (!Number.isFinite(input.waterTempC) || input.waterTempC < 0 || input.waterTempC > 50) return null;
+  if (!["chlorine-dioxide", "iodine", "bleach"].includes(input.method)) return null;
   const base = input.method === "chlorine-dioxide" ? 240 : 30;
   const coldMultiplier = input.waterTempC < 10 ? 1.5 : 1;
   const cloudyMultiplier = input.cloudy ? 1.5 : 1;
@@ -115,6 +117,13 @@ export function sourceRisk(input: {
   upstreamCamping: boolean;
   algaeVisible: boolean;
 }): SourceRisk {
+  if (!["spring", "flowing-stream", "standing-water", "snowmelt", "lake", "tank"].includes(input.source)) {
+    return {
+      severity: "critical",
+      treatBefore: true,
+      message: "UNKNOWN SOURCE — DO NOT DRINK until the source is identified and treated.",
+    };
+  }
   if (input.algaeVisible) {
     return {
       severity: "critical",
@@ -187,11 +196,13 @@ export function hydrationPlan(input: {
     acclimatized: false,
   });
   if (hourly == null) return null;
-  const liters = Math.round(hourly * input.hours * 10) / 10;
+  const days = Math.ceil(input.hours / 24);
+  const liters = Math.min(12, Math.round(hourly * Math.min(input.hours, 24) * 10) / 10);
   return {
     liters,
     kg: liters,
-    note: `Planning estimate: ~${hourly} L/h, capped at 1.5 L/h. Do not force plain water on long efforts; eat normal salty food or use electrolytes as appropriate to reduce hyponatremia risk.`,
+    days,
+    note: `Planning estimate: ~${hourly} L/h, capped at 1.5 L/h and ${liters} L/day. ${days > 1 ? `For ${days} days, plan this per-day amount; do not treat it as a single total. ` : ""}Do not force plain water on long efforts; eat normal salty food or use electrolytes as appropriate to reduce hyponatremia risk.`,
   };
 }
 

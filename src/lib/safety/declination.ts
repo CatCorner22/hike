@@ -2,6 +2,7 @@
  * Approximate magnetic declination (degrees, east-positive) for hiking use.
  * Coarse WMM-2025-style grid covering North America; not for surveying.
  */
+import { isLongitudeInInterval } from "@/lib/geo/antimeridian";
 const LATS = [25, 35, 45, 55, 65];
 const LNGS = [-150, -130, -120, -110, -100, -90, -80, -70, -60];
 
@@ -64,8 +65,9 @@ export function gmAngleCard(lat: number, lng: number): {
 }
 
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
+  if (!Number.isFinite(trueBearing)) return "—";
   const trueLabel = `${Math.round(trueBearing)}° true`;
-  if (lat == null || lng == null) return trueLabel;
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return trueLabel;
   const dec = magneticDeclination(lat, lng);
   if (dec == null) return trueLabel;
   return `${trueLabel} / ${Math.round(toMagneticBearing(trueBearing, dec))}° magnetic`;
@@ -77,10 +79,14 @@ export function isFixNearRouteBbox(
   bbox: [number, number, number, number],
   padDeg = 0.08,
 ): boolean {
+  if (
+    !Number.isFinite(lat) || !Number.isFinite(lng) ||
+    lat < -90 || lat > 90 || lng < -180 || lng > 180 ||
+    ![...bbox, padDeg].every(Number.isFinite) || padDeg < 0
+  ) return false;
   const [minLng, minLat, maxLng, maxLat] = bbox;
   return (
-    lng >= minLng - padDeg &&
-    lng <= maxLng + padDeg &&
+    isLongitudeInInterval(lng, { minLng, maxLng }, padDeg) &&
     lat >= minLat - padDeg &&
     lat <= maxLat + padDeg
   );

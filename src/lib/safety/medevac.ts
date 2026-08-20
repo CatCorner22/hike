@@ -1,5 +1,6 @@
 import { formatDdm, formatMgrs10, formatUsng, phonetic } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export function nineLineMedevac(input: {
   lat?: number;
@@ -16,26 +17,24 @@ export function nineLineMedevac(input: {
     input.lat != null && input.lng != null
       ? `${formatUsng(input.lat, input.lng)} / ${formatMgrs10(input.lat, input.lng)}`
       : "UNKNOWN";
-  const patients = (input.profile?.partySize ?? 1);
-  const litter = input.litter ?? 0;
+  const patients = Number.isFinite(input.profile?.partySize) && (input.profile?.partySize ?? 0) >= 1 ? input.profile!.partySize : 1;
+  const litter = Number.isFinite(input.litter) && (input.litter ?? 0) >= 0 ? input.litter! : 0;
   const amb = input.ambulatory ?? Math.max(patients - litter, 0);
-  const prec = input.precedence ?? "B";
+  const prec = input.precedence === "A" || input.precedence === "B" || input.precedence === "C" ? input.precedence : "B";
 
-  return [
+  return formatReport([
     "9-LINE MEDEVAC / SAR",
-    `L1 LOCATION: ${loc}`,
+    `L1 LOCATION: ${reportField(loc)}`,
     "L2 FREQ/CALL: SMS/CELL — Hike app",
-    `L3 PATIENTS BY PRECEDENCE: ${patients}${prec} (${prec === "A" ? "Urgent" : prec === "B" ? "Priority" : "Routine"})`,
+    `L3 PATIENTS BY PRECEDENCE: ${reportField(patients)}${prec} (${prec === "A" ? "Urgent" : prec === "B" ? "Priority" : "Routine"})`,
     "L4 SPECIAL EQUIPMENT: None stated",
-    `L5 PATIENTS BY TYPE: ${litter}L ${amb}A`,
+    `L5 PATIENTS BY TYPE: ${reportField(litter)}L ${reportField(Number.isFinite(amb) && amb >= 0 ? amb : "UNKNOWN")}A`,
     "L6 SECURITY: N — civilian wilderness",
-    `L7 MARKING: ${input.marking ?? "Phone strobe / voice"}`,
-    `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${input.profile.name})` : ""}`,
-    `L9 TERRAIN/LZ: ${input.terrain ?? input.trailName ?? "Trail / unknown LZ"}`,
-    input.profile?.medical ? `MEDICAL: ${input.profile.medical}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `L7 MARKING: ${reportField(input.marking ?? "Phone strobe / voice")}`,
+    `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${reportField(input.profile.name)})` : ""}`,
+    `L9 TERRAIN/LZ: ${reportField(input.terrain ?? input.trailName ?? "Trail / unknown LZ")}`,
+    input.profile?.medical ? `MEDICAL: ${reportField(input.profile.medical)}` : "",
+  ]);
 }
 
 export function lostProcedure(): string[] {
@@ -59,5 +58,6 @@ export function pacePlan(): string[] {
 
 export function radioGrid(lat: number, lng: number): string {
   const grid = formatUsng(lat, lng, 5);
-  return `${grid}\n${phonetic(grid)}\n${formatDdm(lat, lng)}`;
+  if (!grid) return "UNKNOWN";
+  return formatReport([grid, phonetic(grid), formatDdm(lat, lng) ?? "UNKNOWN"]);
 }

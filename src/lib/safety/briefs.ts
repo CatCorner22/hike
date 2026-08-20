@@ -1,6 +1,7 @@
 import { formatUsng } from "@/lib/safety/usng";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 /** SMEAC — five-paragraph field order, civilian hike / SAR. */
 export function smeacBrief(input: {
@@ -17,20 +18,18 @@ export function smeacBrief(input: {
   const loc =
     input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : "UNKNOWN";
   const party = input.profile?.partySize ?? 1;
-  return [
+  return formatReport([
     "SMEAC — FIELD BRIEF",
     `DTG: ${formatZulu()}`,
-    `S — SITUATION: ${input.trailName ?? "wilderness route"} · now ${loc} · party ${party}`,
-    `M — MISSION: ${input.mission ?? "Complete planned hike and return by overdue time; send SOS if overdue or injured."}`,
-    `E — EXECUTION: ${input.execution ?? "Stay on packed route. Handrail trail. Rally at last RP / LKP if split."}`,
-    `A — ADMIN/LOG: ${input.admin ?? "Water, layers, headlamp, SOS sheet on this phone. ICE filled."}${input.returnAt ? ` Return ${input.returnAt}` : ""}`,
-    `C — COMMAND/SIGNAL: ${input.command ?? "PACE: SMS ICE → share grid → voice 9-line → stay put + beacon. Challenge/password if night regroup."}`,
+    `S — SITUATION: ${reportField(input.trailName ?? "wilderness route")} · now ${reportField(loc)} · party ${reportField(party)}`,
+    `M — MISSION: ${reportField(input.mission ?? "Complete planned hike and return by overdue time; send SOS if overdue or injured.")}`,
+    `E — EXECUTION: ${reportField(input.execution ?? "Stay on packed route. Handrail trail. Rally at last RP / LKP if split.")}`,
+    `A — ADMIN/LOG: ${reportField(input.admin ?? "Water, layers, headlamp, SOS sheet on this phone. ICE filled.")}${input.returnAt ? ` Return ${reportField(input.returnAt)}` : ""}`,
+    `C — COMMAND/SIGNAL: ${reportField(input.command ?? "PACE: SMS ICE → share grid → voice 9-line → stay put + beacon. Challenge/password if night regroup.")}`,
     input.profile?.iceName || input.profile?.icePhone
-      ? `ICE: ${input.profile?.iceName ?? ""} ${input.profile?.icePhone ?? ""}`.trim()
+      ? `ICE: ${reportField(input.profile?.iceName, 100)} ${reportField(input.profile?.icePhone, 100)}`
       : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ]);
 }
 
 /** ACE-lite for a hiking party: water, casualties, equipment — not ammo. */
@@ -45,15 +44,13 @@ export function aceReport(input: {
   const party = input.partySize ?? 1;
   const injured = input.injured ?? 0;
   const water = input.waterLiters;
-  return [
+  return formatReport([
     "ACE (party status)",
     `A — Assets/water: ${water != null ? `${water} L remaining` : "water not logged"}`,
     `C — Casualties: ${injured} of ${party} injured / non-ambulatory`,
-    `E — Equipment: ${input.gearNote ?? "headlamp, shelter, comms as packed"}`,
-    input.lat != null && input.lng != null ? `LOC: ${formatUsng(input.lat, input.lng)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `E — Equipment: ${reportField(input.gearNote ?? "headlamp, shelter, comms as packed")}`,
+    input.lat != null && input.lng != null ? `LOC: ${reportField(formatUsng(input.lat, input.lng))}` : "",
+  ]);
 }
 
 export function leapfrogSop(): string[] {
@@ -89,7 +86,5 @@ export function fieldMetar(input: {
   const wind = input.windKph != null ? `${Math.round(input.windKph)}KPH` : "WIND UNK";
   const vis = input.visKm != null ? `VIS ${input.visKm}KM` : "VIS UNK";
   const loc = input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : "";
-  return [`FIELD OBS ${formatZulu()}`, sky, wind, vis, input.precip ?? "PCPN UNK", loc]
-    .filter(Boolean)
-    .join(" ");
+  return formatReport([[`FIELD OBS ${formatZulu()}`, sky, wind, vis, reportField(input.precip ?? "PCPN UNK"), loc].filter(Boolean).join(" ")]);
 }

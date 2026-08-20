@@ -51,7 +51,7 @@ describe("avalanche decision aids", () => {
   it("lists the seven ALPTRUTh factors and applies the three-yes turn-around threshold", () => {
     expect(alptruthChecklist()).toHaveLength(7);
     const result = avalancheAssessment({ alptruthYesCount: 3 });
-    expect(result).toMatchObject({ goNoGo: "no-go", severity: "warning" });
+    expect(result).toMatchObject({ snowGoNoGo: "no-go", severity: "warning" });
     expect(result!.reasons.join(" ")).toMatch(/3-or-more/);
   });
 
@@ -61,11 +61,11 @@ describe("avalanche decision aids", () => {
 
   it("makes high danger a no-go and retains a cautious outcome for moderate danger", () => {
     expect(avalancheAssessment({ danger: "high", alptruthYesCount: 0 })).toMatchObject({
-      goNoGo: "no-go",
+      snowGoNoGo: "no-go",
       severity: "critical",
     });
     expect(avalancheAssessment({ danger: "moderate", alptruthYesCount: 0 })).toMatchObject({
-      goNoGo: "caution",
+      snowGoNoGo: "caution",
       severity: "caution",
     });
   });

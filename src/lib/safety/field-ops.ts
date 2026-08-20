@@ -3,7 +3,7 @@ import { rangeAzimuth } from "@/lib/safety/landnav";
 /** Environment Canada wind-chill (°C, wind km/h). Valid roughly T ≤ 10 °C, wind ≥ 5 km/h. */
 export function windChillC(tempC: number, windKph: number): number | null {
   if (!Number.isFinite(tempC) || !Number.isFinite(windKph)) return null;
-  if (tempC > 10 || windKph < 5) return null;
+  if (tempC < -90 || tempC > 10 || windKph < 5 || windKph > 300) return null;
   const v = Math.pow(windKph, 0.16);
   return Math.round((13.12 + 0.6215 * tempC - 11.37 * v + 0.3965 * tempC * v) * 10) / 10;
 }
@@ -18,7 +18,7 @@ export function windChillWarning(tempC: number, windKph: number): string | null 
 
 /** Simplified NOAA heat index (°C). Meaningful above ~27 °C with humidity. */
 export function heatIndexC(tempC: number, rhPct: number): number | null {
-  if (tempC < 27 || rhPct < 40) return null;
+  if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || tempC < 27 || tempC > 60 || rhPct < 40 || rhPct > 100) return null;
   const t = (tempC * 9) / 5 + 32;
   const r = rhPct;
   const hiF =
@@ -47,7 +47,8 @@ export function lightningRule(flashToBangSec: number): {
   km: number;
   miles: number;
   warning: string;
-} {
+} | null {
+  if (!Number.isFinite(flashToBangSec) || flashToBangSec < 0 || flashToBangSec > 300) return null;
   const miles = flashToBangSec / 5;
   const km = flashToBangSec / 3;
   let warning: string;

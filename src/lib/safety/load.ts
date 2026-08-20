@@ -1,5 +1,6 @@
 import { workRestCycle } from "@/lib/safety/thermal";
 import type { Severity } from "@/lib/safety/severity";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export type TerrainFactor =
   | "paved"
@@ -249,14 +250,15 @@ export function loadPlan(input: LoadPlanInput): LoadPlan | null {
 
 /** Field-report style inspired by the existing 9-line MEDEVAC formatter. */
 export function formatLoadPlan(plan: LoadPlan): string {
-  return [
+  const fixed = (value: number, digits: number) => (Number.isFinite(value) ? value.toFixed(digits) : "UNKNOWN");
+  return formatReport([
     "LOAD PLAN",
-    `BASE WEIGHT: ${plan.baseWeightKg.toFixed(1)} kg`,
-    `WATER: ${plan.water.liters.toFixed(1)} L / ${plan.water.waterKg.toFixed(1)} kg (${plan.water.litersPerHour.toFixed(1)} L/hr)`,
-    `FOOD: ${plan.calories.kcal.toFixed(0)} kcal / ${plan.calories.foodKg.toFixed(1)} kg (assumes ${FOOD_ENERGY_DENSITY_KCAL_PER_KG} kcal/kg)`,
-    `TOTAL PACK: ${plan.totalPackKg.toFixed(1)} kg`,
-    `PACK LOAD: ${plan.packAdvice.percentBodyweight.toFixed(1)}% BW — ${plan.packAdvice.message}`,
-    `MARCH: ${plan.march.minutes.toFixed(0)} min at ${plan.march.kph.toFixed(1)} km/h`,
+    `BASE WEIGHT: ${fixed(plan.baseWeightKg, 1)} kg`,
+    `WATER: ${fixed(plan.water.liters, 1)} L / ${fixed(plan.water.waterKg, 1)} kg (${fixed(plan.water.litersPerHour, 1)} L/hr)`,
+    `FOOD: ${fixed(plan.calories.kcal, 0)} kcal / ${fixed(plan.calories.foodKg, 1)} kg (assumes ${FOOD_ENERGY_DENSITY_KCAL_PER_KG} kcal/kg)`,
+    `TOTAL PACK: ${fixed(plan.totalPackKg, 1)} kg`,
+    `PACK LOAD: ${fixed(plan.packAdvice.percentBodyweight, 1)}% BW — ${reportField(plan.packAdvice.message)}`,
+    `MARCH: ${fixed(plan.march.minutes, 0)} min at ${fixed(plan.march.kph, 1)} km/h`,
     "HYDRATION CAP: Never exceed about 1.5 L/hr or 12 L/day; overdrinking can cause fatal hyponatremia.",
-  ].join("\n");
+  ]);
 }

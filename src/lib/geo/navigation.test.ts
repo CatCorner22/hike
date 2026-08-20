@@ -142,7 +142,7 @@ describe("safety alerts", () => {
   });
 
   it("does not raise off-trail alerts from an untrusted last-known fix", () => {
-    expect(offTrailLevel(200, 8, { trustedFix: false })).toBe("ok");
+    expect(offTrailLevel(200, 8, { trustedFix: false })).toBe("unknown");
   });
 
   it("still warns when raw offset is large even if GPS accuracy is poor", () => {

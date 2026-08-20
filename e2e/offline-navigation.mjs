@@ -30,21 +30,52 @@ function log(scenario, status, detail) {
   console.log(`[${mark}] ${scenario}${detail ? ` — ${detail}` : ""}`);
 }
 
-async function createPlan() {
+/**
+ * Create the fixture plan from INSIDE the browser context.
+ *
+ * Plans are scoped to an anonymous device-owner cookie, so a plan created by
+ * Node's fetch belongs to a different owner than the browser and correctly
+ * 404s there. Creating it through the page keeps one cookie jar, which is also
+ * what a real user does.
+ */
+async function createPlan(page, geometry) {
+  const plan = await page.evaluate(async (geom) => {
+    const res = await fetch("/api/plans", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify({ name: "Offline probe route", customGeometry: geom }),
+    });
+    const text = await res.text();
+    if (!res.ok) return { error: `${res.status} ${text}` };
+    try {
+      return { plan: JSON.parse(text) };
+    } catch {
+      return { error: `unparseable: ${text.slice(0, 200)}` };
+    }
+  }, geometry);
+
+  if (plan.error) throw new Error(`plan create failed: ${plan.error}`);
+  if (!plan.plan?.id) {
+    throw new Error(`plan create returned no id: ${JSON.stringify(plan.plan)}`);
+  }
+  return plan.plan.id;
+}
+
+/** Verify device-scoped ownership actually isolates: a foreign plan must 404. */
+async function assertOwnershipIsolation(page) {
   const res = await fetch(`${BASE}/api/plans`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: "Offline probe route",
-      customGeometry: GEOMETRY,
-    }),
+    body: JSON.stringify({ name: "foreign owner plan", customGeometry: GEOMETRY }),
   });
-  if (!res.ok) {
-    throw new Error(`plan create failed: ${res.status} ${await res.text()}`);
-  }
-  const plan = await res.json();
-  if (!plan?.id) throw new Error(`plan create returned no id: ${JSON.stringify(plan)}`);
-  return plan.id;
+  if (!res.ok) return { ok: false, detail: `setup failed: ${res.status}` };
+  const foreign = await res.json();
+  const status = await page.evaluate(async (id) => {
+    const r = await fetch(`/api/plans/${id}`, { credentials: "same-origin" });
+    return r.status;
+  }, foreign.id);
+  return { ok: status === 404, detail: `foreign plan GET from browser -> ${status}` };
 }
 
 async function waitForServiceWorker(page) {
@@ -120,8 +151,14 @@ async function run() {
     });
     await grantDurableStorage(browser, context, BASE);
     const page = await context.newPage();
-    const planId = await createPlan();
+    // Establish the owner cookie and same-origin context before creating data.
+    await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
+    const planId = await createPlan(page, GEOMETRY);
     const navUrl = `${BASE}/navigate/plan-${planId}`;
+
+    const isolation = await assertOwnershipIsolation(page);
+    log("A0 device-scoped ownership isolates", isolation.ok ? "PASS" : "FAIL", isolation.detail);
+    results.push(["A0: ownership isolation", isolation.ok]);
 
     await page.goto(navUrl, { waitUntil: "domcontentloaded" });
     await waitForServiceWorker(page);
@@ -173,7 +210,8 @@ async function run() {
         };
       }
     });
-    const planId = await createPlan();
+    await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
+    const planId = await createPlan(page, GEOMETRY);
 
     // Visit the plan detail screen online and register the SW.
     await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });

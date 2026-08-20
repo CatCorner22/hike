@@ -135,7 +135,7 @@ describe("G-M card", () => {
 describe("MGRS parse / phonetic", () => {
   it("round-trips a Yosemite grid within 25 m", () => {
     const origin = { lat: 37.7459, lng: -119.5936 };
-    const grid = formatMgrs10(origin.lat, origin.lng);
+    const grid = formatMgrs10(origin.lat, origin.lng)!;
     const parsed = parseUsng(grid, origin);
     expect(parsed).not.toBeNull();
     const ra = rangeAzimuth(origin, parsed!);

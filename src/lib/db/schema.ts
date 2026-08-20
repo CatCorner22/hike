@@ -7,6 +7,7 @@ import {
   text,
   timestamp,
   uuid,
+  index,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 
@@ -61,6 +62,7 @@ export const trailResearch = pgTable("trail_research", {
 
 export const hikePlans = pgTable("hike_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
   name: text("name").notNull(),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   plannedDate: timestamp("planned_date"),
@@ -70,10 +72,11 @@ export const hikePlans = pgTable("hike_plans", {
   customGeometry: jsonb("custom_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [index("hike_plans_owner_id_idx").on(table.ownerId)]);
 
 export const activities = pgTable("activities", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
   planId: uuid("plan_id").references(() => hikePlans.id, { onDelete: "set null" }),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   name: text("name"),
@@ -83,10 +86,11 @@ export const activities = pgTable("activities", {
   notes: text("notes"),
   trackGeometry: jsonb("track_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [index("activities_owner_id_idx").on(table.ownerId)]);
 
 export const activityPoints = pgTable("activity_points", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
   activityId: uuid("activity_id")
     .notNull()
     .references(() => activities.id, { onDelete: "cascade" }),
@@ -94,7 +98,10 @@ export const activityPoints = pgTable("activity_points", {
   lng: doublePrecision("lng").notNull(),
   elevation: doublePrecision("elevation"),
   recordedAt: timestamp("recorded_at").notNull(),
-});
+}, (table) => [
+  index("activity_points_owner_id_idx").on(table.ownerId),
+  index("activity_points_owner_activity_recorded_id_idx").on(table.ownerId, table.activityId, table.recordedAt, table.id),
+]);
 
 export const campgrounds = pgTable("campgrounds", {
   id: uuid("id").primaryKey().defaultRandom(),

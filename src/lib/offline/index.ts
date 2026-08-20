@@ -1,4 +1,4 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 
 interface PendingPoint {
   id: string;
@@ -38,12 +38,18 @@ export function getOfflineDb() {
           const points = transaction.objectStore("pendingPoints");
           if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
           points.createIndex("by-synced", "synced");
-          void points.openCursor().then(function rewrite(cursor): Promise<void> | void {
+          // Use native cursor callbacks inside the versionchange transaction.
+          // Detached promises can finish after the upgrade commits, leaving legacy
+          // boolean values outside the numeric by-synced index.
+          const nativePoints = unwrap(points);
+          const cursorRequest = nativePoints.openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
             if (!cursor) return;
             const value = cursor.value as PendingPoint & { synced: boolean | number };
-            void cursor.update({ ...value, synced: value.synced ? 1 : 0 });
-            return cursor.continue().then(rewrite);
-          });
+            cursor.update({ ...value, synced: value.synced ? 1 : 0 });
+            cursor.continue();
+          };
         }
       },
     });
@@ -170,3 +176,10 @@ export async function cacheTrailOffline(trail: { id: string; name: string; geome
 export async function getOfflineTrail(id: string) { const db = await getOfflineDb(); return db ? db.get("offlineTrails", id) : null; }
 export async function cachePlanOffline(plan: { id: string; plan: Record<string, unknown> }) { const db = await getOfflineDb(); if (db) await db.put("offlinePlans", { ...plan, cachedAt: new Date().toISOString() }); }
 export async function getOfflinePlan(id: string) { const db = await getOfflineDb(); return db ? db.get("offlinePlans", id) : null; }
+
+/** Test-only reset for fake-indexeddb; not used by the application. */
+export async function resetOfflineDbForTests() {
+  const current = dbPromise;
+  dbPromise = null;
+  if (current) (await current).close();
+}

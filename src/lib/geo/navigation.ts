@@ -1,5 +1,6 @@
 import * as turf from "@turf/turf";
 import { bboxFromGeometry, formatDistance } from "@/lib/geo";
+import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 
 export interface LatLng {
   lat: number;
@@ -14,6 +15,8 @@ export interface TrailProgress {
   totalMeters: number;
   remainingElevationMeters: number;
   bearingToTrail: number;
+  /** False means imported or persisted route/position data was invalid. */
+  valid: boolean;
 }
 
 export function toLineString(
@@ -29,6 +32,7 @@ export function toLineString(
 export function trailLengthMeters(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
+  if (!isValidGeometry(geometry)) return 0;
   if (geometry.type === "MultiLineString") {
     return geometry.coordinates.reduce((sum, coords) => {
       if (coords.length < 2) return sum;
@@ -71,6 +75,7 @@ function progressOnSegment(
       traveledMeters,
     ),
     bearingToTrail: turf.bearing(pt, turf.point([nearest.lng, nearest.lat])),
+    valid: true,
   };
 }
 
@@ -79,6 +84,9 @@ export function progressAlongTrail(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   elevationProfile: Array<{ distanceMeters: number; elevation: number }> = [],
 ): TrailProgress {
+  if (!isValidLatLng(point) || !isValidGeometry(geometry)) {
+    return emptyProgress(isValidLatLng(point) ? point : { lat: 0, lng: 0 }, 0, false);
+  }
   const totalMeters = trailLengthMeters(geometry);
 
   if (geometry.type === "MultiLineString") {
@@ -115,7 +123,7 @@ export function progressAlongTrail(
   return progressOnSegment(point, coords, elevationProfile, 0, totalMeters);
 }
 
-function emptyProgress(point: LatLng, totalMeters: number): TrailProgress {
+function emptyProgress(point: LatLng, totalMeters: number, valid = true): TrailProgress {
   return {
     nearest: point,
     offsetMeters: 0,
@@ -124,6 +132,7 @@ function emptyProgress(point: LatLng, totalMeters: number): TrailProgress {
     totalMeters,
     remainingElevationMeters: 0,
     bearingToTrail: 0,
+    valid,
   };
 }
 
@@ -158,13 +167,16 @@ function interpolateElevation(
   return a.elevation + (b.elevation - a.elevation) * t;
 }
 
-export function normalizeHeading(degrees: number): number {
+export function normalizeHeading(degrees: number): number | null {
+  if (!Number.isFinite(degrees)) return null;
   return ((degrees % 360) + 360) % 360;
 }
 
-export function compassLabel(heading: number): string {
+export function compassLabel(heading: number): string | null {
   const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
-  const index = Math.round(normalizeHeading(heading) / 45) % 8;
+  const normalized = normalizeHeading(heading);
+  if (normalized == null) return null;
+  const index = Math.round(normalized / 45) % 8;
   return dirs[index];
 }
 
@@ -182,14 +194,19 @@ export function formatRemaining(meters: number): string {
 export function safeBbox(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   extra?: LatLng,
-): [number, number, number, number] {
-  const bbox = bboxFromGeometry(geometry, 0.004);
-  if (!extra) return bbox;
+): [number, number, number, number] | null {
+  if (!isValidGeometry(geometry) || (extra && !isValidLatLng(extra))) return null;
+  if (!extra) return bboxFromGeometry(geometry, 0.004);
+  const coords = geometry.type === "LineString" ? geometry.coordinates : geometry.coordinates.flat();
+  const longitudes = [...coords.map(([lng]) => lng), extra.lng];
+  const interval = minimumLongitudeInterval(longitudes);
+  if (!interval) return null;
+  const latitudes = [...coords.map(([, lat]) => lat), extra.lat];
   return [
-    Math.min(bbox[0], extra.lng - 0.004),
-    Math.min(bbox[1], extra.lat - 0.004),
-    Math.max(bbox[2], extra.lng + 0.004),
-    Math.max(bbox[3], extra.lat + 0.004),
+    interval.minLng - 0.004,
+    Math.min(...latitudes) - 0.004,
+    interval.maxLng + 0.004,
+    Math.max(...latitudes) + 0.004,
   ];
 }
 
@@ -204,6 +221,13 @@ function isFinitePosition(pos: unknown): pos is GeoJSON.Position {
     (pos[1] as number) >= -90 &&
     (pos[1] as number) <= 90
   );
+}
+
+function isValidLatLng(point: unknown): point is LatLng {
+  if (!point || typeof point !== "object") return false;
+  const candidate = point as LatLng;
+  return Number.isFinite(candidate.lat) && Number.isFinite(candidate.lng) &&
+    candidate.lat >= -90 && candidate.lat <= 90 && candidate.lng >= -180 && candidate.lng <= 180;
 }
 
 export function isValidGeometry(
