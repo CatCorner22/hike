@@ -11,6 +11,16 @@ import { avalancheTerrainRisk } from "@/lib/safety/avalanche";
 import { nineLineMedevac } from "@/lib/safety/medevac";
 import { casualtyCard, tourniquetStatus } from "@/lib/safety/tccc";
 import { litterEvacTime } from "@/lib/safety/sar-advanced";
+
+/**
+ * litterEvacTime returns prose or null. Either is an acceptable refusal; a
+ * time estimate derived from impossible input is not. Asserting on null alone
+ * would miss the real failure, which is a confident "~0 min" from garbage.
+ */
+function statesNoCarryTime(message: string | null): boolean {
+  return message == null || !/~\s*[\d.]+\s*(min|h)\b/.test(message);
+}
+
 import { radioHorizonKm } from "@/lib/safety/comms";
 import { normalizeHeading } from "@/lib/geo/navigation";
 
@@ -99,11 +109,10 @@ describe("VERIFY: fail-closed on unknown enums and impossible physics", () => {
     expect(lightningRule(-5)).toBeNull();
     expect(boilTimeMinutes(-50000)).toBeNull();
     expect(radioHorizonKm(1e6)).toBeNull();
-    // Main changed litterEvacTime to return an explicit refusal message rather
-    // than null. That is better than null, which renders as "—" and tells a
-    // party nothing. So assert the safety property -- no fictional ETA -- rather
-    // than the representation.
-    expect(litterEvacTime(-5, 2)).not.toMatch(/~\s*[\d.]+\s*(min|h)\b/);
+    // Asserts the safety property (no fictional ETA) rather than the exact
+    // representation, because the contract legitimately changed from null to a
+    // refusal message and back to nullable during hardening.
+    expect(statesNoCarryTime(litterEvacTime(-5, 2))).toBe(true);
   });
 });
 

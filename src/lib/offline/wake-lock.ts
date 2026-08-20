@@ -8,13 +8,12 @@
  * its own reasons (battery saver). Without listening for `release`, the flag stayed true
  * forever after the first successful acquire.
  */
-
-type WakeLockSentinelLike = {
+interface WakeLockSentinel {
   released?: boolean;
   release: () => Promise<void>;
   addEventListener?: (type: "release", listener: () => void) => void;
   removeEventListener?: (type: "release", listener: () => void) => void;
-};
+}
 
 export interface WakeLockHandle {
   release: () => void;
@@ -22,7 +21,7 @@ export interface WakeLockHandle {
 
 let activeLock: WakeLockHandle | null = null;
 let lockHeld = false;
-let sentinel: WakeLockSentinelLike | null = null;
+let sentinel: WakeLockSentinel | null = null;
 const listeners = new Set<() => void>();
 
 function setHeld(next: boolean) {
@@ -41,7 +40,7 @@ export function subscribeWakeLock(listener: () => void): () => void {
 
 export async function requestWakeLock(): Promise<WakeLockHandle> {
   const nav = navigator as Navigator & {
-    wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinelLike> };
+    wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
   };
 
   if (!nav.wakeLock) {
@@ -66,9 +65,17 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
     detachSentinel();
     try {
       sentinel = await nav.wakeLock!.request("screen");
-      onSentinelRelease = () => setHeld(false);
+      if (sentinel.released) {
+        sentinel = null;
+        setHeld(false);
+        return;
+      }
+      onSentinelRelease = () => {
+        sentinel = null;
+        setHeld(false);
+      };
       sentinel.addEventListener?.("release", onSentinelRelease);
-      setHeld(sentinel != null && sentinel.released !== true);
+      setHeld(true);
     } catch {
       sentinel = null;
       setHeld(false);
@@ -108,7 +115,6 @@ export async function releaseWakeLock() {
   activeLock?.release();
   activeLock = null;
   setHeld(false);
-  sentinel = null;
 }
 
 /** Test-only reset; not used by the application. */

@@ -90,12 +90,6 @@ export function buddySeparationWarning(
  * cannot carry, and someone has to stay on their airway and monitor them.
  */
 export const MIN_LITTER_CARRIERS = 6;
-/**
- * Above this the input is not a hiking party, it is corrupt data. A party size
- * of 1e9 previously yielded a confident "~37 min for 1000 m with 999999998
- * carriers", which reads as authoritative while proving the input was garbage.
- */
-export const MAX_PLAUSIBLE_PARTY = 200;
 
 export interface LitterEvacAdvice {
   /** Can this party actually carry, or is the honest answer "shelter and send for help"? */
@@ -105,53 +99,12 @@ export interface LitterEvacAdvice {
   message: string;
 }
 
-<<<<<<< HEAD
-export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
-  const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
-  // Clamping a non-finite or negative distance to 0 produced a confident
-  // "Litter carry ~0 min for 0 m" from garbage input -- the worst possible
-  // answer, because a party would read it as "this is trivial, start walking".
-  // An unknown distance is refused instead.
-  if (Number.isFinite(partySize) && partySize > MAX_PLAUSIBLE_PARTY) {
-    return {
-      feasible: false,
-      carriers: 0,
-      hours: null,
-      message:
-        `A party size of ${Math.floor(partySize)} is not a plausible field input, so no carry ` +
-        "time is given. Re-enter the number of people actually present.",
-    };
-  }
-  if (!Number.isFinite(distanceM) || distanceM < 0) {
-    return {
-      feasible: false,
-      carriers: Math.max(0, party - 2),
-      hours: null,
-      message:
-        "Distance to the evacuation point is unknown, so no carry time can be given. " +
-        "Do not plan a litter carry on a guess: fix the position first, or shelter in " +
-        "place and send for help.",
-    };
-  }
-=======
-const MAX_LITTER_DISTANCE_M = 100_000;
-const MAX_LITTER_PARTY = 50;
-
-function isSaneLitterInput(distanceM: number, partySize: number): boolean {
-  return (
-    Number.isFinite(distanceM) &&
-    distanceM > 0 &&
-    distanceM <= MAX_LITTER_DISTANCE_M &&
-    Number.isFinite(partySize) &&
-    partySize >= 1 &&
-    partySize <= MAX_LITTER_PARTY
-  );
-}
-
 export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice | null {
-  if (!isSaneLitterInput(distanceM, partySize)) return null;
+  // Boundary validation from the safety-invariants suite: non-finite or absurd inputs get
+  // null, never advice built on a garbage number.
+  if (!Number.isFinite(distanceM) || distanceM <= 0 || distanceM > 100_000) return null;
+  if (!Number.isFinite(partySize) || partySize < 1 || partySize > 50) return null;
   const party = Math.floor(partySize);
->>>>>>> origin/main
   const metres = distanceM;
   // One casualty plus one attendant on the airway; everyone else can take a handle.
   const carriers = Math.max(0, party - 2);

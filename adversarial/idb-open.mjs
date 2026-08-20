@@ -93,3 +93,45 @@ export function packFixture(id, coordinates) {
     version: PACK_VERSION,
   };
 }
+
+/**
+ * Clears the pre-hike readiness checklist if it is showing.
+ *
+ * A readiness gate now stands in front of the navigate screen, so a probe that
+ * waits for the map canvas times out instead of reporting anything useful.
+ * Shared so every probe goes through the same real screen a hiker sees.
+ */
+export async function clearReadinessGate(page) {
+  // Wait for the page to settle into EITHER the checklist or the map. Checking
+  // immediately after a navigation raced the render: the gate was not on screen
+  // yet, the helper reported "not-shown", and the caller then timed out waiting
+  // for a canvas that the gate was covering.
+  await Promise.race([
+    page.getByText(/Pre-hike checklist/i).first().waitFor({ state: "visible", timeout: 12_000 }),
+    page.locator("canvas").first().waitFor({ state: "visible", timeout: 12_000 }),
+  ]).catch(() => {});
+  if ((await page.getByText(/Pre-hike checklist/i).count().catch(() => 0)) === 0) return "not-shown";
+  const fill = async (label, value) => {
+    const field = page.getByLabel(label);
+    if ((await field.count().catch(() => 0)) > 0) await field.first().fill(value);
+  };
+  await fill(/^Your name$/i, "Probe Hiker");
+  await fill(/^ICE name$/i, "Probe Contact");
+  await fill(/^ICE phone$/i, "+15555550123");
+  const returnField = page.getByLabel(/Return by/i);
+  if ((await returnField.count().catch(() => 0)) > 0) {
+    const when = new Date(Date.now() + 6 * 3600 * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    await returnField.first().fill(
+      `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`,
+    );
+  }
+  await page.getByRole("button", { name: /Start navigation/i }).click().catch(() => {});
+  await page.waitForTimeout(900);
+  if ((await page.getByText(/Pre-hike checklist/i).count().catch(() => 0)) > 0) {
+    await page.getByRole("button", { name: /Skip for now and show the map/i }).click().catch(() => {});
+    await page.waitForTimeout(900);
+    return "skipped";
+  }
+  return "completed";
+}

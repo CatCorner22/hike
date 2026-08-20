@@ -1,10 +1,6 @@
 import {
   remainingElevationGain,
-<<<<<<< HEAD
-=======
   resolveRemaining,
-  stabilizeLoop,
->>>>>>> origin/main
   type LatLng,
   type TrailProgress,
   type TravelDirection,
@@ -26,7 +22,6 @@ export interface RouteProgressCache {
   segmentCells: Map<string, number[]>;
   hasUnindexedSegments: boolean;
   lastSegment: number | null;
-  lastTraveledMeters: number | null;
 }
 
 const LOCAL_SEGMENT_WINDOW = 512;
@@ -73,7 +68,7 @@ export function createRouteProgressCache(pack: RoutePack): RouteProgressCache {
     }
     coordinateIndex += line.length;
   }
-  return { packId: pack.id, totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null, lastTraveledMeters: null };
+  return { packId: pack.id, totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null };
 }
 
 function wrappedLongitudeDelta(lng: number): number {
@@ -118,21 +113,17 @@ function validPoint(point: LatLng): boolean {
 }
 
 function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): TrailProgress {
-<<<<<<< HEAD
-  return { nearest: point, offsetMeters: 0, traveledMeters: 0, remainingMeters: totalMeters, totalMeters, remainingDirection: "unknown", remainingElevationMeters: 0, bearingToTrail: 0, valid };
-=======
   return {
     nearest: point,
-    offsetMeters: Number.NaN,
+    offsetMeters: 0,
     traveledMeters: 0,
     remainingMeters: totalMeters,
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
-    bearingToTrail: Number.NaN,
+    bearingToTrail: 0,
     valid,
   };
->>>>>>> origin/main
 }
 
 /**
@@ -176,21 +167,6 @@ export function progressWithRouteCache(
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
-<<<<<<< HEAD
-  // Mirror progressAlongTrail's direction handling exactly. Walking against the
-  // stored direction, "total - traveled" counts UP as you approach your
-  // destination, which also silenced the turnaround/daylight warning at the
-  // start of a long walk. With no direction established, the nearer end is the
-  // honest answer.
-  const toEnd = Math.max(cache.totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
-
-  return {
-=======
   // Same direction resolution as progressAlongTrail — this cache once re-derived
   // "total - traveled" on its own and quietly re-introduced the backwards readout.
   const { remainingMeters, resolvedDirection } = resolveRemaining(
@@ -198,29 +174,19 @@ export function progressWithRouteCache(
     cache.totalMeters,
     direction,
   );
-  const progress = stabilizeLoop({
->>>>>>> origin/main
+  return {
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
     remainingMeters,
     totalMeters: cache.totalMeters,
-<<<<<<< HEAD
-    remainingDirection: direction,
-=======
->>>>>>> origin/main
     remainingElevationMeters: remainingElevationGain(
       cache.elevationProfile,
       traveledMeters,
       resolvedDirection,
     ),
-<<<<<<< HEAD
-=======
     remainingDirection: direction,
->>>>>>> origin/main
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
-  }, cache.lastTraveledMeters != null ? { traveledMeters: cache.lastTraveledMeters } : null);
-  cache.lastTraveledMeters = progress.traveledMeters;
-  return progress;
+  };
 }

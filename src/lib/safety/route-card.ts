@@ -27,9 +27,9 @@ export function routeCardLegs(
   let cum = 0;
   let pathSinceLeg = 0;
   let legStart: GeoJSON.Position | null = null;
-  const parts = segments(geometry);
+  const routeSegments = segments(geometry);
 
-  for (const coords of parts) {
+  for (const [segmentIndex, coords] of routeSegments.entries()) {
     const clean = coords.filter((c) => Number.isFinite(c[0]) && Number.isFinite(c[1]));
     if (clean.length < 2) continue;
     if (!legStart) legStart = clean[0];
@@ -40,7 +40,7 @@ export function routeCardLegs(
       });
       cum += step;
       pathSinceLeg += step;
-      if (pathSinceLeg >= targetLegM || (i === clean.length - 1 && coords === parts.at(-1))) {
+      if (pathSinceLeg >= targetLegM || (i === clean.length - 1 && segmentIndex === routeSegments.length - 1)) {
         const from = { lng: legStart[0], lat: legStart[1] };
         const to = { lng: clean[i][0], lat: clean[i][1] };
         const ra = rangeAzimuth(from, to);

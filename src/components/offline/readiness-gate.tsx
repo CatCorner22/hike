@@ -19,9 +19,19 @@ import { hikeReadiness } from "@/lib/safety/readiness";
 export function ReadinessGate({
   packReady,
   onReady,
+  onProceedAnyway,
 }: {
   packReady: boolean;
   onReady: () => void;
+  /**
+   * Escape hatch. The checklist is pre-trip hygiene, but it was a hard gate on
+   * seeing a route pack that is already downloaded and valid. Someone already
+   * out, disoriented, on a dying battery with cold hands had to type a name, an
+   * ICE contact, a phone number and a return time before any map appeared --
+   * exactly the moment they cannot type. Withholding the map cannot make them
+   * safer. The missing items stay on screen during navigation instead.
+   */
+  onProceedAnyway: () => void;
 }) {
   const [profile, setProfile] = useState<IceProfile>({
     name: "",
@@ -86,7 +96,8 @@ export function ReadinessGate({
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
-            Navigate will not start until the route pack, ICE, and return time are set.
+            Set these before you leave: they are what lets someone find you. You can
+            still open the map without them.
           </p>
           {missing.length > 0 && (
             <ul className="list-disc pl-5 text-sm text-destructive">
@@ -156,6 +167,31 @@ export function ReadinessGate({
           <Button onClick={() => void saveAndGo()} className="w-full" disabled={!packReady}>
             Start navigation
           </Button>
+          {/*
+            Only offered once the pack is ready. Without a pack there is
+            genuinely nothing to display offline, so proceeding would be a lie.
+          */}
+          {packReady && (
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                void (async () => {
+                  // Persist whatever they did manage to enter before leaving.
+                  await saveIceProfile(profile);
+                  const resolved = returnAt ? resolveLocalDateTime(returnAt) : null;
+                  if (resolved?.kind === "resolved") await setOverdueAlarm(resolved.value);
+                  await saveCheckinSettings({ enabled: checkinOn, intervalMin: checkinMin });
+                })().finally(onProceedAnyway);
+              }}
+            >
+              Skip for now and show the map
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Skipping leaves the overdue alarm and ICE card incomplete. Navigation will
+            keep showing what is missing.
+          </p>
         </CardContent>
       </Card>
     </div>

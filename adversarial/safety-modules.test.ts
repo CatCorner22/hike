@@ -247,9 +247,9 @@ describe("numeric abuse rejects or safely clamps invalid field data", () => {
   it("does not produce a fictional litter evacuation ETA for negative, infinite, or giant party inputs", () => {
     for (const [distanceM, partySize] of [[-5, 2], [1e308, 2], [1000, 0], [1000, -1], [1000, 1e9]] as const) {
       const out = litterEvacTime(distanceM, partySize);
-      // A refusal message is acceptable and preferable to null; a time estimate
-      // derived from impossible input is not.
-      expect(out).not.toMatch(/~\s*[\d.]+\s*(min|h)\b/);
+      // null or a refusal message are both acceptable; a time estimate derived
+      // from impossible input is not.
+      expect(out == null || !/~\s*[\d.]+\s*(min|h)\b/.test(out)).toBe(true);
     }
   });
 });

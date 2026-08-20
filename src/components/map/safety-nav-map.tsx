@@ -122,7 +122,9 @@ export function SafetyNavMap({
       const userPx = user ? toPx(user.lng, user.lat) : { x: width / 2, y: height / 2 };
 
       const rotation =
-        headingUp && user?.heading != null ? (user.heading * Math.PI) / 180 : 0;
+        headingUp && user?.heading != null && Number.isFinite(user.heading)
+          ? (user.heading * Math.PI) / 180
+          : 0;
       if (rotation) {
         ctx.save();
         ctx.translate(userPx.x, userPx.y);
@@ -290,11 +292,17 @@ export function SafetyNavMap({
       }
 
       if (user) {
-        const p = toPx(user.lng, user.lat);
         const ringM = gpsDenied ? uncertaintyM ?? user.accuracy : user.accuracy;
-        if (ringM && ringM > 0) {
-          // Same scale as everything else, so the ring is the real accuracy / DR radius.
-          const r = Math.min(ringM * pxPerMetre, gpsDenied ? 110 : 80);
+        const p = toPx(user.lng, user.lat);
+        if (
+          ringM != null &&
+          Number.isFinite(ringM) &&
+          ringM > 0 &&
+          Number.isFinite(pxPerMetre) &&
+          pxPerMetre > 0
+        ) {
+          // Same scale as everything else, so the ring is the real accuracy radius.
+          const r = Math.min(ringM * pxPerMetre, 80);
           ctx.fillStyle = gpsDenied ? "rgba(249, 115, 22, 0.16)" : "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);

@@ -3,6 +3,7 @@
  * BASE=http://127.0.0.1:3111 node adversarial/offline-adversarial.mjs
  */
 import { chromium } from "playwright";
+import { clearReadinessGate } from "./idb-open.mjs";
 
 const BASE = process.env.BASE ?? "http://127.0.0.1:3111";
 const GEO = { latitude: 36.1627, longitude: -86.7816, accuracy: 8 };
@@ -70,6 +71,9 @@ async function openSeeded(planId, opts = {}) {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await waitForController(page);
   await page.waitForTimeout(1200);
+  // A pre-hike readiness checklist now covers the navigate screen until ICE and
+  // a return time are set. Go through it, as a hiker would.
+  await clearReadinessGate(page);
   if (opts.prepare) {
     await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /prepare offline|update offline pack/i }).click({ timeout: 10_000 });
@@ -217,7 +221,7 @@ try {
   {
     const planId = await createPlan("two tabs"); const context = await newOwnedContext({ permissions: ["geolocation"], geolocation: GEO, serviceWorkers: "allow" }); const a = await context.newPage(), b = await context.newPage();
     await Promise.all([a.goto(`${BASE}/plan/${planId}`), b.goto(`${BASE}/navigate/plan-${planId}`)]); await waitForController(a);
-    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800); const s = await screen(b); log("idb/two-tab-prepare-navigate", !s.blank && !s.browserError && (s.ready || s.appError), s.text.slice(0, 100).replace(/\s+/g, " ")); await context.close();
+    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800); await clearReadinessGate(b); const s = await screen(b); log("idb/two-tab-prepare-navigate", !s.blank && !s.browserError && (s.ready || s.appError), s.text.slice(0, 100).replace(/\s+/g, " ")); await context.close();
   }
 
   // Clock-skew unit behaviors are rendered by controls only after opening safety panel; directly test persisted timestamp's visible display through navigation page.

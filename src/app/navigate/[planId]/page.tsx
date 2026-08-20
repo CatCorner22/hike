@@ -18,12 +18,6 @@ import {
   compassLabel,
   gpsAccuracyLabel,
   normalizeHeading,
-<<<<<<< HEAD
-=======
-  progressAlongTrail,
-  remainingElevationGain,
-  stabilizeLoop,
->>>>>>> origin/main
   travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
@@ -39,7 +33,11 @@ import {
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
-import { createRouteProgressCache, type RouteProgressCache } from "@/lib/offline/progress-cache";
+import {
+  createRouteProgressCache,
+  progressWithRouteCache,
+  type RouteProgressCache,
+} from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
 import { hikeReadiness } from "@/lib/safety/readiness";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
@@ -132,8 +130,10 @@ export default function NavigatePage() {
   const [deniedHeadingText, setDeniedHeadingText] = useState("");
   const [deniedNeedHeading, setDeniedNeedHeading] = useState(false);
   const [navUnlocked, setNavUnlocked] = useState(false);
+  // Items the hiker chose to skip on the pre-hike checklist. Kept so navigation
+  // can keep showing them: skipping must not silently drop the safety net.
+  const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
-  const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
   const [deniedError, setDeniedError] = useState<string | null>(null);
   const [refreshingPack, setRefreshingPack] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -184,7 +184,12 @@ export default function NavigatePage() {
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loadState.status]);
+    // navUnlocked matters: the header does not mount while the readiness
+    // checklist is showing, so with only loadState.status here the ref was
+    // still null when the effect ran and the header was never measured.
+    // headerHeight stayed 0, which silently disabled both the map label inset
+    // and the banner offset -- a banner then covered the USNG grid reference.
+  }, [loadState.status, navUnlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -223,9 +228,11 @@ export default function NavigatePage() {
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
   const drFix = useMemo(() => {
-    if (!gpsDenied || !deniedAnchor) return null;
-    const meters =
-      deniedPaces > 0 ? distanceFromPaces(deniedPaces, deniedPaceLen) : 0;
+    if (!gpsDenied || !deniedAnchor || deniedPaces <= 0) return null;
+    const meters = distanceFromPaces(deniedPaces, deniedPaceLen);
+    if (!Number.isFinite(meters) || meters <= 0) return null;
+    // Do not advance a denied-GPS fix from elapsed time: a guessed walking speed
+    // would invent a current coordinate that can be mistaken for a live position.
     const point = deadReckon(deniedAnchor, deniedAnchor.heading, meters);
     return { ...point, heading: deniedAnchor.heading, meters };
   }, [gpsDenied, deniedAnchor, deniedPaces, deniedPaceLen]);
@@ -235,15 +242,28 @@ export default function NavigatePage() {
   const positionSource: PositionSource =
     gpsDenied && drFix ? "deadReckon" : gpsTrusted ? "gps" : "lastKnown";
 
-  function resolveDeniedHeading(): number | null {
+  const resolveDeniedHeading = useCallback((): number | null => {
     const live = gps.fix?.heading;
-    if (live != null && Number.isFinite(live)) return live;
+    if (live != null && Number.isFinite(live)) return ((live % 360) + 360) % 360;
     const typed = Number(deniedHeadingText);
     if (Number.isFinite(typed)) return ((typed % 360) + 360) % 360;
     return null;
-  }
+  }, [gps.fix?.heading, deniedHeadingText]);
 
-  function enterGpsDenied() {
+  /**
+   * Dead reckoning needs a real heading. `heading` is null whenever the device is not
+   * moving (and often on iOS Safari), and defaulting it to 0 silently walks the hiker
+   * due north on the map regardless of which way they go.
+   */
+  const toggleDeadReckoning = useCallback(() => {
+    setDeniedError(null);
+    if (gpsDenied) {
+      setGpsDenied(false);
+      setDeniedAnchor(null);
+      setDeniedPaces(0);
+      setDeniedNeedHeading(false);
+      return;
+    }
     const fix = gps.fix;
     if (!fix || !gpsTrusted) {
       setDeniedError("Need a live GPS fix to anchor dead reckoning.");
@@ -252,28 +272,14 @@ export default function NavigatePage() {
     const heading = resolveDeniedHeading();
     if (heading == null) {
       setDeniedNeedHeading(true);
-      setDeniedError("No heading yet — enter a bearing or walk until the compass has a heading. Dead reckoning cannot guess which way you are facing.");
+      setDeniedError("No heading yet — walk a few paces in your intended direction, then arm DR. Dead reckoning cannot guess which way you are facing.");
       return;
     }
     setDeniedNeedHeading(false);
-    setDeniedError(null);
-    setDeniedAnchor({
-      lat: fix.lat,
-      lng: fix.lng,
-      heading,
-      at: Date.now(),
-    });
+    setDeniedAnchor({ lat: fix.lat, lng: fix.lng, heading, at: Date.now() });
     setDeniedPaces(0);
     setGpsDenied(true);
-  }
-
-  function exitGpsDenied() {
-    setGpsDenied(false);
-    setDeniedAnchor(null);
-    setDeniedPaces(0);
-    setDeniedNeedHeading(false);
-    setDeniedError(null);
-  }
+  }, [gpsDenied, gps.fix, gpsTrusted, resolveDeniedHeading]);
 
   const loadPack = useCallback(async (options: { forceNetwork?: boolean } = {}) => {
     let terminal = false;
@@ -395,64 +401,27 @@ export default function NavigatePage() {
       if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
-    // Cached incremental search: a full scan costs ~494 ms per fix on a 100k
-    // point route, and this runs on every GPS update.
     if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
       progressCacheRef.current = createRouteProgressCache(loadState.pack);
     }
-<<<<<<< HEAD
-    // travelDirection MUST be passed. It was computed and listed in this
-    // effect's dependencies but never forwarded, so "Remaining" silently
-    // counted toward the stored end of the route rather than the end being
-    // walked to -- reintroducing the bug the direction fix was written for,
-    // and with it the silenced turnaround warning.
+    // The cached path must receive direction so its remaining-distance calculation
+    // stays identical to progressAlongTrail and cannot reverse the turnaround warning.
     const p = progressWithRouteCache(
       progressCacheRef.current,
       { lat: navFix.lat, lng: navFix.lng },
       travelDirection,
     );
-=======
-    const raw = progressAlongTrail(
-      { lat: navFix.lat, lng: navFix.lng },
-      loadState.pack.geometry,
-      loadState.pack.elevationProfile,
-      snapHintRef.current,
-      travelDirection,
-    );
-    const stabilized = stabilizeLoop(raw, snapHintRef.current);
-    const toEnd = Math.max(stabilized.totalMeters - stabilized.traveledMeters, 0);
-    const toStart = Math.max(stabilized.traveledMeters, 0);
-    const remainingMeters =
-      travelDirection === "backward"
-        ? toStart
-        : travelDirection === "forward"
-          ? toEnd
-          : Math.min(toStart, toEnd);
-    const resolvedDirection =
-      travelDirection !== "unknown" ? travelDirection : toStart <= toEnd ? "backward" : "forward";
-    const p: TrailProgress = {
-      ...stabilized,
-      remainingMeters,
-      remainingDirection: travelDirection,
-      remainingElevationMeters: remainingElevationGain(
-        loadState.pack.elevationProfile,
-        stabilized.traveledMeters,
-        resolvedDirection,
-      ),
-    };
-    if (Number.isFinite(p.traveledMeters)) {
-      snapHintRef.current = { traveledMeters: p.traveledMeters };
-    }
->>>>>>> origin/main
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 
+  const activePack = loadState.status === "ready" ? loadState.pack : null;
+
   useEffect(() => {
-    if (loadState.status !== "ready") return;
+    if (!activePack) return;
     let cancelled = false;
 
     sessionIdRef.current = null;
-    void startNavSession(navId, loadState.pack.name).then((id) => {
+    void startNavSession(navId, activePack.name).then((id) => {
       if (cancelled) return;
       sessionIdRef.current = id;
       const queued = pendingPointsRef.current;
@@ -466,7 +435,7 @@ export default function NavigatePage() {
       cancelled = true;
       sessionIdRef.current = null;
     };
-  }, [loadState.status === "ready" ? loadState.pack.id : "", navId]);
+  }, [activePack, navId]);
 
   useEffect(() => {
     if (!gps.fix || loadState.status !== "ready" || !gpsTrusted) return;
@@ -578,7 +547,9 @@ export default function NavigatePage() {
   // the grid below is not read as a surveyed fix.
   const drErrorM = drFix ? Math.max(25, Math.round(drFix.meters * 0.1)) : null;
   const deniedWarning = gpsDenied
-    ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : "0 m"} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}${drErrorM != null ? `, estimated ±${drErrorM} m and growing` : ""}. SOS / SMS use this DR position.`
+    ? !drFix
+      ? "GPS DENIED — dead-reckoned position is unavailable until you record paced distance. Do not use this screen as a current location."
+      : `GPS DENIED — dead reckon ${Math.round(drFix.meters)} m on ${Math.round(drFix.heading)}°${drErrorM != null ? `, estimated ±${drErrorM} m and growing` : ""}.`
     : deniedNeedHeading
       ? "Need a compass heading or typed bearing before GPS-denied dead reckon."
       : !gpsTrusted && gps.fix
@@ -673,9 +644,19 @@ export default function NavigatePage() {
     hudBanners.push({ key: "checkin", tone: "critical", text: checkinOverdue });
   }
   if (fallWarning) hudBanners.push({ key: "fall", tone: "critical", text: fallWarning });
+  // Persistent, not dismissible: the hiker skipped these, so the only honest
+  // thing is to keep saying which parts of the safety net are not set up.
+  if (readinessSkipped.length > 0) {
+    hudBanners.push({
+      key: "readiness",
+      tone: "warn",
+      text: `Not set up: ${readinessSkipped.join(", ")}. Nobody is expecting you back at a known time.`,
+    });
+  }
   if (exposureWarning) hudBanners.push({ key: "exposure", tone: "warn", text: exposureWarning });
   if (amsWarn) hudBanners.push({ key: "ams", tone: "warn", text: amsWarn });
   for (const [key, text] of [
+    ["dr-anchor", deniedError],
     ["spoof", gpsSpoof],
     ["sere", sereWarning],
     ["avy", avyWarn],
@@ -702,7 +683,6 @@ export default function NavigatePage() {
       text: "Tap back again to leave navigation. The route pack stays on this device.",
     });
   }
-
   const crumbs = useMemo(
     () => reverseTrackLine(trackPoints),
     [trackPoints],
@@ -727,7 +707,10 @@ export default function NavigatePage() {
         return;
       }
       const status = overdueStatus(alarm.returnAt);
-      setOverdueBanner(status?.overdue ? status.label : null);
+      // Surface an unparseable deadline too. Rendering only on `overdue` meant a
+      // corrupt stored return time showed nothing, so the hiker believed the
+      // overdue alarm was armed when it was not.
+      setOverdueBanner(status.overdue || !status.valid ? status.label : null);
     }
     void tick();
     const id = window.setInterval(() => void tick(), 30000);
@@ -763,7 +746,19 @@ export default function NavigatePage() {
 
   if (loadState.status === "ready" && !navUnlocked) {
     return (
-      <ReadinessGate packReady onReady={unlockIfReady} />
+      <ReadinessGate
+        packReady
+        onReady={unlockIfReady}
+        onProceedAnyway={() => {
+          void (async () => {
+            const [profile, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
+            setReadinessSkipped(
+              hikeReadiness({ packReady: true, profile, returnAt: alarm?.returnAt ?? null })
+                .missing,
+            );
+          })().finally(() => setNavUnlocked(true));
+        }}
+      />
     );
   }
 
@@ -828,6 +823,7 @@ export default function NavigatePage() {
         : null;
   const ghost = gpsDenied && gps.fix ? { lat: gps.fix.lat, lng: gps.fix.lng } : null;
   const gm = navFix ? gmAngleCard(navFix.lat, navFix.lng) : null;
+  const usng = navFix ? formatUsng(navFix.lat, navFix.lng) : null;
 
   return (
     <div
@@ -912,7 +908,7 @@ export default function NavigatePage() {
                 waypoints={waypoints}
                 trackPoints={trackPoints}
                 gpsDenied={gpsDenied}
-                onToggleGpsDenied={() => (gpsDenied ? exitGpsDenied() : enterGpsDenied())}
+                onToggleGpsDenied={toggleDeadReckoning}
                 onDeniedPaces={setDeniedPaces}
                 onDeniedPaceLen={setDeniedPaceLen}
                 packWeather={pack.weather}
@@ -947,11 +943,11 @@ export default function NavigatePage() {
                 }}
               />
               {/*
-                The header gradient fades to transparent, so muted text placed
-                over the lower half sat on the dark map and was close to
-                illegible -- including the USNG grid reference, which is the
-                string you read aloud to a rescuer. This scrim guarantees a
-                known background behind the text at any map darkness or theme.
+                The header gradient fades to transparent, so muted text over its
+                lower half sat on the dark map and was close to illegible --
+                including the USNG grid reference, which is the string you read
+                aloud to a rescuer. This scrim guarantees a known background
+                behind the text at any map darkness or theme.
               */}
               <div className="max-w-[58%] rounded-lg bg-background/90 px-2 py-1 text-right backdrop-blur-sm">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
@@ -973,17 +969,15 @@ export default function NavigatePage() {
                 >
                   {refreshingPack ? "Refreshing route…" : "Refresh route"}
                 </button>
-                {navFix && (
-                  <p className="font-mono text-[10px] text-muted-foreground">
-                    {formatUsng(navFix.lat, navFix.lng)}
-                    {gpsDenied
-                      ? ` · DR ±${drErrorM ?? 25} m`
-                      : !gpsTrusted
-                        ? ` · last known ${formatFixAge(gps.fix!.recordedAt)}`
-                        : ""}
-                    {` · ${zulu}`}
-                  </p>
-                )}
+                <p className="font-mono text-[10px] text-muted-foreground">
+                  {usng ?? "USNG unavailable"}
+                  {gpsDenied && drErrorM != null
+                    ? ` · DR ±${drErrorM} m`
+                    : !gpsTrusted && gps.fix
+                      ? ` · last known ${formatFixAge(gps.fix.recordedAt)}`
+                      : ""}
+                  {` · ${zulu}`}
+                </p>
                 {gm && (
                   <p className="text-[10px] text-muted-foreground">{gm.gridToMagnetic}</p>
                 )}
@@ -993,7 +987,14 @@ export default function NavigatePage() {
         </div>
 
         {hudBanners.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-3 top-16 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto">
+          <div
+            // Positioned below the measured header rather than a fixed top-16.
+            // The header card grew (grid reference, G-M correction) and a banner
+            // sat on top of it, covering the USNG grid string -- the one line
+            // you read aloud to a rescuer.
+            className="pointer-events-none absolute inset-x-3 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto"
+            style={{ top: (headerHeight || 64) + 8 }}
+          >
             {hudBanners.map((banner) => (
               <div
                 key={banner.key}
@@ -1025,7 +1026,14 @@ export default function NavigatePage() {
                 : "Waiting for GPS…"}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {(deniedNeedHeading || (gpsTrusted && gps.fix?.heading == null && !gpsDenied)) && (
+            {/*
+              Only shown when dead reckoning actually needs a heading. The
+              previous condition also fired whenever GPS was trusted but
+              reported no heading -- true for any stationary device -- so an
+              unlabelled empty field sat in the primary safety bar during
+              normal operation.
+            */}
+            {(deniedNeedHeading || gpsDenied) && (
               <input
                 aria-label="Dead-reckon heading degrees true"
                 className="h-8 w-16 rounded-md border bg-background px-2 text-xs"
@@ -1039,7 +1047,7 @@ export default function NavigatePage() {
               variant={gpsDenied ? "default" : "outline"}
               size="sm"
               disabled={!gpsDenied && !gpsTrusted}
-              onClick={() => (gpsDenied ? exitGpsDenied() : enterGpsDenied())}
+              onClick={toggleDeadReckoning}
             >
               {gpsDenied ? "DR" : "GPS"}
             </Button>
