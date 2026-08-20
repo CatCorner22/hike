@@ -1,4 +1,10 @@
-import { remainingElevationGain, type LatLng, type TrailProgress } from "@/lib/geo/navigation";
+import {
+  remainingElevationGain,
+  resolveRemaining,
+  type LatLng,
+  type TrailProgress,
+  type TravelDirection,
+} from "@/lib/geo/navigation";
 import type { RoutePack } from "@/lib/offline/route-pack";
 
 interface Segment {
@@ -107,7 +113,17 @@ function validPoint(point: LatLng): boolean {
 }
 
 function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): TrailProgress {
-  return { nearest: point, offsetMeters: 0, traveledMeters: 0, remainingMeters: totalMeters, totalMeters, remainingElevationMeters: 0, bearingToTrail: 0, valid };
+  return {
+    nearest: point,
+    offsetMeters: 0,
+    traveledMeters: 0,
+    remainingMeters: totalMeters,
+    totalMeters,
+    remainingElevationMeters: 0,
+    remainingDirection: "unknown",
+    bearingToTrail: 0,
+    valid,
+  };
 }
 
 /**
@@ -115,7 +131,11 @@ function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): Trai
  * from that window (or the route branches), it falls back to all segments once
  * rather than returning a potentially wrong nearest route segment.
  */
-export function progressWithRouteCache(cache: RouteProgressCache, point: LatLng): TrailProgress {
+export function progressWithRouteCache(
+  cache: RouteProgressCache,
+  point: LatLng,
+  direction: TravelDirection = "forward",
+): TrailProgress {
   if (!validPoint(point) || cache.segments.length === 0) return emptyProgress(validPoint(point) ? point : { lat: 0, lng: 0 }, cache.totalMeters, false);
   const search = (start: number, end: number) => {
     let best: { index: number; distanceMeters: number; fraction: number; nearest: LatLng } | null = null;
@@ -147,13 +167,25 @@ export function progressWithRouteCache(cache: RouteProgressCache, point: LatLng)
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
+  // Same direction resolution as progressAlongTrail — this cache once re-derived
+  // "total - traveled" on its own and quietly re-introduced the backwards readout.
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    cache.totalMeters,
+    direction,
+  );
   return {
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
-    remainingMeters: Math.max(cache.totalMeters - traveledMeters, 0),
+    remainingMeters,
     totalMeters: cache.totalMeters,
-    remainingElevationMeters: remainingElevationGain(cache.elevationProfile, traveledMeters),
+    remainingElevationMeters: remainingElevationGain(
+      cache.elevationProfile,
+      traveledMeters,
+      resolvedDirection,
+    ),
+    remainingDirection: direction,
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
   };

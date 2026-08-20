@@ -99,9 +99,13 @@ export interface LitterEvacAdvice {
   message: string;
 }
 
-export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
-  const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
-  const metres = Number.isFinite(distanceM) ? Math.max(0, distanceM) : 0;
+export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice | null {
+  // Boundary validation from the safety-invariants suite: non-finite or absurd inputs get
+  // null, never advice built on a garbage number.
+  if (!Number.isFinite(distanceM) || distanceM <= 0 || distanceM > 100_000) return null;
+  if (!Number.isFinite(partySize) || partySize < 1 || partySize > 50) return null;
+  const party = Math.floor(partySize);
+  const metres = distanceM;
   // One casualty plus one attendant on the airway; everyone else can take a handle.
   const carriers = Math.max(0, party - 2);
 
@@ -134,6 +138,6 @@ export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAd
   };
 }
 
-export function litterEvacTime(distanceM: number, partySize = 2): string {
-  return litterEvacAdvice(distanceM, partySize).message;
+export function litterEvacTime(distanceM: number, partySize = 2): string | null {
+  return litterEvacAdvice(distanceM, partySize)?.message ?? null;
 }

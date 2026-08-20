@@ -1516,6 +1516,7 @@ export function SafetyPanel({
             </label>
             {remainingMeters != null && remainingMeters > 0 && (() => {
               const litter = litterEvacAdvice(remainingMeters, profile.partySize);
+              if (!litter) return null;
               return (
                 <p
                   className={

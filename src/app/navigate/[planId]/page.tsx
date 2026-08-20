@@ -16,6 +16,7 @@ import {
   compassLabel,
   gpsAccuracyLabel,
   normalizeHeading,
+  travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -354,7 +355,11 @@ export default function NavigatePage() {
     if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
       progressCacheRef.current = createRouteProgressCache(loadState.pack);
     }
-    const p = progressWithRouteCache(progressCacheRef.current, { lat: navFix.lat, lng: navFix.lng });
+    const p = progressWithRouteCache(
+      progressCacheRef.current,
+      { lat: navFix.lat, lng: navFix.lng },
+      travelDirection,
+    );
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 

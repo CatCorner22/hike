@@ -9,23 +9,24 @@ describe("litterEvacAdvice", () => {
    * casualty or exhausts itself into a second patient.
    */
   it("refuses to give a carry time to a party that cannot carry", () => {
-    for (const partySize of [0, 1, 2, 3, 4, 5, 6, 7]) {
+    for (const partySize of [1, 2, 3, 4, 5, 6, 7]) {
       const advice = litterEvacAdvice(3000, partySize);
-      expect(advice.feasible, `party of ${partySize}`).toBe(false);
-      expect(advice.hours).toBeNull();
-      expect(advice.message).toMatch(/shelter in place|send for help/i);
-      expect(advice.message).not.toMatch(/~\d+(\.\d+)?\s*(h|min) for/);
+      expect(advice, `party of ${partySize}`).not.toBeNull();
+      expect(advice!.feasible, `party of ${partySize}`).toBe(false);
+      expect(advice!.hours).toBeNull();
+      expect(advice!.message).toMatch(/shelter in place|send for help/i);
+      expect(advice!.message).not.toMatch(/~\d+(\.\d+)?\s*(h|min) for/);
     }
   });
 
   it("does not count the casualty or their attendant as carriers", () => {
-    expect(litterEvacAdvice(3000, 8).carriers).toBe(6);
-    expect(litterEvacAdvice(3000, 2).carriers).toBe(0);
-    expect(litterEvacAdvice(3000, 1).carriers).toBe(0);
+    expect(litterEvacAdvice(3000, 8)!.carriers).toBe(6);
+    expect(litterEvacAdvice(3000, 2)!.carriers).toBe(0);
+    expect(litterEvacAdvice(3000, 1)!.carriers).toBe(0);
   });
 
   it("gives a time once there are enough carriers", () => {
-    const eight = litterEvacAdvice(3000, 8);
+    const eight = litterEvacAdvice(3000, 8)!;
     expect(eight.feasible).toBe(true);
     expect(eight.carriers).toBeGreaterThanOrEqual(MIN_LITTER_CARRIERS);
     expect(eight.hours).toBeGreaterThan(0);
@@ -35,7 +36,7 @@ describe("litterEvacAdvice", () => {
   it("gets faster with more carriers, never slower", () => {
     let previous = Infinity;
     for (const partySize of [8, 10, 14, 20]) {
-      const advice = litterEvacAdvice(5000, partySize);
+      const advice = litterEvacAdvice(5000, partySize)!;
       expect(advice.feasible).toBe(true);
       expect(advice.hours!, `party of ${partySize}`).toBeLessThanOrEqual(previous);
       previous = advice.hours!;
@@ -43,13 +44,15 @@ describe("litterEvacAdvice", () => {
   });
 
   it("stays conservative: never better than 1 mph even with a large team", () => {
-    const advice = litterEvacAdvice(1609, 40);
+    const advice = litterEvacAdvice(1609, 40)!;
     expect(advice.hours!).toBeGreaterThanOrEqual(1);
   });
 
-  it("survives nonsense input", () => {
-    expect(litterEvacAdvice(Number.NaN, Number.NaN).feasible).toBe(false);
-    expect(litterEvacAdvice(-500, -3).feasible).toBe(false);
+  it("returns null, not advice, for nonsense input", () => {
+    expect(litterEvacAdvice(Number.NaN, Number.NaN)).toBeNull();
+    expect(litterEvacAdvice(-500, -3)).toBeNull();
+    expect(litterEvacAdvice(3000, 0)).toBeNull();
+    expect(litterEvacTime(Number.POSITIVE_INFINITY, 2)).toBeNull();
     expect(typeof litterEvacTime(3000, 2)).toBe("string");
   });
 });
