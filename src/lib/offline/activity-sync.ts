@@ -42,18 +42,6 @@ export async function listLocalActivities(): Promise<LocalActivity[]> {
   return db.getAll("localActivities");
 }
 
-async function postJson(url: string, body: unknown): Promise<Response | null> {
-  try {
-    return await fetch(url, {
-      method: url.includes("PATCH") ? "PATCH" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    return null;
-  }
-}
-
 /** Start an activity even with no network. Syncs when a POST succeeds. */
 export async function beginActivity(input: {
   trailId?: string;
@@ -171,7 +159,7 @@ export async function flushPendingPoints(activityId: string): Promise<number> {
         }),
       });
       if (!res.ok) continue;
-      await db.put("pendingPoints", { ...point, synced: true });
+      await db.put("pendingPoints", { ...point, synced: 1 });
       flushed += 1;
     } catch {
       break;

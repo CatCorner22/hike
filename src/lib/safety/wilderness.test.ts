@@ -30,17 +30,37 @@ describe("amsAssessment", () => {
     expect(r.warning).toBeNull();
   });
 
-  it("warns on rapid gain at altitude", () => {
+  // Regression: altitude and ascent rate were scored into the same total as symptoms, so
+  // a well hiker at 3500 m after a fast climb was told they had "Moderate altitude
+  // illness". Exposure must still warn, but it is not a diagnosis.
+  it("warns on rapid gain at altitude without calling it illness", () => {
     const r = amsAssessment({ altitudeM: 3000, gainLastHourM: 450, symptoms: [] });
-    expect(r.level).not.toBe("none");
-    expect(r.warning).toMatch(/altitude|Higher|fast/i);
+    expect(r.level).toBe("none");
+    expect(r.warning).toMatch(/altitude|Higher|fast|watch for/i);
+  });
+
+  it("does not report altitude illness with no symptoms, however high and fast", () => {
+    for (const altitudeM of [2600, 3100, 3600, 4200]) {
+      for (const gainLastHourM of [0, 320, 500, 900]) {
+        const r = amsAssessment({ altitudeM, gainLastHourM, symptoms: [] });
+        expect(r.level, `${altitudeM} m +${gainLastHourM} m/h`).toBe("none");
+      }
+    }
+  });
+
+  it("does report illness once symptoms are present", () => {
+    expect(amsAssessment({ altitudeM: 3600, gainLastHourM: 500, symptoms: ["headache"] }).level).toBe(
+      "severe",
+    );
+    expect(amsAssessment({ altitudeM: 2600, symptoms: ["headache"] }).level).toBe("mild");
+    expect(amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] }).level).toBe("severe");
   });
 });
 
 describe("avalancheTerrainWarning", () => {
-  it("warns on steep leeward slopes in winter", () => {
+  it("warns on start-zone angles in snow season", () => {
     expect(
-      avalancheTerrainWarning({ slopePct: 35, aspectDeg: 180, month: 1, snowOnGround: true }),
+      avalancheTerrainWarning({ slopePct: 35, month: 1, snowOnGround: true }),
     ).toMatch(/avalanche/i);
   });
 
@@ -50,6 +70,26 @@ describe("avalancheTerrainWarning", () => {
 
   it("warns on very steep terrain regardless of season", () => {
     expect(avalancheTerrainWarning({ slopePct: 50, month: 7 })).toMatch(/45%|avalanche/i);
+  });
+
+  /**
+   * Regression: the warning keyed off an `aspectDeg` the caller filled with the hiker's
+   * travel heading. Aspect is the direction a slope faces; heading is where the hiker is
+   * pointed. Identical terrain warned or stayed silent depending only on which way they
+   * happened to be walking.
+   */
+  it("gives the same answer for the same terrain however the hiker is facing", () => {
+    const answers = new Set(
+      [0, 45, 90, 135, 180, 225, 270, 315].map(() =>
+        avalancheTerrainWarning({ slopePct: 32, month: 1, snowOnGround: true }),
+      ),
+    );
+    expect(answers.size).toBe(1);
+    expect([...answers][0]).toMatch(/forecast/i);
+  });
+
+  it("says nothing off-season on a moderate slope", () => {
+    expect(avalancheTerrainWarning({ slopePct: 32, month: 7, snowOnGround: false })).toBeNull();
   });
 });
 

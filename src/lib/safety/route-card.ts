@@ -1,6 +1,7 @@
 import * as turf from "@turf/turf";
 import { formatRangeAzimuth, rangeAzimuth } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export interface RouteCardLeg {
   index: number;
@@ -26,8 +27,9 @@ export function routeCardLegs(
   let cum = 0;
   let pathSinceLeg = 0;
   let legStart: GeoJSON.Position | null = null;
+  const parts = segments(geometry);
 
-  for (const coords of segments(geometry)) {
+  for (const coords of parts) {
     const clean = coords.filter((c) => Number.isFinite(c[0]) && Number.isFinite(c[1]));
     if (clean.length < 2) continue;
     if (!legStart) legStart = clean[0];
@@ -38,7 +40,7 @@ export function routeCardLegs(
       });
       cum += step;
       pathSinceLeg += step;
-      if (pathSinceLeg >= targetLegM || (i === clean.length - 1 && coords === segments(geometry).at(-1))) {
+      if (pathSinceLeg >= targetLegM || (i === clean.length - 1 && coords === parts.at(-1))) {
         const from = { lng: legStart[0], lat: legStart[1] };
         const to = { lng: clean[i][0], lat: clean[i][1] };
         const ra = rangeAzimuth(from, to);
@@ -49,7 +51,7 @@ export function routeCardLegs(
           meters: pathSinceLeg,
           cumMeters: cum,
           trueDeg: ra.trueDeg,
-          grid: formatUsng(to.lat, to.lng),
+          grid: formatUsng(to.lat, to.lng) ?? "UNKNOWN",
         });
         legStart = clean[i];
         pathSinceLeg = 0;
@@ -61,17 +63,18 @@ export function routeCardLegs(
 
 export function formatRouteCard(trailName: string, legs: RouteCardLeg[]): string {
   if (legs.length === 0) return "ROUTE CARD — no geometry";
-  return [
-    `ROUTE CARD — ${trailName}`,
-    `Total ~${Math.round(legs[legs.length - 1].cumMeters)} m · ${legs.length} legs · bearings are TRUE`,
+  const rounded = (value: number) => (Number.isFinite(value) ? String(Math.round(value)) : "UNKNOWN");
+  return formatReport([
+    `ROUTE CARD — ${reportField(trailName)}`,
+    `Total ~${rounded(legs[legs.length - 1].cumMeters)} m · ${reportField(legs.length)} legs · bearings are TRUE`,
     ...legs.map(
       (l) =>
-        `L${l.index}  ${Math.round(l.trueDeg)}° true / ${Math.round(l.meters)} m  cum ${Math.round(l.cumMeters)} m  ${l.grid}`,
+        `L${reportField(l.index)}  ${rounded(l.trueDeg)}° true / ${rounded(l.meters)} m  cum ${rounded(l.cumMeters)} m  ${reportField(l.grid)}`,
     ),
     "At each leg: confirm terrain handrail, pace count, and time.",
-  ].join("\n");
+  ]);
 }
 
 export function legSummary(leg: RouteCardLeg): string {
-  return formatRangeAzimuth(rangeAzimuth(leg.from, leg.to)) + ` → ${leg.grid}`;
+  return formatRangeAzimuth(rangeAzimuth(leg.from, leg.to)) + ` → ${reportField(leg.grid)}`;
 }

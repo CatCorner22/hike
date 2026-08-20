@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getIceProfile,
   getOverdueAlarm,
+  resolveLocalDateTime,
   saveIceProfile,
   setOverdueAlarm,
   type IceProfile,
@@ -60,12 +61,18 @@ export function ReadinessGate({
 
   async function saveAndGo() {
     await saveIceProfile(profile);
-    await setOverdueAlarm(returnAt ? new Date(returnAt) : null);
+    const resolved = returnAt ? resolveLocalDateTime(returnAt) : null;
+    if (returnAt && resolved?.kind !== "resolved") {
+      setMissing([resolved?.message ?? "Planned return time"]);
+      await setOverdueAlarm(null);
+      return;
+    }
+    await setOverdueAlarm(resolved?.kind === "resolved" ? resolved.value : null);
     await saveCheckinSettings({ enabled: checkinOn, intervalMin: checkinMin });
     const result = hikeReadiness({
       packReady,
       profile,
-      returnAt: returnAt ? new Date(returnAt).toISOString() : null,
+      returnAt: resolved?.kind === "resolved" ? resolved.value.instant.toISOString() : null,
     });
     setMissing(result.missing);
     if (result.ok) onReady();

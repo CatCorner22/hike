@@ -93,9 +93,9 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
           <div>
             <h4 className="mb-1 text-sm font-medium">Sources</h4>
             <ul className="space-y-1 text-sm">
-              {brief.sources.map((s) => {
-                const href = httpsUrl(s.url);
-                if (!href) return <li key={s.url}>{s.title}</li>;
+              {brief.sources.map((source) => {
+                const href = httpsUrl(source.url);
+                if (!href) return <li key={source.url}>{source.title}</li>;
                 return (
                   <li key={href}>
                     <a
@@ -104,7 +104,7 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
                       rel="noopener noreferrer"
                       className="text-primary hover:underline"
                     >
-                      {s.title}
+                      {source.title}
                     </a>
                   </li>
                 );

@@ -2,6 +2,7 @@ import { formatUsng } from "@/lib/safety/usng";
 import { formatZulu } from "@/lib/safety/landnav";
 import { rangeAzimuth } from "@/lib/safety/landnav";
 import type { SafetyWaypoint } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export function saluteReport(input: {
   size?: string;
@@ -12,15 +13,15 @@ export function saluteReport(input: {
   time?: string;
   equipment?: string;
 }): string {
-  return [
+  return formatReport([
     "SALUTE (hazard / SAR intel)",
-    `S — Size: ${input.size ?? "unknown party / object"}`,
-    `A — Activity: ${input.activity ?? "unknown"}`,
-    `L — Location: ${input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : "UNKNOWN"}`,
-    `U — Unit/ID: ${input.unit ?? "civilian hikers"}`,
-    `T — Time: ${input.time ?? formatZulu()}`,
-    `E — Equipment: ${input.equipment ?? "none noted"}`,
-  ].join("\n");
+    `S — Size: ${reportField(input.size ?? "unknown party / object")}`,
+    `A — Activity: ${reportField(input.activity ?? "unknown")}`,
+    `L — Location: ${reportField(input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : "UNKNOWN")}`,
+    `U — Unit/ID: ${reportField(input.unit ?? "civilian hikers")}`,
+    `T — Time: ${reportField(input.time ?? formatZulu())}`,
+    `E — Equipment: ${reportField(input.equipment ?? "none noted")}`,
+  ]);
 }
 
 export function fiveLineHeloBrief(input: {
@@ -34,14 +35,14 @@ export function fiveLineHeloBrief(input: {
 }): string {
   const loc =
     input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : "UNKNOWN";
-  return [
+  return formatReport([
     "5-LINE HELO / SAR INBOUND",
-    `L1 LZ GRID: ${loc}`,
-    `L2 ELEV: ${input.elevationFt != null ? `${Math.round(input.elevationFt)} ft MSL` : "estimate from GPS"}`,
-    `L3 WIND / OBST: ${input.wind ?? "unknown"} · ${input.obstacles ?? "trees, slope — scout on foot"}`,
-    `L4 FRIENDLIES: ${input.friendlies ?? "hikers on ground, stay 100 m from rotors"}`,
-    `L5 MARK: ${input.marking ?? "strobe, panel, smoke, arms Y"}`,
-  ].join("\n");
+    `L1 LZ GRID: ${reportField(loc)}`,
+    `L2 ELEV: ${reportField(input.elevationFt != null && Number.isFinite(input.elevationFt) ? `${Math.round(input.elevationFt)} ft MSL` : "estimate from GPS")}`,
+    `L3 WIND / OBST: ${reportField(input.wind ?? "unknown")} · ${reportField(input.obstacles ?? "trees, slope — scout on foot")}`,
+    `L4 FRIENDLIES: ${reportField(input.friendlies ?? "hikers on ground, stay 100 m from rotors")}`,
+    `L5 MARK: ${reportField(input.marking ?? "strobe, panel, smoke, arms Y")}`,
+  ]);
 }
 
 export function lzAssessmentChecklist(): string[] {
@@ -83,9 +84,71 @@ export function buddySeparationWarning(
   return `${Math.round(best.meters)} m from last ${best.kind} — regroup or mark this split on the nav log.`;
 }
 
-export function litterEvacTime(distanceM: number, partySize = 2): string {
-  const rateMph = partySize >= 4 ? 1.2 : partySize >= 2 ? 0.8 : 0.5;
-  const hours = distanceM / 1609 / rateMph;
-  if (hours < 1) return `Litter carry ~${Math.round(hours * 60)} min for ${Math.round(distanceM)} m (rough).`;
-  return `Litter carry ~${hours.toFixed(1)} h for ${Math.round(distanceM)} m — plan relays and swap carriers.`;
+/**
+ * A hand-carried litter needs six carriers to lift at all, and realistically twelve or
+ * more to rotate over any distance. The party size is not the carrier count: the casualty
+ * cannot carry, and someone has to stay on their airway and monitor them.
+ */
+export const MIN_LITTER_CARRIERS = 6;
+
+export interface LitterEvacAdvice {
+  /** Can this party actually carry, or is the honest answer "shelter and send for help"? */
+  feasible: boolean;
+  carriers: number;
+  hours: number | null;
+  message: string;
+}
+
+const MAX_LITTER_DISTANCE_M = 1_000_000;
+const MAX_LITTER_PARTY = 200;
+
+function isSaneLitterInput(distanceM: number, partySize: number): boolean {
+  return (
+    Number.isFinite(distanceM) &&
+    distanceM >= 0 &&
+    distanceM <= MAX_LITTER_DISTANCE_M &&
+    Number.isFinite(partySize) &&
+    partySize >= 2 &&
+    partySize <= MAX_LITTER_PARTY
+  );
+}
+
+export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
+  const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
+  const metres = Number.isFinite(distanceM) ? Math.max(0, distanceM) : 0;
+  // One casualty plus one attendant on the airway; everyone else can take a handle.
+  const carriers = Math.max(0, party - 2);
+
+  if (carriers < MIN_LITTER_CARRIERS) {
+    return {
+      feasible: false,
+      carriers,
+      hours: null,
+      message:
+        `${carriers} available carrier${carriers === 1 ? "" : "s"} — a litter carry needs at least ` +
+        `${MIN_LITTER_CARRIERS} to lift and about twice that to rotate. Do not attempt to move ` +
+        `them: shelter in place, insulate from the ground, and send for help. Dropping a casualty ` +
+        `or exhausting a carrier makes a second patient.`,
+    };
+  }
+
+  // Conservative planning rates for a hand-carried litter on backcountry ground. Even a
+  // full rotating team rarely beats 1 mph, and off-trail is far slower.
+  const rateMph = carriers >= 12 ? 1 : carriers >= 8 ? 0.7 : 0.5;
+  const hours = metres / 1609 / rateMph;
+  const forDistance = `${Math.round(metres)} m with ${carriers} carriers`;
+  const time = hours < 1 ? `~${Math.round(hours * 60)} min` : `~${hours.toFixed(1)} h`;
+  return {
+    feasible: true,
+    carriers,
+    hours,
+    message:
+      `Litter carry ${time} for ${forDistance}, on a good surface. Swap carriers every few ` +
+      `minutes, and expect it to take far longer off-trail, in snow, or on steep ground.`,
+  };
+}
+
+export function litterEvacTime(distanceM: number, partySize = 2): string | null {
+  if (!isSaneLitterInput(distanceM, partySize)) return null;
+  return litterEvacAdvice(distanceM, partySize).message;
 }

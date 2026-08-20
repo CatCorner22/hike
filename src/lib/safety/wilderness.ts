@@ -33,23 +33,33 @@ export function amsAssessment(input: {
 }): AmsResult {
   const alt = input.altitudeM ?? 0;
   const gain = input.gainLastHourM ?? 0;
-  let score = 0;
 
-  if (alt >= 2500) score += 1;
-  if (alt >= 3000) score += 1;
-  if (alt >= 3500) score += 1;
-  if (gain >= 300) score += 1;
-  if (gain >= 450) score += 2;
+  // Altitude and ascent rate are *exposure*, not illness. Scoring them into the same
+  // total meant a well hiker with zero symptoms at 3500 m after a fast climb was told
+  // they had "Moderate altitude illness" — a false alarm that teaches people to ignore
+  // the warning bar.
+  let exposure = 0;
+  if (alt >= 2500) exposure += 1;
+  if (alt >= 3000) exposure += 1;
+  if (alt >= 3500) exposure += 1;
+  if (gain >= 300) exposure += 1;
+  if (gain >= 450) exposure += 2;
 
+  let symptomScore = 0;
   for (const s of input.symptoms) {
-    score += SYMPTOM_WEIGHT[s] ?? 0;
+    symptomScore += SYMPTOM_WEIGHT[s] ?? 0;
   }
+  const score = exposure + symptomScore;
 
   let level: AmsLevel = "none";
+  // Exposure is not illness, and AMS is not diagnosed below a real altitude floor.
+  // Fatigue at 1500 m is just fatigue; ataxia remains an emergency at any elevation.
   const highEnough = alt >= 2500 || (alt >= 2000 && gain >= 300);
-  if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-  else if (highEnough && score >= 5) level = "moderate";
-  else if (highEnough && (score >= 2 || input.symptoms.length > 0)) level = "mild";
+  if (input.symptoms.length > 0) {
+    if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
+    else if (highEnough && score >= 5) level = "moderate";
+    else if (highEnough) level = "mild";
+  }
 
   const actions: string[] = [];
   let warning: string | null = null;
@@ -74,9 +84,24 @@ export function amsAssessment(input: {
   return { score, level, warning, actions };
 }
 
-/** Simple terrain heuristic — not a substitute for avalanche forecast or beacon travel. */
+/**
+ * Simple terrain heuristic — not a substitute for an avalanche forecast or beacon travel.
+ *
+ * Deliberately takes no aspect. Aspect is the compass direction a slope *faces* — its
+ * downhill direction — and the app cannot derive it: the elevation profile is along-track
+ * only, which gives gradient but not cross-slope orientation. The navigate panel was
+ * passing the user's travel heading instead, which is a different quantity entirely
+ * (traverse a slope and your heading is roughly perpendicular to its aspect; climb it and
+ * your heading is its opposite). That made "classic avalanche start zone" fire or not
+ * fire on identical terrain depending only on which way the hiker happened to be walking.
+ *
+ * Wind loading and aspect are exactly what the local bulletin is for; `avalanche.ts`
+ * carries the ALPTRUTh checklist and danger-scale assessment for inputs a person supplies
+ * deliberately.
+ */
 export function avalancheTerrainWarning(input: {
   slopePct?: number | null;
+  /** Ignored. Heading is not aspect; do not treat north as leeward. */
   aspectDeg?: number;
   month?: number;
   snowOnGround?: boolean;
@@ -94,18 +119,11 @@ export function avalancheTerrainWarning(input: {
 
   if (!snow || slope < 30) return null;
 
-  const aspect = input.aspectDeg;
-  const leeward = aspect != null && aspect >= 135 && aspect <= 225;
-
-  if (slope >= 30 && leeward) {
-    return `~${slope}% leeward slope in snow season — classic avalanche start zone. Check forecast, carry beacon/probe/shovel, one at a time.`;
-  }
-
   if (slope >= 35) {
-    return `~${slope}% slope with snow possible — stay off convex rolls and wind-loaded pockets.`;
+    return `~${slope}% slope with snow possible — classic avalanche start-zone angle. Check the forecast for aspect and wind loading, stay off convex rolls, carry beacon/probe/shovel and travel one at a time.`;
   }
 
-  return null;
+  return `~${slope}% slope in snow season — approaching avalanche start-zone angle. Check the forecast for aspect and wind loading before committing.`;
 }
 
 export function bearSafetyCard(): string[] {

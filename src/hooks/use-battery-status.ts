@@ -26,7 +26,6 @@ export function useBatteryStatus() {
       }>;
     };
     if (!nav.getBattery) {
-      setState((s) => ({ ...s, available: false }));
       return;
     }
 

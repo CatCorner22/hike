@@ -17,7 +17,11 @@ import { formatDistance, formatElevation } from "@/lib/geo";
 import {
   compassLabel,
   gpsAccuracyLabel,
+  normalizeHeading,
   progressAlongTrail,
+  remainingElevationGain,
+  stabilizeLoop,
+  travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -29,8 +33,10 @@ import {
   persistRoutePack,
   withNetworkTimeout,
 } from "@/lib/offline/load-route-pack";
+import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
+import { createRouteProgressCache, type RouteProgressCache } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
 import { hikeReadiness } from "@/lib/safety/readiness";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
@@ -48,6 +54,8 @@ import {
   lastCheckin,
 } from "@/lib/safety/checkin";
 import { moonPhase } from "@/lib/safety/astro";
+import { altitudeFromProfile } from "@/lib/safety/altitude";
+import { slopeAnglesFromProfile } from "@/lib/safety/avalanche";
 import { formatWalkBearing, gmAngleCard, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
 import { daylightStatus } from "@/lib/safety/daylight";
 import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
@@ -101,6 +109,10 @@ export default function NavigatePage() {
   const [goto, setGoto] = useState<{ lat: number; lng: number } | null>(null);
   const [searchOverlay, setSearchOverlay] = useState<GeoJSON.LineString | null>(null);
   const [zulu, setZulu] = useState(formatZulu());
+  // One ticking clock for everything time-derived in render. Reading Date.now()
+  // straight from a useMemo is impure and, worse, freezes whatever it feeds as soon as
+  // its other dependencies stop changing (daylight froze when GPS dropped).
+  const [nowMs, setNowMs] = useState(0);
   const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
   const [lastCommsAt, setLastCommsAt] = useState<number | null>(null);
   const [checkinSettings, setCheckinSettings] = useState({ enabled: false, intervalMin: 60 });
@@ -119,8 +131,13 @@ export default function NavigatePage() {
   const [navUnlocked, setNavUnlocked] = useState(false);
   const [wakeHeld, setWakeHeld] = useState(false);
   const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
+  const [deniedError, setDeniedError] = useState<string | null>(null);
+  const [refreshingPack, setRefreshingPack] = useState(false);
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
+  const progressCacheRef = useRef<RouteProgressCache | null>(null);
   const pendingPointsRef = useRef<
     Array<{
       lat: number;
@@ -134,9 +151,37 @@ export default function NavigatePage() {
   const gps = useGps();
 
   useEffect(() => {
-    const id = window.setInterval(() => setZulu(formatZulu()), 15000);
-    return () => window.clearInterval(id);
+    const tick = () => {
+      setZulu(formatZulu());
+      setNowMs(Date.now());
+    };
+    const initial = window.setTimeout(tick, 0);
+    const id = window.setInterval(tick, 15000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(id);
+    };
   }, []);
+
+  // The header overlay grows and shrinks as warning banners appear, so measure
+  // it and let the map inset its orientation labels below it.
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      // Use the border box (contentRect excludes the header's padding, which is
+      // substantial here) and add a small gap so labels clear the banner edge.
+      const height =
+        entry?.borderBoxSize?.[0]?.blockSize ?? node.offsetHeight ?? 0;
+      if (Number.isFinite(height) && height > 0) {
+        const next = Math.round(height) + 8;
+        setHeaderHeight((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadState.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -159,12 +204,12 @@ export default function NavigatePage() {
       const raw = sessionStorage.getItem(`hike-drink-${navId}`);
       if (raw) {
         const t = Number(raw);
-        if (Number.isFinite(t)) setLastDrinkAt(t);
+        if (Number.isFinite(t)) queueMicrotask(() => setLastDrinkAt(t));
       }
       const comms = sessionStorage.getItem(`hike-comms-${navId}`);
       if (comms) {
         const t = Number(comms);
-        if (Number.isFinite(t)) setLastCommsAt(t);
+        if (Number.isFinite(t)) queueMicrotask(() => setLastCommsAt(t));
       }
     } catch {
       /* private mode */
@@ -197,13 +242,18 @@ export default function NavigatePage() {
 
   function enterGpsDenied() {
     const fix = gps.fix;
-    if (!fix || !gpsTrusted) return;
+    if (!fix || !gpsTrusted) {
+      setDeniedError("Need a live GPS fix to anchor dead reckoning.");
+      return;
+    }
     const heading = resolveDeniedHeading();
     if (heading == null) {
       setDeniedNeedHeading(true);
+      setDeniedError("No heading yet — enter a bearing or walk until the compass has a heading. Dead reckoning cannot guess which way you are facing.");
       return;
     }
     setDeniedNeedHeading(false);
+    setDeniedError(null);
     setDeniedAnchor({
       lat: fix.lat,
       lng: fix.lng,
@@ -219,89 +269,95 @@ export default function NavigatePage() {
     setDeniedAnchor(null);
     setDeniedPaces(0);
     setDeniedNeedHeading(false);
+    setDeniedError(null);
   }
 
-  const loadPack = useCallback(async () => {
-    const cached = await loadCachedRoutePack(navId);
-    if (cached) {
-      setLoadState({ status: "ready", pack: cached, source: "cache" });
-      return;
-    }
-
-    setLoadState((prev) => (prev.status === "ready" ? prev : { status: "loading" }));
-
-    if (isLikelyOffline()) {
-      setLoadState({
-        status: "error",
-        message: "No offline route pack and no network. Open the trail on Wi‑Fi and tap Prepare offline first.",
-      });
-      return;
-    }
-
-    const target = parseNavigateTarget(navId);
-    if (!target) {
-      setLoadState({
-        status: "error",
-        message: "Invalid route id. Open the trail or plan and tap Prepare offline first.",
-      });
-      return;
-    }
-
+  const loadPack = useCallback(async (options: { forceNetwork?: boolean } = {}) => {
+    let terminal = false;
+    const complete = (next: LoadState) => {
+      if (terminal) return;
+      terminal = true;
+      setLoadState(next);
+    };
+    if (!options.forceNetwork) setLoadState({ status: "loading" });
+    const timeout = window.setTimeout(() => complete({
+      status: "error",
+      message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
+    }), 12_000);
+    let cached: RoutePack | null = null;
     try {
-      if (target.kind === "trail") {
-        const res = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${target.id}`, { signal }),
-          8000,
-        );
-        if (!res.ok) throw new Error("Trail not found on server");
-        const data = await res.json();
-        const pack = await persistRoutePack(packFromTrailApi(navId, data));
-        setLoadState({ status: "ready", pack, source: "network" });
+      try {
+        cached = await loadCachedRoutePack(navId);
+      } catch (error) {
+        complete({ status: "error", message: error instanceof Error ? error.message : "Saved route does not match this trail — re-download while you have signal." });
         return;
       }
-
-      const planRes = await withNetworkTimeout(
-        (signal) => fetch(`/api/plans/${target.id}`, { signal }),
-        8000,
-      );
-      if (!planRes.ok) throw new Error("Plan not found on server");
-      const plan = await planRes.json();
-      let trail = null;
-      if (plan.trailId) {
-        const trailRes = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${plan.trailId}`, { signal }),
-          8000,
-        );
-        if (trailRes.ok) trail = await trailRes.json();
-      }
-      const built = packFromPlanApi(navId, plan, trail);
-      if (!built) throw new Error("Plan has no route geometry");
-      const pack = await persistRoutePack(built);
-      setLoadState({ status: "ready", pack, source: "network" });
-    } catch (err) {
-      const retry = await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 });
-      if (retry) {
-        setLoadState({ status: "ready", pack: retry, source: "cache" });
+      // Cache wins by default; a manual refresh never removes a working route.
+      if (cached && !options.forceNetwork) {
+        complete({ status: "ready", pack: cached, source: "cache" });
         return;
       }
-      setLoadState({
-        status: "error",
-        message:
-          err instanceof Error
-            ? `${err.message}. Prepare offline on Wi‑Fi before you lose service.`
-            : "Route unavailable offline. Prepare offline before heading out.",
-      });
+      if (!cached && isLikelyOffline()) {
+        complete({
+          status: "error",
+          message: "No offline route pack and no network. Open the trail on Wi‑Fi and tap Prepare offline first.",
+        });
+        return;
+      }
+      const target = parseNavigateTarget(navId);
+      if (!target) {
+        if (cached) complete({ status: "ready", pack: cached, source: "cache" });
+        else complete({ status: "error", message: "Invalid route id. Open the trail or plan and tap Prepare offline first." });
+        return;
+      }
+      try {
+        if (target.kind === "trail") {
+          const res = await withNetworkTimeout((signal) => fetch(`/api/trails/${target.id}`, { signal }), 8000);
+          if (!res.ok) throw new Error("Trail not found on server");
+          const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
+          complete({ status: "ready", pack, source: "network" });
+          return;
+        }
+        const planRes = await withNetworkTimeout((signal) => fetch(`/api/plans/${target.id}`, { signal }), 8000);
+        if (!planRes.ok) throw new Error("Plan not found on server");
+        const plan = await planRes.json();
+        let trail = null;
+        if (plan.trailId) {
+          const trailRes = await withNetworkTimeout((signal) => fetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          if (trailRes.ok) trail = await trailRes.json();
+        }
+        const built = packFromPlanApi(navId, plan, trail);
+        if (!built) throw new Error("Plan has no route geometry");
+        complete({ status: "ready", pack: await persistRoutePack(built), source: "network" });
+      } catch (error) {
+        let retry = cached;
+        if (!retry) {
+          try { retry = await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 }); } catch { /* report network error below */ }
+        }
+        if (retry) complete({ status: "ready", pack: retry, source: "cache" });
+        else complete({ status: "error", message: error instanceof Error ? `${error.message}. Prepare offline on Wi‑Fi before you lose service.` : "Route unavailable offline. Prepare offline before heading out." });
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   }, [navId]);
 
   useEffect(() => {
-    void loadPack();
+    const initialLoad = window.setTimeout(() => void loadPack(), 0);
+    return () => window.clearTimeout(initialLoad);
   }, [loadPack]);
+
+  // This covers a first online navigation visit before the newly registered
+  // service worker has controlled the document. It is intentionally
+  // best-effort; Prepare offline remains the pre-departure guarantee.
+  useEffect(() => {
+    if (navigator.onLine) void warmNavigateShell(navId);
+  }, [navId]);
 
   useEffect(() => {
     void requestWakeLock();
     const id = window.setInterval(() => setWakeHeld(isWakeLockHeld()), 4000);
-    setWakeHeld(isWakeLockHeld());
+    queueMicrotask(() => setWakeHeld(isWakeLockHeld()));
     return () => {
       window.clearInterval(id);
       void releaseWakeLock();
@@ -320,22 +376,58 @@ export default function NavigatePage() {
     })();
   }, []);
 
+  // Which end of the route the hiker is actually walking toward. The stored line
+  // direction is arbitrary, so without this "Remaining" counts up as you approach your
+  // destination. Recomputed from the breadcrumb track, not on every fix.
+  const travelDirection = useMemo(() => {
+    if (loadState.status !== "ready") return "unknown" as const;
+    return travelDirectionAlong(
+      loadState.pack.geometry,
+      trackPoints.map((point) => ({ lat: point.lat, lng: point.lng })),
+    );
+  }, [loadState, trackPoints]);
+
   useEffect(() => {
     if (loadState.status !== "ready" || !navFix || !trusted) {
-      if (!trusted) setProgress(null);
+      if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
-    const p = progressAlongTrail(
+    if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
+      progressCacheRef.current = createRouteProgressCache(loadState.pack);
+    }
+    const raw = progressAlongTrail(
       { lat: navFix.lat, lng: navFix.lng },
       loadState.pack.geometry,
       loadState.pack.elevationProfile,
       snapHintRef.current,
+      travelDirection,
     );
+    const stabilized = stabilizeLoop(raw, snapHintRef.current);
+    const toEnd = Math.max(stabilized.totalMeters - stabilized.traveledMeters, 0);
+    const toStart = Math.max(stabilized.traveledMeters, 0);
+    const remainingMeters =
+      travelDirection === "backward"
+        ? toStart
+        : travelDirection === "forward"
+          ? toEnd
+          : Math.min(toStart, toEnd);
+    const resolvedDirection =
+      travelDirection !== "unknown" ? travelDirection : toStart <= toEnd ? "backward" : "forward";
+    const p: TrailProgress = {
+      ...stabilized,
+      remainingMeters,
+      remainingDirection: travelDirection,
+      remainingElevationMeters: remainingElevationGain(
+        loadState.pack.elevationProfile,
+        stabilized.traveledMeters,
+        resolvedDirection,
+      ),
+    };
     if (Number.isFinite(p.traveledMeters)) {
       snapHintRef.current = { traveledMeters: p.traveledMeters };
     }
-    setProgress(p);
-  }, [navFix, loadState, trusted]);
+    queueMicrotask(() => setProgress(p));
+  }, [navFix, loadState, trusted, travelDirection]);
 
   useEffect(() => {
     if (loadState.status !== "ready") return;
@@ -374,17 +466,30 @@ export default function NavigatePage() {
     void appendNavPoint(sessionIdRef.current, point);
   }, [gps.fix, loadState.status, gpsTrusted]);
 
+  // Gate on gpsTrusted, not `trusted`: in GPS-denied mode `trusted` only means "we have
+  // something to draw". Alerting off a dead-reckoned position raises warnings against a
+  // track the hiker never walked.
   const severity = useMemo(() => {
     if (!progress) return "unknown" as const;
-    return offTrailLevel(progress.offsetMeters, gps.fix?.accuracy, { trustedFix: trusted });
-  }, [progress, gps.fix?.accuracy, trusted]);
+    return offTrailLevel(progress.offsetMeters, gps.fix?.accuracy, {
+      trustedFix: gpsTrusted,
+    });
+  }, [progress, gps.fix?.accuracy, gpsTrusted]);
 
+  // `severity` is a string, so an effect keyed only on it runs once and never again
+  // while you stay off-trail. shouldRepeatAlert enforces the 12 s / 30 s cadence, so
+  // poll it on a timer for as long as the alert stands.
   useEffect(() => {
     if (severity === "unknown" || severity === "ok") return;
-    if (shouldRepeatAlert(lastAlertRef.current, severity)) {
-      vibrateOffTrail(severity);
-      lastAlertRef.current = Date.now();
-    }
+    const fire = () => {
+      if (shouldRepeatAlert(lastAlertRef.current, severity)) {
+        vibrateOffTrail(severity);
+        lastAlertRef.current = Date.now();
+      }
+    };
+    fire();
+    const id = window.setInterval(fire, 4000);
+    return () => window.clearInterval(id);
   }, [severity]);
 
   const exitHref = useMemo(() => {
@@ -398,9 +503,11 @@ export default function NavigatePage() {
     if (loadState.status !== "ready" || !navFix || !trusted) return undefined;
     const start = trailheadPoint(loadState.pack.geometry);
     if (!start) return undefined;
-    return turf.bearing(
-      turf.point([navFix.lng, navFix.lat]),
-      turf.point([start.lng, start.lat]),
+    return normalizeHeading(
+      turf.bearing(
+        turf.point([navFix.lng, navFix.lat]),
+        turf.point([start.lng, start.lat]),
+      ),
     );
   }, [navFix, loadState, trusted]);
 
@@ -415,14 +522,15 @@ export default function NavigatePage() {
       (loadState.status === "ready"
         ? (loadState.pack.bbox[0] + loadState.pack.bbox[2]) / 2
         : null);
-    if (lat == null || lng == null) return null;
-    return daylightStatus(new Date(), lat, lng);
-  }, [navFix, loadState]);
+    if (lat == null || lng == null || nowMs === 0) return null;
+    return daylightStatus(new Date(nowMs), lat, lng);
+  }, [navFix, loadState, nowMs]);
 
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
       progress.remainingMeters,
+      progress.remainingElevationMeters,
       daylight.minutesUntilSunset,
       daylight.isDark,
     );
@@ -446,15 +554,18 @@ export default function NavigatePage() {
   const fallWarning = gpsTrusted ? suddenStopWarning(trackPoints) : null;
   const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
   const hydrateWarning = waterReminder(lastDrinkAt, hikeStartedAt);
-  const moon = useMemo(() => moonPhase(), [zulu]);
+  const moon = useMemo(() => { void zulu; return moonPhase(); }, [zulu]);
   const moonWarning = daylight?.isDark ? moon.nightNav : null;
+  // A dead-reckoned position drifts with every metre walked. Quote an error radius so
+  // the grid below is not read as a surveyed fix.
+  const drErrorM = drFix ? Math.max(25, Math.round(drFix.meters * 0.1)) : null;
   const deniedWarning = gpsDenied
-    ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : "0 m"} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}. SOS / SMS use this DR position.`
+    ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : "0 m"} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}${drErrorM != null ? `, estimated ±${drErrorM} m and growing` : ""}. SOS / SMS use this DR position.`
     : deniedNeedHeading
       ? "Need a compass heading or typed bearing before GPS-denied dead reckon."
       : !gpsTrusted && gps.fix
         ? `GPS untrusted — last known ${formatFixAge(gps.fix.recordedAt)}. Display only; not used for off-trail or SOS as live.`
-        : null;
+        : deniedError;
   const sereWarning = sereAssessment({
     isDark: Boolean(daylight?.isDark),
     altitudeM: gps.fix?.altitude,
@@ -470,6 +581,23 @@ export default function NavigatePage() {
       ? slopeFromProfile(loadState.pack.elevationProfile, progress.traveledMeters)
       : null;
   const slopeWarn = slopePct != null ? slopeWarning(slopePct) : null;
+  const routeProfileWarnings = useMemo(() => {
+    if (loadState.status !== "ready") return { altitude: null, avalanche: null };
+    const altitude = altitudeFromProfile(loadState.pack.elevationProfile);
+    const slopes = slopeAnglesFromProfile(loadState.pack.elevationProfile);
+    return {
+      altitude:
+        altitude == null || altitude.maxElevationM < 2500
+          ? null
+          : altitude.crosses3000
+            ? `Route altitude screen: profile crosses 3,000 m (maximum ${Math.round(altitude.maxElevationM)} m). Plan acclimatization and do not ascend with symptoms.`
+            : `Route altitude screen: profile reaches ${Math.round(altitude.maxElevationM)} m, crossing 2,500 m. Watch for altitude symptoms and allow time to acclimatize.`,
+      avalanche:
+        slopes != null && slopes.maxAngleDeg >= 30 && slopes.maxAngleDeg <= 45
+          ? `Avalanche-terrain screen: steepest sustained along-track gradient is ${slopes.maxAngleDeg}° near ${Math.round(slopes.atMeters)} m. This is in the 30–45° starting-slope band, but a route profile under-reads true avalanche terrain because it only measures along-track gradient.`
+          : null,
+    };
+  }, [loadState]);
   const checkinOverdue =
     checkinStatus(lastCheckinAt, checkinSettings)?.overdue === true
       ? checkinStatus(lastCheckinAt, checkinSettings)?.label
@@ -488,6 +616,17 @@ export default function NavigatePage() {
       ? `${Math.round(progress.offsetMeters)} m`
       : "—";
 
+  const packAge = useMemo(() => {
+    if (loadState.status !== "ready" || nowMs === 0) return null;
+    const cachedAt = Date.parse(loadState.pack.cachedAt);
+    if (!Number.isFinite(cachedAt)) return null;
+    const days = Math.floor((nowMs - cachedAt) / 86_400_000);
+    if (days >= 1) return `saved ${days} d ago`;
+    const hours = Math.floor((nowMs - cachedAt) / 3_600_000);
+    return hours >= 1 ? `saved ${hours} h ago` : "saved today";
+  }, [loadState, nowMs]);
+
+  // Stacked HUD, ranked by time-to-harm: untrusted → OFF TRAIL → overdue/check-in → fall → exposure/AMS → rest.
   const hudBanners: Array<{ key: string; tone: "critical" | "warn" | "info"; text: string }> = [];
   if (deniedWarning) {
     hudBanners.push({
@@ -522,6 +661,8 @@ export default function NavigatePage() {
     ["spoof", gpsSpoof],
     ["sere", sereWarning],
     ["avy", avyWarn],
+    ["profile-avy", routeProfileWarnings.avalanche],
+    ["profile-alt", routeProfileWarnings.altitude],
     ["buddy", buddyWarn],
     ["slope", slopeWarn],
     ["comms", commsWarn],
@@ -568,7 +709,7 @@ export default function NavigatePage() {
         return;
       }
       const status = overdueStatus(alarm.returnAt);
-      setOverdueBanner(status.overdue ? status.label : null);
+      setOverdueBanner(status?.overdue ? status.label : null);
     }
     void tick();
     const id = window.setInterval(() => void tick(), 30000);
@@ -697,10 +838,14 @@ export default function NavigatePage() {
           nightMode={nightMode}
           gpsDenied={gpsDenied}
           uncertaintyM={drUncertainty}
+          topInsetPx={headerHeight}
           className="absolute inset-0 h-full w-full"
         />
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8">
+        <div
+          ref={headerRef}
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8"
+        >
           <div className="pointer-events-auto flex items-start justify-between gap-2">
             <Button
               variant="secondary"
@@ -726,7 +871,7 @@ export default function NavigatePage() {
                 packId={pack.id}
                 offTrailM={trusted ? progress?.offsetMeters : undefined}
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
-                bearingToStart={bearingToStart}
+                bearingToStart={bearingToStart ?? undefined}
                 daylightWarning={daylight?.warning ?? null}
                 isDark={Boolean(daylight?.isDark)}
                 positionSource={positionSource}
@@ -781,12 +926,30 @@ export default function NavigatePage() {
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {source === "cache" ? "Offline pack" : "Saved to device"}
+                  {packAge && ` · ${packAge}`}
                   {gps.status === "stale" && " · GPS stale"}
                 </p>
+                <button
+                  type="button"
+                  className="text-[10px] text-muted-foreground underline underline-offset-2 disabled:opacity-50"
+                  disabled={refreshingPack}
+                  onClick={() => {
+                    setRefreshingPack(true);
+                    void loadPack({ forceNetwork: true }).finally(() =>
+                      setRefreshingPack(false),
+                    );
+                  }}
+                >
+                  {refreshingPack ? "Refreshing route…" : "Refresh route"}
+                </button>
                 {navFix && (
                   <p className="font-mono text-[10px] text-muted-foreground">
                     {formatUsng(navFix.lat, navFix.lng)}
-                    {gpsDenied ? " · DR" : !gpsTrusted ? ` · last known ${formatFixAge(gps.fix!.recordedAt)}` : ""}
+                    {gpsDenied
+                      ? ` · DR ±${drErrorM ?? 25} m`
+                      : !gpsTrusted
+                        ? ` · last known ${formatFixAge(gps.fix!.recordedAt)}`
+                        : ""}
                     {` · ${zulu}`}
                   </p>
                 )}
@@ -874,7 +1037,13 @@ export default function NavigatePage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
-            label={backtrackOn ? "Backtrack" : "Remaining"}
+            label={
+              backtrackOn
+                ? "Backtrack"
+                : progress && progress.remainingDirection === "unknown"
+                  ? "To nearer end"
+                  : "Remaining"
+            }
             value={
               backtrackOn && retrace
                 ? formatDistance(retrace.remainingMeters)
@@ -961,7 +1130,7 @@ export default function NavigatePage() {
                 })();
               }}
             >
-              I'm late — send grid
+              I&apos;m late — send grid
             </Button>
           )}
         </div>

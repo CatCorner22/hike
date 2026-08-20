@@ -18,6 +18,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CapabilityTabs } from "@/components/safety/capability-tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -45,7 +46,7 @@ import {
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { formatFixAge } from "@/lib/safety/gps-quality";
-import { isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { useWakeLockHeld } from "@/hooks/use-wake-lock";
 import {
   dropWaypoint,
   getIceProfile,
@@ -54,6 +55,8 @@ import {
   overdueStatus,
   saveIceProfile,
   setOverdueAlarm,
+  resolveLocalDateTime,
+  type ResolvedLocalTime,
   type IceProfile,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
@@ -103,7 +106,7 @@ import {
 import {
   commsWindowReminder,
   fiveLineHeloBrief,
-  litterEvacTime,
+  litterEvacAdvice,
   lzAssessmentChecklist,
   saluteReport,
 } from "@/lib/safety/sar-advanced";
@@ -183,6 +186,8 @@ interface SafetyPanelProps {
   bearingToTrail?: number;
   bearingToStart?: number;
   daylightWarning?: string | null;
+  /** Real darkness from the solar calculation. Do not infer it from warning text. */
+  isDark?: boolean;
   altitudeM?: number;
   stale?: boolean;
   recordedAt?: number;
@@ -201,7 +206,6 @@ interface SafetyPanelProps {
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
   onDeniedPaceLen?: (paceLen: number) => void;
-  isDark?: boolean;
   positionSource?: PositionSource;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
@@ -225,6 +229,7 @@ export function SafetyPanel({
   bearingToTrail,
   bearingToStart,
   daylightWarning,
+  isDark = false,
   altitudeM,
   stale,
   recordedAt,
@@ -243,7 +248,6 @@ export function SafetyPanel({
   onToggleGpsDenied,
   onDeniedPaces,
   onDeniedPaceLen,
-  isDark = false,
   positionSource,
   geometry,
   remainingMeters,
@@ -268,6 +272,9 @@ export function SafetyPanel({
     password: "",
   });
   const [returnLocal, setReturnLocal] = useState("");
+  const [returnResolution, setReturnResolution] = useState<ResolvedLocalTime | null>(null);
+  const [returnTimeMessage, setReturnTimeMessage] = useState<string | null>(null);
+  const [returnTimeChoices, setReturnTimeChoices] = useState<[ResolvedLocalTime, ResolvedLocalTime] | null>(null);
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
   const [overdue, setOverdue] = useState(false);
   const [gotoGrid, setGotoGrid] = useState("");
@@ -330,13 +337,27 @@ export function SafetyPanel({
   const [dossierStatus, setDossierStatus] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
-  profileRef.current = profile;
+
+  // Mirror the latest profile into a ref so the unmount cleanup below can flush
+  // a pending debounced save. Syncing in an effect rather than during render
+  // keeps this off the render path.
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     void getIceProfile().then(setProfile);
     void getOverdueAlarm().then((alarm) => {
       if (!alarm) return;
       setReturnLocal(toLocalInput(alarm.returnAt));
+      if (alarm.resolvedLocal && alarm.timeZone && alarm.utcOffset) {
+        setReturnResolution({
+          instant: new Date(alarm.returnAt),
+          resolvedLocal: alarm.resolvedLocal,
+          timeZone: alarm.timeZone,
+          utcOffset: alarm.utcOffset,
+        });
+      }
     });
     return () => {
       if (persistTimer.current) {
@@ -354,9 +375,11 @@ export function SafetyPanel({
 
   useEffect(() => {
     if (!packWeather) return;
-    if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
-    if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
-    if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
+    queueMicrotask(() => {
+      if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
+      if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
+      if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
+    });
   }, [packWeather]);
 
   useEffect(() => {
@@ -371,19 +394,24 @@ export function SafetyPanel({
 
   useEffect(() => {
     const tick = () => {
-      if (!returnLocal) {
+      if (!returnResolution) {
         setOverdueLabel(null);
         setOverdue(false);
         return;
       }
-      const status = overdueStatus(new Date(returnLocal).toISOString());
+      const status = overdueStatus(returnResolution.instant.toISOString());
+      if (!status) {
+        setOverdueLabel("Return time is invalid — set a new local return time.");
+        setOverdue(false);
+        return;
+      }
       setOverdueLabel(status.label);
       setOverdue(status.overdue);
     };
     tick();
     const id = window.setInterval(tick, 30000);
     return () => window.clearInterval(id);
-  }, [returnLocal]);
+  }, [returnResolution]);
 
   const message = useMemo(
     () =>
@@ -433,6 +461,8 @@ export function SafetyPanel({
     [lat, lng, waypoints],
   );
 
+  const wakeLockHeld = useWakeLockHeld();
+
   const checks = useMemo(
     () =>
       safetySelfCheck({
@@ -440,17 +470,21 @@ export function SafetyPanel({
         gpsTrusted,
         iceFilled: isIceFilled(profile),
         returnSet: Boolean(returnLocal),
-        wakeLock: isWakeLockHeld(),
+        wakeLock: wakeLockHeld,
         crumbs: trackPoints.length,
         gpsDenied,
       }),
-    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied],
+    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied, wakeLockHeld],
   );
 
   const moon = useMemo(() => moonPhase(), []);
   const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
   const declination = lat != null && lng != null ? magneticDeclination(lat, lng) : null;
   const imsafeNote = imsafeWarning(imsafe);
+  // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
+  // happened to rank first — so "finish with a headlamp" read as darkness at midday,
+  // and a GPS-denied or overdue warning read as daylight at midnight. It feeds
+  // sereAssessment and casevacDecision, so it has to be the real value.
   const sereNote = sereAssessment({
     isDark,
     altitudeM,
@@ -469,7 +503,7 @@ export function SafetyPanel({
       : null;
   const watchHint =
     lat != null && lng != null
-      ? sunVsWatchCheck(new Date(), lat, lng, new Date().getHours())
+      ? sunVsWatchCheck(new Date(), lat, lng)
       : null;
   const evac = casevacDecision({
     injured: (Number(injured) || 0) > 0,
@@ -484,8 +518,8 @@ export function SafetyPanel({
     gainLastHourM: gainLastHourM(trackPoints),
     symptoms: amsSymptoms,
   });
-  const avyNote =
-    slopePct != null ? avalancheTerrainWarning({ slopePct, aspectDeg: heading }) : null;
+  // No aspect: heading is the direction of travel, not the direction the slope faces.
+  const avyNote = slopePct != null ? avalancheTerrainWarning({ slopePct }) : null;
 
   async function persistCheckinSettings(next: CheckinSettings) {
     setCheckinSettings(next);
@@ -494,7 +528,31 @@ export function SafetyPanel({
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
-    await setOverdueAlarm(value ? new Date(value) : null);
+    setReturnTimeMessage(null);
+    setReturnTimeChoices(null);
+    if (!value) {
+      setReturnResolution(null);
+      await setOverdueAlarm(null);
+      return;
+    }
+    const resolved = resolveLocalDateTime(value);
+    if (resolved.kind === "resolved") {
+      setReturnResolution(resolved.value);
+      setReturnTimeMessage(`Deadline: ${resolved.value.resolvedLocal} (${resolved.value.utcOffset}, ${resolved.value.timeZone}).`);
+      await setOverdueAlarm(resolved.value);
+      return;
+    }
+    setReturnResolution(null);
+    setReturnTimeMessage(resolved.message);
+    if (resolved.kind === "ambiguous") setReturnTimeChoices(resolved.choices);
+    await setOverdueAlarm(null);
+  }
+
+  async function chooseReturnOccurrence(choice: ResolvedLocalTime) {
+    setReturnResolution(choice);
+    setReturnTimeChoices(null);
+    setReturnTimeMessage(`Deadline: ${choice.resolvedLocal} (${choice.utcOffset}, ${choice.timeZone}).`);
+    await setOverdueAlarm(choice);
   }
 
   async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
@@ -599,7 +657,7 @@ export function SafetyPanel({
                 <p className="font-medium text-destructive">
                   {Math.round(offTrailM)} m off route
                 </p>
-                {bearingToTrail != null && (
+                {bearingToTrail != null && Number.isFinite(bearingToTrail) && (
                   <p className="mt-1 text-muted-foreground">
                     Walk {formatWalkBearing(bearingToTrail, lat, lng)} (
                     {compassLabel(bearingToTrail)}) toward the dashed orange line.
@@ -616,11 +674,19 @@ export function SafetyPanel({
             {lat != null && lng != null ? (
               <>
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
-                <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
-                <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                {formatUsng(lat, lng) ? (
+                  <>
+                    <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
+                    <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                    UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.
+                  </p>
+                )}
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
-                <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>
+                {formatUtm(lat, lng) && <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>}
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
@@ -634,7 +700,7 @@ export function SafetyPanel({
                     Altitude ~{Math.round(altitudeM * 3.28084).toLocaleString()} ft
                   </p>
                 )}
-                {bearingToStart != null && !stale && (
+                {bearingToStart != null && Number.isFinite(bearingToStart) && !stale && (
                   <p className="mt-2 text-sm text-muted-foreground">
                     Trailhead: {formatWalkBearing(bearingToStart, lat, lng)} (
                     {compassLabel(bearingToStart)})
@@ -774,7 +840,7 @@ export function SafetyPanel({
             </Button>
             <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
               <CheckCircle2 className="mr-2 size-4" />
-              I'm OK
+              I&apos;m OK
             </Button>
             <Button
               variant="outline"
@@ -805,7 +871,7 @@ export function SafetyPanel({
                   recordedAt,
                   positionSource,
                   offTrailM,
-                  returnAt: returnLocal ? new Date(returnLocal).toISOString() : null,
+                  returnAt: returnResolution?.instant.toISOString() ?? null,
                   checkins,
                   navLegs: legs,
                   waypoints,
@@ -880,7 +946,7 @@ export function SafetyPanel({
               ))}
             </div>
             <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
-              Log I'm OK now
+              Log I&apos;m OK now
             </Button>
             {checkins.length > 0 && (
               <p className="whitespace-pre-wrap font-mono text-[10px] text-muted-foreground">
@@ -1015,10 +1081,7 @@ export function SafetyPanel({
                 variant="outline"
                 className="flex-1"
                 onClick={() => {
-                  const parsed = parseUsng(
-                    gotoGrid,
-                    lat != null && lng != null ? { lat, lng } : undefined,
-                  );
+                  const parsed = parseUsng(gotoGrid);
                   if (!parsed) {
                     setGotoInfo("Could not parse that USNG/MGRS grid.");
                     return;
@@ -1137,9 +1200,8 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
                 if (!a || !b) {
                   setResectInfo("Need two valid USNG/MGRS points.");
                   return;
@@ -1178,10 +1240,9 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
-                const c = parseUsng(gridC, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
+                const c = parseUsng(gridC);
                 if (!a || !b || !c) {
                   setResectInfo("Need three valid USNG/MGRS points for 3-pt.");
                   return;
@@ -1226,9 +1287,8 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
                 if (!a || !b) {
                   setResectInfo("Intersection needs two observer grids (A/B) and bearings toward the unknown.");
                   return;
@@ -1277,7 +1337,7 @@ export function SafetyPanel({
               disabled={lat == null || !gotoGrid}
               onClick={() => {
                 if (lat == null || lng == null) return;
-                const dest = parseUsng(gotoGrid, { lat, lng });
+                const dest = parseUsng(gotoGrid);
                 if (!dest) {
                   setGotoInfo("Plot or type a go-to grid first.");
                   return;
@@ -1439,7 +1499,7 @@ export function SafetyPanel({
               <Input value={flashSec} placeholder="flash-to-bang s" onChange={(e) => setFlashSec(e.target.value)} />
               <Button
                 variant="outline"
-                onClick={() => setOpsNote(lightningRule(Number(flashSec) || 0).warning)}
+                onClick={() => setOpsNote(lightningRule(Number(flashSec) || 0)?.warning ?? "Enter a valid flash-to-bang time.")}
               >
                 30–30
               </Button>
@@ -1527,11 +1587,20 @@ export function SafetyPanel({
               <input type="checkbox" checked={canWalk} onChange={(e) => setCanWalk(e.target.checked)} />
               Injured person can walk
             </label>
-            {remainingMeters != null && remainingMeters > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {litterEvacTime(remainingMeters, profile.partySize)}
-              </p>
-            )}
+            {remainingMeters != null && remainingMeters > 0 && (() => {
+              const litter = litterEvacAdvice(remainingMeters, profile.partySize);
+              return (
+                <p
+                  className={
+                    litter.feasible
+                      ? "text-xs text-muted-foreground"
+                      : "rounded border border-destructive/50 bg-destructive/10 p-2 text-xs font-medium text-destructive"
+                  }
+                >
+                  {litter.message}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-2">
               <Input value={lpqSeen} placeholder="Last seen" onChange={(e) => setLpqSeen(e.target.value)} />
               <Input value={lpqClothes} placeholder="Clothing" onChange={(e) => setLpqClothes(e.target.value)} />
@@ -1606,6 +1675,10 @@ export function SafetyPanel({
                     lng,
                     trailName,
                     profile,
+                    // Casualty counts from the CASEVAC inputs above, not the party size.
+                    litter: canWalk ? 0 : Math.max(1, Number(injured) || 1),
+                    ambulatory: canWalk ? Math.max(1, Number(injured) || 1) : 0,
+                    precedence: Number(injured) > 0 && !canWalk ? "A" : "B",
                   }),
                 );
                 setCopiedNine(ok);
@@ -1861,8 +1934,17 @@ export function SafetyPanel({
               value={returnLocal}
               onChange={(e) => void persistReturn(e.target.value)}
             />
+            {returnTimeChoices && (
+              <div className="flex gap-2">
+                {returnTimeChoices.map((choice, index) => (
+                  <Button key={choice.instant.toISOString()} size="sm" variant="outline" onClick={() => void chooseReturnOccurrence(choice)}>
+                    {index === 0 ? "First" : "Second"} ({choice.utcOffset})
+                  </Button>
+                ))}
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
-              Stored on this phone. When time passes, navigation shows OVERDUE.
+              {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
           </div>
 
@@ -1959,6 +2041,8 @@ export function SafetyPanel({
             />
           </div>
 
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
+
           <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Tell 911 / SAR</p>
             <p>1. USNG grid (above) — preferred in the U.S.</p>
@@ -1974,8 +2058,11 @@ export function SafetyPanel({
   );
 }
 
+/** Returns "" for an unparseable stored value; "NaN-NaN-NaNTNaN:NaN" is truthy and
+ *  used to reach `new Date(...).toISOString()`, which throws and takes the screen down. */
 function toLocalInput(iso: string) {
   const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

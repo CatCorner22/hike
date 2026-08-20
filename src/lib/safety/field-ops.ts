@@ -3,7 +3,7 @@ import { rangeAzimuth } from "@/lib/safety/landnav";
 /** Environment Canada wind-chill (°C, wind km/h). Valid roughly T ≤ 10 °C, wind ≥ 5 km/h. */
 export function windChillC(tempC: number, windKph: number): number | null {
   if (!Number.isFinite(tempC) || !Number.isFinite(windKph)) return null;
-  if (tempC > 10 || windKph < 5) return null;
+  if (tempC < -90 || tempC > 10 || windKph < 5 || windKph > 300) return null;
   const v = Math.pow(windKph, 0.16);
   return Math.round((13.12 + 0.6215 * tempC - 11.37 * v + 0.3965 * tempC * v) * 10) / 10;
 }
@@ -18,7 +18,7 @@ export function windChillWarning(tempC: number, windKph: number): string | null 
 
 /** Simplified NOAA heat index (°C). Meaningful above ~27 °C with humidity. */
 export function heatIndexC(tempC: number, rhPct: number): number | null {
-  if (tempC < 27 || rhPct < 40) return null;
+  if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || tempC < 27 || tempC > 60 || rhPct < 40 || rhPct > 100) return null;
   const t = (tempC * 9) / 5 + 32;
   const r = rhPct;
   const hiF =
@@ -51,7 +51,8 @@ export function lightningRule(flashToBangSec: number): {
   km: number;
   miles: number;
   warning: string;
-} {
+} | null {
+  if (!Number.isFinite(flashToBangSec) || flashToBangSec < 0 || flashToBangSec > 300) return null;
   const miles = flashToBangSec / 5;
   const km = flashToBangSec / 3;
   let warning: string;
@@ -65,36 +66,29 @@ export function lightningRule(flashToBangSec: number): {
   return { km, miles, warning };
 }
 
-/**
- * Naismith + Langmuir-ish: 5 km/h + 1 h / 600 m climb + 10 min / 300 m steep descent.
- */
-export function naismithMinutes(
-  distanceM: number,
-  gainM = 0,
-  lossM = 0,
-): number {
-  if (!(distanceM > 0)) return 0;
-  const walk = (distanceM / 5000) * 60;
-  const climb = (Math.max(0, gainM) / 600) * 60;
-  const drop = lossM >= 300 ? (lossM / 300) * 10 : 0;
-  return Math.round(walk + climb + drop);
-}
-
-export function formatNaismith(minutes: number): string {
-  if (minutes < 60) return `Naismith ~${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `Naismith ~${h} h ${m} min`;
-}
+export { naismithMinutes, formatNaismith } from "@/lib/safety/pace";
 
 export function slopePercent(riseM: number, runM: number): number | null {
   if (!(runM > 0) || !Number.isFinite(riseM)) return null;
   return Math.round((riseM / runM) * 1000) / 10;
 }
 
+/**
+ * `slopeFromProfile` returns a signed grade, so this must judge on magnitude:
+ * a 45% descent is at least as hazardous as the climb, and is where falls happen.
+ */
 export function slopeWarning(percent: number): string | null {
-  if (percent >= 45) return `Slope ~${percent}% — Class 3/4; hands may be needed.`;
-  if (percent >= 25) return `Slope ~${percent}% — steep. Short-rope kids, use switchbacks.`;
+  if (!Number.isFinite(percent)) return null;
+  const grade = Math.abs(percent);
+  const way = percent < 0 ? "descent" : "climb";
+  if (grade >= 45) {
+    return `Slope ~${grade}% ${way} — Class 3/4; hands may be needed.`;
+  }
+  if (grade >= 25) {
+    return percent < 0
+      ? `Slope ~${grade}% descent — steep. Short steps, poles out; downhill is where people fall.`
+      : `Slope ~${grade}% — steep. Short-rope kids, use switchbacks.`;
+  }
   return null;
 }
 

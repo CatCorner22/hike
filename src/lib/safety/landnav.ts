@@ -2,15 +2,18 @@ import * as turf from "@turf/turf";
 import { magneticDeclination, toMagneticBearing } from "@/lib/safety/declination";
 
 /** NATO mils: 6400 mils in a circle. */
-export function degreesToMils(degrees: number): number {
+export function degreesToMils(degrees: number): number | null {
+  if (!Number.isFinite(degrees) || Math.abs(degrees) > 360) return null;
   return Math.round(((((degrees % 360) + 360) % 360) * 6400) / 360);
 }
 
-export function milsToDegrees(mils: number): number {
+export function milsToDegrees(mils: number): number | null {
+  if (!Number.isFinite(mils) || Math.abs(mils) > 6400) return null;
   return (((mils % 6400) + 6400) % 6400) * (360 / 6400);
 }
 
-export function backAzimuth(degrees: number): number {
+export function backAzimuth(degrees: number): number | null {
+  if (!Number.isFinite(degrees) || Math.abs(degrees) > 360) return null;
   return (((degrees + 180) % 360) + 360) % 360;
 }
 
@@ -39,9 +42,9 @@ export function rangeAzimuth(
     meters,
     trueDeg,
     magneticDeg,
-    mils: degreesToMils(trueDeg),
-    backTrueDeg: backAzimuth(trueDeg),
-    backMils: degreesToMils(backAzimuth(trueDeg)),
+    mils: degreesToMils(trueDeg)!,
+    backTrueDeg: backAzimuth(trueDeg)!,
+    backMils: degreesToMils(backAzimuth(trueDeg)!)!,
   };
 }
 
@@ -87,7 +90,8 @@ export function milRelationRange(heightMeters: number, mils: number): number | n
   return (heightMeters * 1000) / mils;
 }
 
-export function smallestAngle(a: number, b: number): number {
+export function smallestAngle(a: number, b: number): number | null {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   const d = Math.abs((((a - b) % 360) + 360) % 360);
   return d > 180 ? 360 - d : d;
 }
@@ -104,6 +108,7 @@ export function resection(
 ): { point: { lat: number; lng: number }; cutDeg: number; warning: string | null } | null {
   const backA = backAzimuth(bearingToA);
   const backB = backAzimuth(bearingToB);
+  if (backA == null || backB == null) return null;
   const rayA = turf.lineString([
     [knownA.lng, knownA.lat],
     turf.destination(turf.point([knownA.lng, knownA.lat]), 80, backA, {
@@ -121,6 +126,7 @@ export function resection(
   const [lng, lat] = hit.geometry.coordinates;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   const cutDeg = smallestAngle(bearingToA, bearingToB);
+  if (cutDeg == null) return null;
   const warning =
     cutDeg < 30 || cutDeg > 150
       ? "Poor cut — shoot points 30–150° apart for a stable fix."
@@ -133,8 +139,9 @@ export interface ResectionObservation {
   bearingTo: number;
 }
 
-function resectionRay(obs: ResectionObservation, km = 80): GeoJSON.Feature<GeoJSON.LineString> {
+function resectionRay(obs: ResectionObservation, km = 80): GeoJSON.Feature<GeoJSON.LineString> | null {
   const back = backAzimuth(obs.bearingTo);
+  if (back == null) return null;
   return turf.lineString([
     [obs.known.lng, obs.known.lat],
     turf.destination(turf.point([obs.known.lng, obs.known.lat]), km, back, {
@@ -156,6 +163,7 @@ export function resection3(
     for (let j = i + 1; j < 3; j++) {
       const a = resectionRay(obs[i]);
       const b = resectionRay(obs[j]);
+      if (!a || !b) return null;
       const hit = turf.lineIntersect(a, b).features[0];
       if (hit?.geometry.type === "Point") {
         const [lng, lat] = hit.geometry.coordinates;
@@ -173,7 +181,7 @@ export function resection3(
   const cut12 = smallestAngle(obs[0].bearingTo, obs[1].bearingTo);
   const cut23 = smallestAngle(obs[1].bearingTo, obs[2].bearingTo);
   const cut31 = smallestAngle(obs[2].bearingTo, obs[0].bearingTo);
-  const poor = [cut12, cut23, cut31].some((c) => c < 30 || c > 150);
+  const poor = [cut12, cut23, cut31].some((c) => c == null || c < 30 || c > 150);
   const warning =
     spreadM > 80
       ? `Cuts disagree by ~${Math.round(spreadM)} m — re-shoot bearings.`
@@ -191,16 +199,21 @@ export function timeSpeedDistance(input: {
   speedKph?: number;
   minutes?: number;
 }): { distanceM: number; speedKph: number; minutes: number } | null {
-  const { distanceM, speedKph, minutes } = input;
-  const have = [distanceM, speedKph, minutes].filter((v) => v != null && v > 0).length;
-  if (have < 2) return null;
-  if (distanceM != null && speedKph != null && speedKph > 0) {
+  // Only strictly positive values count as supplied — a zero must not be treated as
+  // "given" by one branch and "missing" by the gate, which silently discarded a real input.
+  const positive = (v: number | undefined) => (v != null && v > 0 ? v : null);
+  const distanceM = positive(input.distanceM);
+  const speedKph = positive(input.speedKph);
+  const minutes = positive(input.minutes);
+
+  if ([distanceM, speedKph, minutes].filter((v) => v != null).length < 2) return null;
+  if (distanceM != null && speedKph != null) {
     return { distanceM, speedKph, minutes: (distanceM / 1000 / speedKph) * 60 };
   }
-  if (distanceM != null && minutes != null && minutes > 0) {
+  if (distanceM != null && minutes != null) {
     return { distanceM, speedKph: distanceM / 1000 / (minutes / 60), minutes };
   }
-  if (speedKph != null && minutes != null && speedKph > 0) {
+  if (speedKph != null && minutes != null) {
     return { distanceM: speedKph * (minutes / 60) * 1000, speedKph, minutes };
   }
   return null;
@@ -233,6 +246,7 @@ export function intersection(
   const [lng, lat] = hit.geometry.coordinates;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   const cutDeg = smallestAngle(bearingFromA, bearingFromB);
+  if (cutDeg == null) return null;
   const warning =
     cutDeg < 30 || cutDeg > 150
       ? "Poor cut — observers should be 30–150° apart as seen from the target."
@@ -253,6 +267,7 @@ export function deadReckonUncertaintyM(input: {
 }
 
 export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
+  if (![tsd.distanceM, tsd.speedKph, tsd.minutes].every((value) => Number.isFinite(value) && value >= 0)) return "—";
   return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;
 }
 
@@ -314,6 +329,7 @@ export function courseCorrection(offCourseM: number, remainingM: number): number
 }
 
 export function formatZulu(date = new Date()): string {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime())) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(date.getUTCHours())}${pad(date.getUTCMinutes())}Z ${date.getUTCDate()} ${monthCode(date.getUTCMonth())} ${date.getUTCFullYear()}`;
 }
@@ -325,6 +341,11 @@ function monthCode(month: number) {
 }
 
 export function formatRangeAzimuth(ra: RangeAzimuth): string {
+  if (
+    !Number.isFinite(ra.meters) || !Number.isFinite(ra.trueDeg) ||
+    !Number.isFinite(ra.mils) || !Number.isFinite(ra.backTrueDeg) ||
+    (ra.magneticDeg != null && !Number.isFinite(ra.magneticDeg))
+  ) return "—";
   const mag =
     ra.magneticDeg != null ? ` / ${Math.round(ra.magneticDeg)}° mag` : "";
   return `${Math.round(ra.meters)} m · ${Math.round(ra.trueDeg)}° true (${ra.mils} mils)${mag} · back ${Math.round(ra.backTrueDeg)}°`;

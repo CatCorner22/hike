@@ -135,7 +135,7 @@ describe("G-M card", () => {
 describe("MGRS parse / phonetic", () => {
   it("round-trips a Yosemite grid within 25 m", () => {
     const origin = { lat: 37.7459, lng: -119.5936 };
-    const grid = formatMgrs10(origin.lat, origin.lng);
+    const grid = formatMgrs10(origin.lat, origin.lng)!;
     const parsed = parseUsng(grid, origin);
     expect(parsed).not.toBeNull();
     const ra = rangeAzimuth(origin, parsed!);
@@ -159,5 +159,27 @@ describe("9-line", () => {
     expect(text).toContain("L1 LOCATION");
     expect(text).toContain("L3 PATIENTS");
     expect(text).toContain("Mist Trail");
+  });
+});
+
+describe("timeSpeedDistance", () => {
+  it("solves for the missing value", () => {
+    expect(timeSpeedDistance({ distanceM: 5000, speedKph: 5 })!.minutes).toBeCloseTo(60);
+    expect(timeSpeedDistance({ distanceM: 5000, minutes: 60 })!.speedKph).toBeCloseTo(5);
+    expect(timeSpeedDistance({ speedKph: 5, minutes: 60 })!.distanceM).toBeCloseTo(5000);
+  });
+
+  it("needs two of the three", () => {
+    expect(timeSpeedDistance({ distanceM: 5000 })).toBeNull();
+    expect(timeSpeedDistance({})).toBeNull();
+  });
+
+  // Regression: a zero did not count towards the "have two values" gate but was still
+  // consumed by the first branch, which silently discarded the minutes it was given.
+  it("treats a zero as missing, not as a supplied value", () => {
+    const solved = timeSpeedDistance({ distanceM: 0, speedKph: 5, minutes: 10 });
+    expect(solved).not.toBeNull();
+    expect(solved!.minutes).toBe(10);
+    expect(solved!.distanceM).toBeCloseTo((5 * 10) / 60 * 1000);
   });
 });

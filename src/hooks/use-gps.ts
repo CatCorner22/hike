@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
 import {
-  DISPLAY_FIX_MS,
   isTrustedFix,
   isValidLatLng,
   sanitizeFixTimestamp,
+  sanitizeStoredFixTimestamp,
 } from "@/lib/safety/gps-quality";
 
 export interface GpsFix {
@@ -27,6 +27,10 @@ export interface GpsState {
 
 const STALE_MS = 20_000;
 const WATCHDOG_MS = 25_000;
+/** Writing every fix hammers IndexedDB at up to 1 Hz for the whole hike. */
+const SAVE_FIX_EVERY_MS = 10_000;
+/** Location permission can be granted mid-hike, so a denial must not be permanent. */
+const DENIED_RETRY_MS = 30_000;
 
 export function useGps() {
   const [state, setState] = useState<GpsState>({
@@ -36,17 +40,22 @@ export function useGps() {
   });
   const watchIdRef = useRef<number | null>(null);
   const lastFixRef = useRef<GpsFix | null>(null);
-  const lastCallbackRef = useRef(Date.now());
+  const lastCallbackRef = useRef(0);
   const deniedRef = useRef(false);
+  const deniedSinceRef = useRef(0);
+  const lastSavedFixAtRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
+    lastCallbackRef.current = Date.now();
 
     if (!("geolocation" in navigator)) {
-      setState({
-        fix: null,
-        status: "unavailable",
-        message: "This device has no GPS. Navigation is map-only.",
+      queueMicrotask(() => {
+        if (!cancelled) setState({
+          fix: null,
+          status: "unavailable",
+          message: "This device has no GPS. Navigation is map-only.",
+        });
       });
       return;
     }
@@ -54,9 +63,8 @@ export function useGps() {
     void getLastFix().then((stored) => {
       if (cancelled || deniedRef.current || !stored || lastFixRef.current) return;
       if (!isValidLatLng(stored.lat, stored.lng)) return;
-      const recordedAt = new Date(stored.recordedAt).getTime();
-      if (!Number.isFinite(recordedAt) || recordedAt < 1e12) return;
-      if (Date.now() - recordedAt > DISPLAY_FIX_MS) return;
+      const recordedAt = sanitizeStoredFixTimestamp(new Date(stored.recordedAt).getTime());
+      if (recordedAt == null) return;
       const fix: GpsFix = {
         lat: stored.lat,
         lng: stored.lng,
@@ -77,6 +85,7 @@ export function useGps() {
 
     const applyFix = (position: GeolocationPosition) => {
       lastCallbackRef.current = Date.now();
+      deniedRef.current = false;
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
       if (!isValidLatLng(lat, lng)) return;
@@ -114,7 +123,11 @@ export function useGps() {
         stale: false,
       };
       lastFixRef.current = fix;
-      void saveLastFix(fix);
+      const nowMs = Date.now();
+      if (nowMs - lastSavedFixAtRef.current >= SAVE_FIX_EVERY_MS) {
+        lastSavedFixAtRef.current = nowMs;
+        void saveLastFix(fix);
+      }
       setState({
         fix,
         status: "live",
@@ -129,15 +142,16 @@ export function useGps() {
       lastCallbackRef.current = Date.now();
       if (error.code === error.PERMISSION_DENIED) {
         deniedRef.current = true;
+        deniedSinceRef.current = Date.now();
         if (lastFixRef.current) {
           lastFixRef.current = { ...lastFixRef.current, stale: true };
         }
-        setState((prev) => ({
+        setState({
           fix: lastFixRef.current,
           status: "denied",
           message:
             "Location permission is off. Enable it in the browser to see your position. The downloaded route remains on the map.",
-        }));
+        });
         return;
       }
       if (lastFixRef.current) {
@@ -179,8 +193,33 @@ export function useGps() {
       }
     }, 5000);
 
+    let permissionStatus: PermissionStatus | null = null;
+    const onPermissionChange = () => {
+      if (cancelled || permissionStatus?.state === "denied") return;
+      deniedRef.current = false;
+      startWatch();
+    };
+    void navigator.permissions
+      ?.query({ name: "geolocation" as PermissionName })
+      .then((status) => {
+        if (cancelled) return;
+        permissionStatus = status;
+        status.addEventListener("change", onPermissionChange);
+      })
+      .catch(() => {
+        /* Permissions API unavailable — the watchdog retry below still covers it. */
+      });
+
     const watchdog = window.setInterval(() => {
-      if (cancelled || deniedRef.current) return;
+      if (cancelled) return;
+      if (deniedRef.current) {
+        // Permission can be granted from browser settings mid-hike; re-arm periodically
+        // so recovering does not require a page reload.
+        if (Date.now() - deniedSinceRef.current < DENIED_RETRY_MS) return;
+        deniedSinceRef.current = Date.now();
+        startWatch();
+        return;
+      }
       if (Date.now() - lastCallbackRef.current < WATCHDOG_MS) return;
       lastCallbackRef.current = Date.now();
       startWatch();
@@ -198,6 +237,7 @@ export function useGps() {
       if (watchIdRef.current != null) {
         navigator.geolocation.clearWatch(watchIdRef.current);
       }
+      permissionStatus?.removeEventListener("change", onPermissionChange);
       window.clearInterval(staleTimer);
       window.clearInterval(watchdog);
     };

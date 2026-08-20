@@ -49,7 +49,29 @@ describe("rapidAscentWarning", () => {
 describe("overdueStatus", () => {
   it("marks a past return time as overdue", () => {
     const status = overdueStatus("2026-08-19T10:00:00Z", Date.parse("2026-08-19T12:00:00Z"));
-    expect(status.overdue).toBe(true);
-    expect(status.label).toMatch(/OVERDUE/);
+    expect(status).not.toBeNull();
+    expect(status!.overdue).toBe(true);
+    expect(status!.label).toMatch(/OVERDUE/);
+  });
+
+  it("counts down before the return time", () => {
+    const status = overdueStatus("2026-08-19T14:00:00Z", Date.parse("2026-08-19T12:00:00Z"));
+    expect(status!.overdue).toBe(false);
+    expect(status!.remainingMin).toBe(120);
+  });
+
+  // Regression: an unparseable stored time produced NaN, which is neither <= 0 nor > 0,
+  // so the alarm reported "Return in NaN min" and never fired. Downstream, the panel fed
+  // the same value to new Date(...).toISOString(), which throws and kills the screen.
+  it("fails closed on an unreadable return time and never prints NaN", () => {
+    // Callers render `label` directly. A corrupt deadline must warn (fail closed)
+    // and must not silently read as fine or print "Return in NaN min".
+    for (const bad of ["garbage", "", "NaN-NaN-NaNTNaN:NaN"]) {
+      const status = overdueStatus(bad);
+      expect(status.overdue).toBe(true);
+      expect(status.remainingMin).toBeNull();
+      expect(status.label).toMatch(/invalid/i);
+      expect(status.label).not.toMatch(/NaN/);
+    }
   });
 });

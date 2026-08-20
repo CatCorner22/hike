@@ -55,7 +55,9 @@ describe("stabilizeLoop", () => {
       remainingMeters: 990,
       totalMeters: 1000,
       remainingElevationMeters: 0,
+      remainingDirection: "forward",
       bearingToTrail: 0,
+      valid: true,
     };
     const kept = stabilizeLoop(progress, { traveledMeters: 980 });
     expect(kept.traveledMeters).toBe(1000);

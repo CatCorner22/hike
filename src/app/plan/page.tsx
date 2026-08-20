@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ interface Plan {
 export default function PlansPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
     fetch("/api/plans")
@@ -38,7 +40,7 @@ export default function PlansPage() {
 
     if (response.ok) {
       const plan = await response.json();
-      window.location.href = `/plan/${plan.id}`;
+      router.push(`/plan/${plan.id}`);
     }
   }
 

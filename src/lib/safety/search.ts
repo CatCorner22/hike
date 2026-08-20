@@ -1,4 +1,5 @@
 import { deadReckon } from "@/lib/safety/landnav";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export interface SearchLeg {
   headingTrue: number;
@@ -8,7 +9,7 @@ export interface SearchLeg {
 
 /**
  * Expanding-square search from a last-known point (SAR standard pattern).
- * Leg length doubles every two sides: L, L, 2L, 2L, 3L, 3L…
+ * Leg length grows by one leg every two sides: L, L, 2L, 2L, 3L, 3L…
  */
 export function expandingSquareLegs(legM: number, rings = 3): SearchLeg[] {
   const legs: SearchLeg[] = [];
@@ -62,7 +63,7 @@ export function sectorSearchLine(
   spokes = 3,
 ): GeoJSON.LineString {
   const coords: GeoJSON.Position[] = [[center.lng, center.lat]];
-  let here = center;
+  const here = center;
   for (const leg of sectorSearchLegs(legM, baseHeading, spokes)) {
     const tip = deadReckon(here, leg.headingTrue, leg.meters);
     coords.push([tip.lng, tip.lat]);
@@ -132,12 +133,13 @@ export function searchLineFromLegs(
 }
 
 export function formatSearchPlan(name: string, legs: SearchLeg[]): string {
-  return [
-    `${name.toUpperCase()} SEARCH`,
+  const rounded = (value: number) => (Number.isFinite(value) ? String(Math.round(value)) : "UNKNOWN");
+  return formatReport([
+    `SEARCH PLAN — ${reportField(name).toUpperCase()} SEARCH`,
     ...legs.map(
       (l, i) =>
-        `L${i + 1}  ${Math.round(l.headingTrue)}° / ${Math.round(l.meters)} m  (cum ${Math.round(l.cumMeters)} m)`,
+        `L${i + 1}  ${rounded(l.headingTrue)}° / ${rounded(l.meters)} m  (cum ${rounded(l.cumMeters)} m)`,
     ),
     "Mark trail tape / cairns at each corner. Yell and listen between legs.",
-  ].join("\n");
+  ]);
 }

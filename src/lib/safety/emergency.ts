@@ -35,10 +35,17 @@ export function emergencyMessage(input: {
     }
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
     lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
-    lines.push(`USNG 8-digit: ${formatUsng(input.lat, input.lng)}`);
-    lines.push(`MGRS 10-digit: ${formatMgrs10(input.lat, input.lng)}`);
-    lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5))}`);
-    lines.push(`UTM: ${formatUtm(input.lat, input.lng)}`);
+    const usng = formatUsng(input.lat, input.lng);
+    const mgrs = formatMgrs10(input.lat, input.lng);
+    const utm = formatUtm(input.lat, input.lng);
+    if (!usng || !mgrs || !utm) {
+      lines.push("UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.");
+    } else {
+      lines.push(`USNG 8-digit: ${usng}`);
+      lines.push(`MGRS 10-digit: ${mgrs}`);
+      lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5)!)}`);
+      lines.push(`UTM: ${utm}`);
+    }
     lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
     if (input.recordedAt) {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);

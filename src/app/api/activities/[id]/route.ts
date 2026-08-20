@@ -1,97 +1,128 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities, activityPoints } from "@/lib/db/schema";
+import { errorResponse } from "@/lib/api/errors";
+import { isoDatetimeSchema, parseJsonBody } from "@/lib/api/validation";
 import { coordsToLineString } from "@/lib/geo";
-import {
-  getActivity,
-  listActivityPoints,
-  updateActivity,
-} from "@/lib/store/local";
+import { requireOwner } from "@/lib/auth/owner";
+import { getActivity, listActivityPoints, updateActivity } from "@/lib/store/local";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+const activityPatchSchema = z.object({
+  endedAt: isoDatetimeSchema.nullable().optional(),
+  stats: z.record(z.string(), z.number().finite()).nullable().optional(),
+  notes: z.string().max(20_000).nullable().optional(),
+});
+
+/**
+ * The detail screen draws a single track line, so it does not need every fix
+ * from a multi-day recording — and shipping hundreds of thousands of points to
+ * a phone to render a few hundred pixels of polyline is wasteful and slow.
+ *
+ * Keep the endpoints and take an even stride through the middle, then report the
+ * true count and whether the response was reduced. Callers that need full
+ * fidelity page through /api/activities/:id/points.
+ */
+const DISPLAY_POINT_BUDGET = 2000;
+
+function downsampleForDisplay<T>(points: T[]): {
+  points: T[];
+  pointCount: number;
+  downsampled: boolean;
+} {
+  if (points.length <= DISPLAY_POINT_BUDGET) {
+    return { points, pointCount: points.length, downsampled: false };
+  }
+  const stride = Math.ceil(points.length / DISPLAY_POINT_BUDGET);
+  const reduced: T[] = [];
+  for (let index = 0; index < points.length; index += stride) reduced.push(points[index]);
+  const last = points[points.length - 1];
+  if (reduced[reduced.length - 1] !== last) reduced.push(last);
+  return { points: reduced, pointCount: points.length, downsampled: true };
+}
+
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   try {
     if (hasDatabase()) {
       const db = getDb();
       const activity = await db.query.activities.findFirst({
-        where: eq(activities.id, id),
+        where: and(eq(activities.id, id), eq(activities.ownerId, owner.ownerId)),
       });
-      if (!activity) {
-        return NextResponse.json({ error: "Not found" }, { status: 404 });
-      }
+      if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
       const points = await db.query.activityPoints.findMany({
         where: eq(activityPoints.activityId, id),
         orderBy: (p, { asc }) => [asc(p.recordedAt)],
       });
-      return NextResponse.json({ activity, points });
+      return NextResponse.json({ activity, ...downsampleForDisplay(points) });
     }
-
-    const activity = await getActivity(id);
-    if (!activity) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    const points = await listActivityPoints(id);
-    return NextResponse.json({ activity, points });
+    const activity = await getActivity(id, owner.ownerId);
+    if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    return NextResponse.json({
+      activity,
+      ...downsampleForDisplay(await listActivityPoints(id)),
+    });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load activity" },
-      { status: 500 },
-    );
+    return errorResponse(error, "Failed to load activity");
   }
 }
 
-export async function PATCH(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> },
-) {
+export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = await request.json();
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
+  const parsed = await parseJsonBody(request, activityPatchSchema);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.data;
 
   try {
+    // Ownership is checked before the points are read: an outsider must not be able to
+    // learn anything about a track, including how many points it has.
+    const ownsActivity = hasDatabase()
+      ? Boolean(
+          await getDb().query.activities.findFirst({
+            where: and(eq(activities.id, id), eq(activities.ownerId, owner.ownerId)),
+          }),
+        )
+      : Boolean(await getActivity(id, owner.ownerId));
+    if (!ownsActivity) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
     const points = hasDatabase()
       ? await getDb().query.activityPoints.findMany({
           where: eq(activityPoints.activityId, id),
           orderBy: (p, { asc }) => [asc(p.recordedAt)],
         })
       : await listActivityPoints(id);
-
-    const trackGeometry =
-      points.length >= 2
-        ? coordsToLineString(points.map((p) => ({ lat: p.lat, lng: p.lng })))
-        : null;
+    const trackGeometry = points.length >= 2
+      ? coordsToLineString(points.map((p) => ({ lat: p.lat, lng: p.lng })))
+      : null;
 
     if (hasDatabase()) {
+      const values: Partial<typeof activities.$inferInsert> = { trackGeometry };
+      if ("endedAt" in body) values.endedAt = body.endedAt ? new Date(body.endedAt) : null;
+      if ("stats" in body) values.stats = body.stats;
+      if ("notes" in body) values.notes = body.notes;
       const db = getDb();
       const [updated] = await db
         .update(activities)
-        .set({
-          endedAt: body.endedAt ? new Date(body.endedAt) : undefined,
-          stats: body.stats,
-          notes: body.notes,
-          trackGeometry,
-        })
-        .where(eq(activities.id, id))
+        .set(values)
+        .where(and(eq(activities.id, id), eq(activities.ownerId, owner.ownerId)))
         .returning();
+      if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json(updated);
     }
 
-    const updated = await updateActivity(id, {
-      endedAt: body.endedAt ?? null,
-      stats: body.stats ?? null,
-      notes: body.notes ?? null,
-      trackGeometry,
-    });
+    const updates: Parameters<typeof updateActivity>[2] = { trackGeometry };
+    if ("endedAt" in body) updates.endedAt = body.endedAt;
+    if ("stats" in body) updates.stats = body.stats;
+    if ("notes" in body) updates.notes = body.notes;
+    const updated = await updateActivity(id, owner.ownerId, updates);
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(updated);
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to update activity" },
-      { status: 500 },
-    );
+    return errorResponse(error, "Failed to update activity");
   }
 }
