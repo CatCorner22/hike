@@ -6,6 +6,7 @@ import {
   progressAlongTrail,
   trailLengthMeters,
   travelDirectionAlong,
+  type TravelDirection,
   remainingElevationGain,
 } from "./navigation";
 import { offTrailLevel, shouldRepeatAlert } from "@/lib/safety/alerts";
@@ -256,6 +257,45 @@ describe("direction of travel along the route", () => {
   it("infers direction from the breadcrumb track", () => {
     expect(travelDirectionAlong(line, [at(-119.56), at(-119.53)])).toBe("forward");
     expect(travelDirectionAlong(line, [at(-119.5), at(-119.53)])).toBe("backward");
+  });
+
+  /**
+   * Regression (Codex review of 6cf303f, P1): direction was taken from the session's
+   * FIRST breadcrumb, so on an out-and-back — the most common hike shape — it kept
+   * answering "forward" for the whole return leg. Remaining then counted to the far end
+   * the hiker had just left and INCREASED as they walked home, and turnaroundWarning
+   * judged the wrong distance against the remaining daylight.
+   */
+  it("flips direction after a turnaround on an out-and-back", () => {
+    // Walk west->east to the far end, turn around, walk back.
+    const out = [-119.56, -119.55, -119.54, -119.53, -119.52, -119.51, -119.5].map(at);
+    expect(travelDirectionAlong(line, out)).toBe("forward");
+
+    // Now returning: append the inbound leg one fix at a time.
+    const back = [-119.51, -119.52, -119.53, -119.54, -119.55].map(at);
+    const returning = [...out];
+    const seen: TravelDirection[] = [];
+    for (const step of back) {
+      returning.push(step);
+      seen.push(travelDirectionAlong(line, returning));
+    }
+    // It must not still be claiming "forward" once well into the return leg.
+    expect(seen[seen.length - 1]).toBe("backward");
+    expect(seen).not.toContain("forward");
+  });
+
+  it("keeps Remaining decreasing across a turnaround", () => {
+    const out = [-119.56, -119.55, -119.54, -119.53, -119.52, -119.51, -119.5].map(at);
+    const back = [-119.51, -119.52, -119.53, -119.54, -119.55].map(at);
+    const track = [...out];
+    let previous = Infinity;
+    for (const step of back) {
+      track.push(step);
+      const direction = travelDirectionAlong(line, track);
+      const progress = progressAlongTrail(step, line, [], direction);
+      expect(progress.remainingMeters, `returning at ${step.lng}`).toBeLessThan(previous);
+      previous = progress.remainingMeters;
+    }
   });
 
   it("says unknown rather than guessing from GPS jitter or a standstill", () => {
