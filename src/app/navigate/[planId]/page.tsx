@@ -32,10 +32,16 @@ import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
   backtrackProgress,
+  gainLastHourM,
   rapidAscentWarning,
   reverseTrackLine,
   stationaryMinutes,
 } from "@/lib/safety/backtrack";
+import {
+  checkinStatus,
+  getCheckinSettings,
+  lastCheckin,
+} from "@/lib/safety/checkin";
 import { moonPhase } from "@/lib/safety/astro";
 import { formatWalkBearing, gmAngleCard, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
 import { daylightStatus } from "@/lib/safety/daylight";
@@ -50,6 +56,7 @@ import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safe
 import { formatNaismith, gpsAnomalyWarning, naismithMinutes, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
 import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-advanced";
 import { sereAssessment } from "@/lib/safety/sere";
+import { amsAssessment, avalancheTerrainWarning } from "@/lib/safety/wilderness";
 import { deadReckon, distanceFromPaces, formatZulu } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
@@ -89,6 +96,8 @@ export default function NavigatePage() {
   const [zulu, setZulu] = useState(formatZulu());
   const [lastDrinkAt, setLastDrinkAt] = useState<number | null>(null);
   const [lastCommsAt, setLastCommsAt] = useState<number | null>(null);
+  const [checkinSettings, setCheckinSettings] = useState({ enabled: false, intervalMin: 60 });
+  const [lastCheckinAt, setLastCheckinAt] = useState<string | null>(null);
   const [gpsDenied, setGpsDenied] = useState(false);
   const [deniedAnchor, setDeniedAnchor] = useState<{
     lat: number;
@@ -116,6 +125,22 @@ export default function NavigatePage() {
     const id = window.setInterval(() => setZulu(formatZulu()), 15000);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshCheckin() {
+      const [settings, last] = await Promise.all([getCheckinSettings(), lastCheckin(navId)]);
+      if (cancelled) return;
+      setCheckinSettings(settings);
+      setLastCheckinAt(last?.recordedAt ?? null);
+    }
+    void refreshCheckin();
+    const id = window.setInterval(() => void refreshCheckin(), 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [navId]);
 
   useEffect(() => {
     try {
@@ -374,13 +399,28 @@ export default function NavigatePage() {
       ? slopeFromProfile(loadState.pack.elevationProfile, progress.traveledMeters)
       : null;
   const slopeWarn = slopePct != null ? slopeWarning(slopePct) : null;
+  const checkinOverdue =
+    checkinStatus(lastCheckinAt, checkinSettings)?.overdue === true
+      ? checkinStatus(lastCheckinAt, checkinSettings)?.label
+      : null;
+  const gainHr = gpsTrusted ? gainLastHourM(trackPoints) : 0;
+  const amsWarn = amsAssessment({
+    altitudeM: gps.fix?.altitude,
+    gainLastHourM: gainHr,
+    symptoms: [],
+  }).warning;
+  const avyWarn =
+    slopePct != null ? avalancheTerrainWarning({ slopePct }) : null;
 
   const skyWarning =
     deniedWarning ??
+    checkinOverdue ??
     gpsSpoof ??
     fallWarning ??
     exposureWarning ??
     sereWarning ??
+    amsWarn ??
+    avyWarn ??
     buddyWarn ??
     slopeWarn ??
     commsWarn ??
@@ -618,6 +658,9 @@ export default function NavigatePage() {
                   } catch {
                     /* private mode */
                   }
+                }}
+                onCheckinLogged={() => {
+                  void lastCheckin(navId).then((e) => setLastCheckinAt(e?.recordedAt ?? null));
                 }}
               />
               <div className="max-w-[55%] text-right">

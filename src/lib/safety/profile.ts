@@ -25,27 +25,54 @@ export interface OverdueAlarm {
   returnAt: string;
 }
 
+export interface CheckinEntry {
+  id: string;
+  packId: string;
+  recordedAt: string;
+  lat?: number;
+  lng?: number;
+  note?: string;
+}
+
+export interface CheckinSettings {
+  intervalMin: number;
+  enabled: boolean;
+}
+
 interface SafetyDB extends DBSchema {
   profile: { key: string; value: IceProfile & { id: string } };
   waypoints: { key: string; value: SafetyWaypoint; indexes: { "by-pack": string } };
   overdue: { key: string; value: OverdueAlarm & { id: string } };
+  checkins: { key: string; value: CheckinEntry; indexes: { "by-pack": string } };
+  checkinSettings: { key: string; value: CheckinSettings & { id: string } };
 }
 
 let dbPromise: Promise<IDBPDatabase<SafetyDB>> | null = null;
 
-function getDb() {
+export function getSafetyDb() {
   if (typeof window === "undefined") return null;
   if (!dbPromise) {
-    dbPromise = openDB<SafetyDB>("hike-safety", 1, {
-      upgrade(db) {
-        db.createObjectStore("profile", { keyPath: "id" });
-        const waypoints = db.createObjectStore("waypoints", { keyPath: "id" });
-        waypoints.createIndex("by-pack", "packId");
-        db.createObjectStore("overdue", { keyPath: "id" });
+    dbPromise = openDB<SafetyDB>("hike-safety", 2, {
+      upgrade(db, oldVersion) {
+        if (oldVersion < 1) {
+          db.createObjectStore("profile", { keyPath: "id" });
+          const waypoints = db.createObjectStore("waypoints", { keyPath: "id" });
+          waypoints.createIndex("by-pack", "packId");
+          db.createObjectStore("overdue", { keyPath: "id" });
+        }
+        if (oldVersion < 2) {
+          const checkins = db.createObjectStore("checkins", { keyPath: "id" });
+          checkins.createIndex("by-pack", "packId");
+          db.createObjectStore("checkinSettings", { keyPath: "id" });
+        }
       },
     });
   }
   return dbPromise;
+}
+
+function getDb() {
+  return getSafetyDb();
 }
 
 const EMPTY_PROFILE: IceProfile = {

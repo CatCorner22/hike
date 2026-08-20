@@ -139,3 +139,18 @@ export function gpsAnomalyWarning(
   }
   return null;
 }
+
+export function batterySafetyAdvice(level: number, charging: boolean): string | null {
+  if (charging) return null;
+  const pct = Math.round(level * 100);
+  if (pct <= 5) {
+    return `Battery ${pct}% — send location now if overdue. Enable airplane mode except GPS.`;
+  }
+  if (pct <= 10) {
+    return `Battery ${pct}% — dim screen, disable non-essential apps, keep GPS on for SOS.`;
+  }
+  if (pct <= 20) {
+    return `Battery ${pct}% — plan your next comms window before the phone dies.`;
+  }
+  return null;
+}
