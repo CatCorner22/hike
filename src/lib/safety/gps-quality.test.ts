@@ -50,6 +50,7 @@ describe("gps quality", () => {
     expect(isValidLatLng(37, -119)).toBe(true);
     expect(isValidLatLng(Number.NaN, -119)).toBe(false);
     expect(isValidLatLng(91, -119)).toBe(false);
+    expect(isValidLatLng(0, 0)).toBe(false);
   });
 
   // Regression: `stale` was accepted and then ignored — the first line of isTrustedFix

@@ -1,6 +1,7 @@
 import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/safety/usng";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export function formatCoords(lat: number, lng: number, accuracyM?: number): string {
   const latDir = lat >= 0 ? "N" : "S";
@@ -26,53 +27,59 @@ export function emergencyMessage(input: {
 }): string {
   const source: PositionSource =
     input.positionSource ?? (input.stale ? "lastKnown" : "gps");
+  const lat = input.lat;
+  const lng = input.lng;
+  const hasFix =
+    typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng);
   const lines = ["SOS / EMERGENCY LOCATION"];
-  if (input.lat != null && input.lng != null) {
+  if (hasFix) {
     if (source === "deadReckon") {
       lines.push("DEAD RECKON POSITION — GPS denied; pace/heading estimate");
     } else if (source === "lastKnown" || input.stale) {
       lines.push("LAST KNOWN POSITION — GPS not live");
     }
-    lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
-    lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
-    const usng = formatUsng(input.lat, input.lng);
-    const mgrs = formatMgrs10(input.lat, input.lng);
-    const utm = formatUtm(input.lat, input.lng);
+    lines.push(formatCoords(lat, lng, input.accuracyM));
+    lines.push(`DDM: ${formatDdm(lat, lng)}`);
+    const usng = formatUsng(lat, lng);
+    const mgrs = formatMgrs10(lat, lng);
+    const utm = formatUtm(lat, lng);
     if (!usng || !mgrs || !utm) {
       lines.push("UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.");
     } else {
       lines.push(`USNG 8-digit: ${usng}`);
       lines.push(`MGRS 10-digit: ${mgrs}`);
-      lines.push(`PHONETIC: ${phonetic(formatUsng(input.lat, input.lng, 5)!)}`);
+      lines.push(`PHONETIC: ${phonetic(formatUsng(lat, lng, 5)!)}`);
       lines.push(`UTM: ${utm}`);
     }
-    lines.push(`https://maps.google.com/?q=${input.lat},${input.lng}`);
+    lines.push(`https://maps.google.com/?q=${lat},${lng}`);
     if (input.recordedAt) {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);
     }
   } else {
     lines.push("No GPS fix available on this device.");
   }
-  if (input.trailName) lines.push(`Route: ${input.trailName}`);
-  if (input.offTrailM != null && input.offTrailM > 20) {
+  if (input.trailName) lines.push(`Route: ${reportField(input.trailName)}`);
+  if (input.offTrailM != null && Number.isFinite(input.offTrailM) && input.offTrailM > 20) {
     lines.push(
-      input.stale
-        ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
-        : `Approx. ${Math.round(input.offTrailM)} m off marked route`,
+      source === "deadReckon"
+        ? `DEAD RECKON was ~${Math.round(input.offTrailM)} m off marked route`
+        : source === "lastKnown" || input.stale
+          ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
+          : `Approx. ${Math.round(input.offTrailM)} m off marked route`,
     );
   }
   const profile = input.profile;
   if (profile) {
-    if (profile.name) lines.push(`Hiker: ${profile.name}`);
-    if (profile.partySize) lines.push(`Party size: ${profile.partySize}`);
-    if (profile.medical) lines.push(`Medical: ${profile.medical}`);
-    if (profile.bloodType) lines.push(`Blood type: ${profile.bloodType}`);
+    if (profile.name) lines.push(`Hiker: ${reportField(profile.name)}`);
+    if (profile.partySize) lines.push(`Party size: ${reportField(profile.partySize)}`);
+    if (profile.medical) lines.push(`Medical: ${reportField(profile.medical)}`);
+    if (profile.bloodType) lines.push(`Blood type: ${reportField(profile.bloodType)}`);
     if (profile.iceName || profile.icePhone) {
-      lines.push(`ICE: ${profile.iceName} ${profile.icePhone}`.trim());
+      lines.push(`ICE: ${reportField(`${profile.iceName} ${profile.icePhone}`.trim())}`);
     }
   }
-  if (input.partyNote) lines.push(input.partyNote);
-  if (input.lat != null && input.lng != null) {
+  if (input.partyNote) lines.push(reportField(input.partyNote));
+  if (hasFix) {
     if (source === "deadReckon") {
       lines.push("Sent from Hike app — dead-reckon estimate, not a live GPS fix.");
     } else if (source === "lastKnown" || input.stale) {
@@ -83,7 +90,7 @@ export function emergencyMessage(input: {
   } else {
     lines.push("Sent from Hike app — no GPS fix on this device.");
   }
-  return lines.join("\n");
+  return formatReport(lines);
 }
 
 export async function copyEmergencyInfo(text: string): Promise<boolean> {

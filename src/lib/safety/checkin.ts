@@ -17,7 +17,10 @@ export async function getCheckinSettings(): Promise<CheckinSettings> {
 export async function saveCheckinSettings(settings: CheckinSettings) {
   const db = await getSafetyDb();
   if (!db) return;
-  await db.put("checkinSettings", { ...settings, id: "current" });
+  const next: CheckinSettings = settings.enabled
+    ? { ...settings, armedAt: settings.armedAt ?? new Date().toISOString() }
+    : { intervalMin: settings.intervalMin, enabled: false };
+  await db.put("checkinSettings", { ...next, id: "current" });
 }
 
 export async function logCheckin(
@@ -55,14 +58,15 @@ export function checkinStatus(
   now = Date.now(),
 ): { overdue: boolean; label: string; dueInMin: number } | null {
   if (!settings.enabled || settings.intervalMin <= 0) return null;
-  if (!lastAt) {
+  const reference = lastAt ?? settings.armedAt ?? null;
+  if (!reference) {
     return {
       overdue: false,
       label: `Check-in every ${settings.intervalMin} min — tap I'm OK when safe`,
       dueInMin: settings.intervalMin,
     };
   }
-  const lastMs = Date.parse(lastAt);
+  const lastMs = Date.parse(reference);
   if (!Number.isFinite(lastMs)) {
     return {
       overdue: true,

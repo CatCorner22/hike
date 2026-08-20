@@ -79,7 +79,7 @@ import {
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { buildPaperBackup } from "@/lib/safety/paper-backup";
-import type { PackWeather } from "@/lib/offline/pack-weather";
+import { isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -374,7 +374,7 @@ export function SafetyPanel({
   }, [packId]);
 
   useEffect(() => {
-    if (!packWeather) return;
+    if (!packWeather || !isPackWeatherFresh(packWeather)) return;
     queueMicrotask(() => {
       if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
       if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
@@ -898,7 +898,12 @@ export function SafetyPanel({
                   trailName,
                   geometry,
                   profile,
-                  returnAt: returnLocal ? new Date(returnLocal).toISOString() : null,
+                  returnAt: (() => {
+                    if (returnResolution?.instant) return returnResolution.instant.toISOString();
+                    if (!returnLocal) return null;
+                    const parsed = Date.parse(returnLocal);
+                    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+                  })(),
                   checkins,
                   packAge: packWeather?.cachedAt,
                 });
@@ -1481,8 +1486,9 @@ export function SafetyPanel({
             </Button>
             {packWeather && (
               <p className="text-xs text-muted-foreground col-span-full">
-                Using pack-time snapshot ({packWeather.source}
-                {packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.
+                {isPackWeatherFresh(packWeather)
+                  ? `Using pack-time snapshot (${packWeather.source}${packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.`
+                  : "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions."}
               </p>
             )}
             <div className="grid grid-cols-3 gap-2">
@@ -1676,6 +1682,8 @@ export function SafetyPanel({
                     lng,
                     trailName,
                     profile,
+                    positionSource,
+                    stale,
                     // Casualty counts from the CASEVAC inputs above, not the party size.
                     litter: canWalk ? 0 : Math.max(1, Number(injured) || 1),
                     ambulatory: canWalk ? Math.max(1, Number(injured) || 1) : 0,

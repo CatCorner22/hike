@@ -11,14 +11,11 @@ let lastTimestampDiagnostic: "future-clamped" | "invalid-replaced" | null = null
 export function getFixTimestampDiagnostic() { return lastTimestampDiagnostic; }
 
 export function isValidLatLng(lat: number, lng: number): boolean {
-  return (
-    Number.isFinite(lat) &&
-    Number.isFinite(lng) &&
-    lat >= -90 &&
-    lat <= 90 &&
-    lng >= -180 &&
-    lng <= 180
-  );
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return false;
+  // Exact (0, 0) is the classic GPS failure / "null island" glitch, not a trailhead.
+  if (lat === 0 && lng === 0) return false;
+  return true;
 }
 
 function normaliseEpoch(timestamp: number | undefined | null): number | null {
@@ -64,11 +61,16 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
   return Math.max(0, now - recordedAt);
 }
 
-/** Stale / last-known / storage-hydrated fixes are display-only — never trusted. */
+/** Stale / last-known / storage-hydrated / clock-corrupt fixes are display-only. */
 export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
   if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now) return false;
   if (stale) return false;
   return fixAgeMs(recordedAt, now) <= TRUSTED_FIX_MS;
+}
+
+/** A live callback whose GPS clock was missing must not become a trusted "now" fix. */
+export function isClockSuspectFix(): boolean {
+  return lastTimestampDiagnostic === "invalid-replaced";
 }
 
 export function isDisplayableFix(recordedAt: number, now = Date.now()): boolean {

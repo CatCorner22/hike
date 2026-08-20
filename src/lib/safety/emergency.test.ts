@@ -57,4 +57,10 @@ describe("emergency helpers", () => {
     expect(msg).toContain("No GPS fix");
     expect(msg).toContain("Half Dome");
   });
+
+  it("does not treat NaN as a live fix", () => {
+    const msg = emergencyMessage({ lat: Number.NaN, lng: Number.NaN });
+    expect(msg).toContain("No GPS fix");
+    expect(msg).not.toContain("NaN");
+  });
 });
