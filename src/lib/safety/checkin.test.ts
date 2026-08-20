@@ -28,6 +28,15 @@ describe("checkinStatus", () => {
   it("is silent when not enabled", () => {
     expect(checkinStatus(null, { enabled: false, intervalMin: 60 }, now)).toBeNull();
   });
+
+  it("overdues from the armed time if I'm OK was never tapped", () => {
+    const status = checkinStatus(null, {
+      enabled: true,
+      intervalMin: 60,
+      armedAt: new Date(now - 75 * 60_000).toISOString(),
+    }, now);
+    expect(status?.overdue).toBe(true);
+  });
 });
 
 describe("formatCheckinLog", () => {

@@ -36,6 +36,7 @@ import type { RoutePack } from "@/lib/offline/route-pack";
 import {
   createRouteProgressCache,
   progressWithRouteCache,
+  routePackFingerprint,
   type RouteProgressCache,
 } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
@@ -73,7 +74,7 @@ import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-ad
 import { sereAssessment } from "@/lib/safety/sere";
 import { amsAssessment, avalancheTerrainWarning } from "@/lib/safety/wilderness";
 import type { PositionSource } from "@/lib/safety/emergency";
-import { deadReckon, deadReckonUncertaintyM, distanceFromPaces, formatZulu } from "@/lib/safety/landnav";
+import { deadReckon, deadReckonUncertaintyM, distanceFromPaces, formatZulu, parseTypedHeading } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
 
@@ -236,9 +237,7 @@ export default function NavigatePage() {
   function resolveDeniedHeading(): number | null {
     const live = gps.fix?.heading;
     if (live != null && Number.isFinite(live)) return live;
-    const typed = Number(deniedHeadingText);
-    if (Number.isFinite(typed)) return ((typed % 360) + 360) % 360;
-    return null;
+    return parseTypedHeading(deniedHeadingText);
   }
 
   function enterGpsDenied() {
@@ -395,7 +394,10 @@ export default function NavigatePage() {
     }
     // Cached incremental search: a full scan costs ~494 ms per fix on a 100k
     // point route, and this runs on every GPS update.
-    if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
+    if (
+      !progressCacheRef.current ||
+      progressCacheRef.current.fingerprint !== routePackFingerprint(loadState.pack)
+    ) {
       progressCacheRef.current = createRouteProgressCache(loadState.pack);
     }
     // travelDirection MUST be passed. Omitting it counts Remaining toward the
@@ -452,11 +454,11 @@ export default function NavigatePage() {
   // something to draw". Alerting off a dead-reckoned position raises warnings against a
   // track the hiker never walked.
   const severity = useMemo(() => {
-    if (!progress) return "unknown" as const;
+    if (!progress || gpsDenied) return "unknown" as const;
     return offTrailLevel(progress.offsetMeters, gps.fix?.accuracy, {
       trustedFix: gpsTrusted,
     });
-  }, [progress, gps.fix?.accuracy, gpsTrusted]);
+  }, [progress, gps.fix?.accuracy, gpsTrusted, gpsDenied]);
 
   // `severity` is a string, so an effect keyed only on it runs once and never again
   // while you stay off-trail. shouldRepeatAlert enforces the 12 s / 30 s cadence, so

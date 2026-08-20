@@ -7,6 +7,16 @@ export interface PackWeather {
   note?: string;
 }
 
+/** Heat/cold advice from a pack older than this is worse than no number. */
+export const PACK_WEATHER_FRESH_MS = 18 * 60 * 60 * 1000;
+
+export function isPackWeatherFresh(weather: PackWeather | null | undefined, now = Date.now()): boolean {
+  if (!weather) return false;
+  const cachedAt = Date.parse(weather.cachedAt);
+  if (!Number.isFinite(cachedAt) || cachedAt > now) return false;
+  return now - cachedAt <= PACK_WEATHER_FRESH_MS;
+}
+
 export async function fetchPackWeather(
   lat: number,
   lng: number,

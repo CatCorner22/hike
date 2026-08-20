@@ -147,9 +147,7 @@ const serwist = new Serwist({
       }),
     },
     {
-      matcher: ({ url }) =>
-        url.pathname.startsWith("/api/trails/") ||
-        url.pathname.startsWith("/api/plans/"),
+      matcher: ({ url }) => url.pathname.startsWith("/api/"),
       handler: new NetworkOnly(),
     },
     ...defaultCache,

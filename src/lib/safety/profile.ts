@@ -40,6 +40,8 @@ export interface CheckinEntry {
 export interface CheckinSettings {
   intervalMin: number;
   enabled: boolean;
+  /** When the interval was armed. First due is this + interval if no I'm OK yet. */
+  armedAt?: string;
 }
 
 interface SafetyDB extends DBSchema {

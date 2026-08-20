@@ -48,6 +48,15 @@ export function rangeAzimuth(
   };
 }
 
+/** Empty string must not become 0° north — Number("") is 0. */
+export function parseTypedHeading(text: string): number | null {
+  const typed = text.trim();
+  if (!typed) return null;
+  const n = Number(typed);
+  if (!Number.isFinite(n)) return null;
+  return ((n % 360) + 360) % 360;
+}
+
 export function deadReckon(
   start: { lat: number; lng: number },
   headingTrue: number,
