@@ -259,6 +259,61 @@ nothing to remove them; guarded.
 
 ---
 
+## Sixth pass — land-nav fallbacks and fabricated inputs
+
+### L1. The watch sun-compass pointed 180° wrong for half of every day
+
+`watchMethodHeading` is the no-compass fallback: aim a hand at the sun, and the bisector
+between the hour hand and the 12 mark gives you a pole. The bisector has to cross the
+**smaller** arc between them. Before noon the hour hand sits more than 180° clockwise of
+12, so the smaller arc is on the other side and the bisector is 180° away from
+`hourOn12 / 2`.
+
+The code used `hourOn12 / 2` unconditionally in the northern hemisphere and its reflex in
+the southern. Checked against where the bisector actually points in true degrees, given
+the sun's true azimuth at that solar hour:
+
+```
+cases: 18  |  old formula wrong in: 9  |  new formula wrong in: 0
+```
+
+Northern **mornings** and southern **afternoons** were exactly backwards — on the method
+you reach for precisely when you have no compass. One shared bisector is correct for both
+hemispheres; only which hand you aim at the sun, and whether the result reads south or
+north, differ.
+
+### L2. The watch method was fed the device clock instead of solar time
+
+The method assumes the watch reads *solar* time. The panel passed
+`new Date().getHours()` — zone time including daylight saving. One hour of error is 30° on
+the dial, halved into **15° of heading error**, through the season when most people are
+out. `solarHour(date, lng)` now derives it from longitude, which removes the DST and
+zone-offset error together.
+
+### L3. Travel heading was fabricated as slope aspect
+
+The panel called `avalancheTerrainWarning({ slopePct, aspectDeg: heading })`. Aspect is
+the direction a slope *faces* — its downhill direction. `heading` is where the hiker is
+pointed. Traverse a slope and your heading is roughly perpendicular to its aspect; climb
+it and your heading is its opposite.
+
+That fed the "classic avalanche start zone" branch, so identical terrain warned or stayed
+silent depending only on which way the hiker happened to be walking.
+
+The app cannot derive aspect: the elevation profile is along-track only, which gives
+gradient but not cross-slope orientation. So the parameter is gone rather than guessed —
+the slope-angle warnings remain and now say to check the forecast for aspect and wind
+loading, which is what `avalanche.ts` collects deliberately from a person.
+
+### L4. Two disagreeing `gridConvergence` implementations
+
+`tactics.ts` and `declination.ts` both exported a `gridConvergence`. `tactics.ts` derived
+the UTM zone with a bare `Math.floor((lng + 180) / 6) + 1`, missing the Norway and
+Svalbard exceptions that `utmZone()` handles, so the two picked different central
+meridians there. Consolidated onto the tested one.
+
+---
+
 ## Second pass — the safety decision aids
 
 The first pass covered navigation, time, GPS and the API. A second pass over the ~2,000

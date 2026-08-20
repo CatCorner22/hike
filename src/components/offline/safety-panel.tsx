@@ -464,7 +464,7 @@ export function SafetyPanel({
       : null;
   const watchHint =
     lat != null && lng != null
-      ? sunVsWatchCheck(new Date(), lat, lng, new Date().getHours())
+      ? sunVsWatchCheck(new Date(), lat, lng)
       : null;
   const evac = casevacDecision({
     injured: (Number(injured) || 0) > 0,
@@ -479,8 +479,8 @@ export function SafetyPanel({
     gainLastHourM: gainLastHourM(trackPoints),
     symptoms: amsSymptoms,
   });
-  const avyNote =
-    slopePct != null ? avalancheTerrainWarning({ slopePct, aspectDeg: heading }) : null;
+  // No aspect: heading is the direction of travel, not the direction the slope faces.
+  const avyNote = slopePct != null ? avalancheTerrainWarning({ slopePct }) : null;
 
   async function persistCheckinSettings(next: CheckinSettings) {
     setCheckinSettings(next);
