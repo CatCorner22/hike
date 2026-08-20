@@ -121,7 +121,9 @@ export function gpsAnomalyWarning(
   for (let i = 1; i < recent.length; i++) {
     const dt = times[i] - times[i - 1];
     if (dt <= 0 || dt > 20_000) continue;
-    const meters = rangeAzimuth(recent[i - 1], recent[i]).meters;
+    const range = rangeAzimuth(recent[i - 1], recent[i]);
+    if (!range) continue;
+    const meters = range.meters;
     const speed = meters / (dt / 1000);
     if (meters > 250 && speed > 25) {
       return "GPS jumped hundreds of metres in seconds — treat this fix as untrusted. Use the trail line and last known grid.";
@@ -139,7 +141,7 @@ export function gpsAnomalyWarning(
 }
 
 export function batterySafetyAdvice(level: number, charging: boolean): string | null {
-  if (charging) return null;
+  if (charging || !Number.isFinite(level) || level < 0 || level > 1) return null;
   const pct = Math.round(level * 100);
   if (pct <= 5) {
     return `Battery ${pct}% — send location now if overdue. Enable airplane mode except GPS.`;

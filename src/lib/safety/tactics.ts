@@ -219,18 +219,14 @@ const WATCH_DIAL_MAX_ERROR_DEG = 15;
  * So lead with the shadow line, which is exact and needs no dial, and measure the dial
  * against it — the sun's true azimuth is right here, so the error is known, not guessed.
  */
-export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?: number): string | null {
+export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   // Too near overhead for either the shadow or the dial to mean anything.
   if (sun.elevation > SHADOW_MAX_ELEVATION_DEG) return overheadSunNote(sun.elevation);
   const hemi = lat >= 0 ? "north" : "south";
-  // Solar time, not the device clock: see `solarHour`. An explicit hour is accepted
-  // for field checks; the dial angle is still not the same quantity as sun azimuth.
-  const hour =
-    localHour != null && Number.isFinite(localHour)
-      ? (((localHour % 24) + 24) % 24 + date.getMinutes() / 60 + date.getSeconds() / 3600) % 24
-      : solarHour(date, lng);
+  // Solar time, not the device clock: see `solarHour`.
+  const hour = solarHour(date, lng);
   const watch = watchMethodHeading(hour, hemi);
   if (!watch) return null;
 

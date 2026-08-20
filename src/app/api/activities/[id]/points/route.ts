@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, eq, gt, or } from "drizzle-orm";
+import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import { getDb, hasDatabase } from "@/lib/db";
+import { withActivityMutation } from "@/lib/db/activity-mutation";
 import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, latLngPointSchema, parseJsonBody } from "@/lib/api/validation";
@@ -12,6 +13,7 @@ import { addActivityPoint, getActivity, listActivityPoints } from "@/lib/store/l
 const pointSchema = latLngPointSchema.extend({
   elevation: z.number().finite().nullable().optional(),
   recordedAt: isoDatetimeSchema,
+  clientPointId: z.string().trim().min(1).max(200).optional(),
 });
 const pointRequestSchema = z.union([
   pointSchema,
@@ -33,6 +35,21 @@ async function ownsActivity(id: string, ownerId: string): Promise<boolean> {
   return Boolean(await getActivity(id, ownerId));
 }
 
+function sameFallbackPoint(
+  candidate: {
+    lat: number;
+    lng: number;
+    recordedAt: Date | string;
+    clientPointId?: string | null;
+  },
+  point: z.infer<typeof pointSchema>,
+): boolean {
+  if (point.clientPointId && candidate.clientPointId === point.clientPointId) return true;
+  return candidate.lat === point.lat
+    && candidate.lng === point.lng
+    && new Date(candidate.recordedAt).getTime() === new Date(point.recordedAt).getTime();
+}
+
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const owner = await requireOwner(request);
@@ -43,40 +60,156 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const points = "points" in body ? body.points : [body];
 
   try {
-    if (!(await ownsActivity(id, owner.ownerId))) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    if (hasDatabase()) {
-      const db = getDb();
-      const existing = await db.query.activityPoints.findMany({
-        where: eq(activityPoints.activityId, id),
-        columns: { id: true },
-      });
-      if (existing.length + points.length > MAX_ACTIVITY_POINTS) {
-        return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+    return await withActivityMutation(id, async () => {
+      if (!(await ownsActivity(id, owner.ownerId))) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
-      const saved = await db.insert(activityPoints).values(points.map((point) => ({
-        activityId: id,
-        lat: point.lat,
-        lng: point.lng,
-        elevation: point.elevation ?? null,
-        recordedAt: new Date(point.recordedAt),
-      }))).returning();
-      return NextResponse.json("points" in body ? { points: saved } : saved[0]);
-    }
 
-    const existing = await listActivityPoints(id);
-    if (existing.length + points.length > MAX_ACTIVITY_POINTS) {
-      return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
-    }
-    const saved = await Promise.all(points.map((point) => addActivityPoint({
-      activityId: id,
-      lat: point.lat,
-      lng: point.lng,
-      elevation: point.elevation ?? null,
-      recordedAt: point.recordedAt,
-    })));
-    return NextResponse.json("points" in body ? { points: saved } : saved[0]);
+      if (hasDatabase()) {
+        const db = getDb();
+        const activity = await db.query.activities.findFirst({
+          where: and(eq(activities.id, id), eq(activities.ownerId, owner.ownerId)),
+          columns: { endedAt: true },
+        });
+        if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+        const saved = [];
+        for (const point of points) {
+          const existing = await db.query.activityPoints.findFirst({
+            where: point.clientPointId
+              ? and(
+                  eq(activityPoints.activityId, id),
+                  or(
+                    eq(activityPoints.clientPointId, point.clientPointId),
+                    and(
+                      eq(activityPoints.recordedAt, new Date(point.recordedAt)),
+                      eq(activityPoints.lat, point.lat),
+                      eq(activityPoints.lng, point.lng),
+                    ),
+                  ),
+                )
+              : and(
+                  eq(activityPoints.activityId, id),
+                  eq(activityPoints.recordedAt, new Date(point.recordedAt)),
+                  eq(activityPoints.lat, point.lat),
+                  eq(activityPoints.lng, point.lng),
+                ),
+          });
+          if (existing) {
+            saved.push(existing);
+            continue;
+          }
+          if (activity.endedAt) {
+            return NextResponse.json(
+              { error: "Activity is finalized; no further GPS points can be added" },
+              { status: 409 },
+            );
+          }
+
+          const count = await db.query.activityPoints.findMany({
+            where: eq(activityPoints.activityId, id),
+            columns: { id: true },
+          });
+          if (count.length >= MAX_ACTIVITY_POINTS) {
+            return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+          }
+
+          // The activity's open state is part of the INSERT predicate. A separate
+          // read followed by INSERT would let another server finalize between them and
+          // still return 200 for a fix that belongs to no completed track.
+          const insertFromOpenActivity = db
+            .select({
+              activityId: activities.id,
+              clientPointId: sql<string | null>`${point.clientPointId ?? null}`.as("client_point_id"),
+              lat: sql<number>`${point.lat}`.as("lat"),
+              lng: sql<number>`${point.lng}`.as("lng"),
+              elevation: sql<number | null>`${point.elevation ?? null}`.as("elevation"),
+              recordedAt: sql<Date>`${new Date(point.recordedAt)}`.as("recorded_at"),
+            })
+            .from(activities)
+            .where(and(
+              eq(activities.id, id),
+              eq(activities.ownerId, owner.ownerId),
+              isNull(activities.endedAt),
+            ));
+          const inserted = await db.insert(activityPoints)
+            .select(insertFromOpenActivity)
+            .onConflictDoNothing()
+            .returning();
+          if (inserted[0]) {
+            saved.push(inserted[0]);
+            continue;
+          }
+
+          // The unique indexes arbitrate retries across server instances. Re-read the
+          // winner rather than turning a harmless replay into an error.
+          const winner = await db.query.activityPoints.findFirst({
+            where: point.clientPointId
+              ? and(
+                  eq(activityPoints.activityId, id),
+                  or(
+                    eq(activityPoints.clientPointId, point.clientPointId),
+                    and(
+                      eq(activityPoints.recordedAt, new Date(point.recordedAt)),
+                      eq(activityPoints.lat, point.lat),
+                      eq(activityPoints.lng, point.lng),
+                    ),
+                  ),
+                )
+              : and(
+                  eq(activityPoints.activityId, id),
+                  eq(activityPoints.recordedAt, new Date(point.recordedAt)),
+                  eq(activityPoints.lat, point.lat),
+                  eq(activityPoints.lng, point.lng),
+                ),
+          });
+          if (winner) {
+            saved.push(winner);
+            continue;
+          }
+          return NextResponse.json(
+            { error: "Activity is finalized; no further GPS points can be added" },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json("points" in body ? { points: saved } : saved[0]);
+      }
+
+      const activity = await getActivity(id, owner.ownerId);
+      if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
+      const saved = [];
+      for (const point of points) {
+        const existing = await listActivityPoints(id);
+        const duplicate = existing.find((candidate) =>
+          sameFallbackPoint(candidate as typeof candidate & { clientPointId?: string }, point),
+        );
+        if (duplicate) {
+          saved.push(duplicate);
+          continue;
+        }
+        if (activity.endedAt) {
+          return NextResponse.json(
+            { error: "Activity is finalized; no further GPS points can be added" },
+            { status: 409 },
+          );
+        }
+        if (existing.length >= MAX_ACTIVITY_POINTS) {
+          return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+        }
+        // local.ts preserves unknown JSON fields, allowing the fallback file to retain
+        // the same durable client key as Postgres without a second competing store.
+        const pointForFallbackStore = {
+          activityId: id,
+          clientPointId: point.clientPointId,
+          lat: point.lat,
+          lng: point.lng,
+          elevation: point.elevation ?? null,
+          recordedAt: point.recordedAt,
+        };
+        saved.push(await addActivityPoint(pointForFallbackStore));
+      }
+      return NextResponse.json("points" in body ? { points: saved } : saved[0]);
+    });
   } catch (error) {
     return errorResponse(error, "Failed to save point");
   }

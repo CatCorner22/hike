@@ -48,6 +48,77 @@ interface LocalStore {
 const EMPTY: LocalStore = { plans: [], activities: [], points: [] };
 let mutationQueue: Promise<void> = Promise.resolve();
 
+/** A parseable but unrecognised file must be preserved for recovery, not reset. */
+export class LocalStoreCorruptionError extends Error {
+  constructor(message = "Local store format is unrecognized. Saved data was not changed.") {
+    super(message);
+    this.name = "LocalStoreCorruptionError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return typeof value === "string" || value === null;
+}
+
+function isStoredPlan(value: unknown): value is StoredPlan {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    isNullableString(value.ownerId) &&
+    typeof value.name === "string" &&
+    isNullableString(value.trailId) &&
+    isNullableString(value.plannedDate) &&
+    isNullableString(value.notes) &&
+    Array.isArray(value.campgroundIds) &&
+    value.campgroundIds.every((id) => typeof id === "string") &&
+    isNullableString(value.createdAt) &&
+    isNullableString(value.updatedAt);
+}
+
+function isStoredActivity(value: unknown): value is StoredActivity {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    isNullableString(value.ownerId) &&
+    isNullableString(value.planId) &&
+    isNullableString(value.trailId) &&
+    isNullableString(value.name) &&
+    typeof value.startedAt === "string" &&
+    isNullableString(value.endedAt) &&
+    isNullableString(value.notes) &&
+    typeof value.createdAt === "string";
+}
+
+function isStoredPoint(value: unknown): value is StoredPoint {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string" &&
+    typeof value.activityId === "string" &&
+    Number.isFinite(value.lat) &&
+    Number.isFinite(value.lng) &&
+    (typeof value.elevation === "number" || value.elevation === null) &&
+    typeof value.recordedAt === "string";
+}
+
+function parseStore(raw: string): LocalStore {
+  const parsed: unknown = JSON.parse(raw);
+  if (!isRecord(parsed) ||
+    !Array.isArray(parsed.plans) ||
+    !Array.isArray(parsed.activities) ||
+    !Array.isArray(parsed.points) ||
+    !parsed.plans.every(isStoredPlan) ||
+    !parsed.activities.every(isStoredActivity) ||
+    !parsed.points.every(isStoredPoint)) {
+    throw new LocalStoreCorruptionError();
+  }
+  return {
+    plans: parsed.plans,
+    activities: parsed.activities,
+    points: parsed.points,
+  };
+}
+
 /**
  * In-memory copy of the store, keyed by the file identity it was loaded from.
  *
@@ -83,12 +154,7 @@ async function readStore(): Promise<LocalStore> {
   }
   try {
     const raw = await readFile(file, "utf8");
-    const parsed = JSON.parse(raw) as LocalStore;
-    const store: LocalStore = {
-      plans: parsed.plans ?? [],
-      activities: parsed.activities ?? [],
-      points: parsed.points ?? [],
-    };
+    const store = parseStore(raw);
     try {
       const info = await stat(file);
       cache = { path: file, mtimeMs: info.mtimeMs, size: info.size, store };

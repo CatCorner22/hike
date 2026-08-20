@@ -131,7 +131,53 @@ async function completeReadinessIfShown(page) {
 }
 
 /** Does the navigate screen actually show navigation UI (not an error state)? */
+/**
+ * Clear the pre-hike checklist if it is showing.
+ *
+ * A readiness gate now stands in front of the navigate screen. It is a real
+ * screen a hiker sees, so the harness goes through it rather than around it:
+ * fill the ICE card and return time and start navigation. Falls back to the
+ * explicit skip action, which exists because withholding an already-downloaded
+ * map from someone who is already out cannot make them safer.
+ */
+async function clearReadinessGate(page) {
+  // Wait for either the checklist or the map, so this cannot race the render.
+  await Promise.race([
+    page.getByText(/Pre-hike checklist/i).first().waitFor({ state: "visible", timeout: 12_000 }),
+    page.locator("canvas").first().waitFor({ state: "visible", timeout: 12_000 }),
+  ]).catch(() => {});
+  if ((await page.getByText(/Pre-hike checklist/i).count().catch(() => 0)) === 0) return "not-shown";
+  const fill = async (label, value) => {
+    const field = page.getByLabel(label);
+    if ((await field.count().catch(() => 0)) > 0) await field.first().fill(value);
+  };
+  await fill(/^Your name$/i, "E2E Hiker");
+  await fill(/^ICE name$/i, "E2E Contact");
+  await fill(/^ICE phone$/i, "+15555550123");
+  const returnField = page.getByLabel(/Return by/i);
+  if ((await returnField.count().catch(() => 0)) > 0) {
+    const when = new Date(Date.now() + 6 * 3600 * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    await returnField.first().fill(
+      `${when.getFullYear()}-${pad(when.getMonth() + 1)}-${pad(when.getDate())}T${pad(when.getHours())}:${pad(when.getMinutes())}`,
+    );
+  }
+  await page.getByRole("button", { name: /Start navigation/i }).click().catch(() => {});
+  await page.waitForTimeout(900);
+  if ((await page.getByText(/Pre-hike checklist/i).count().catch(() => 0)) > 0) {
+    // Offline, persistence may refuse; the skip path must still work.
+    await page
+      .getByRole("button", { name: /Skip for now and show the map/i })
+      .click()
+      .catch(() => {});
+    await page.waitForTimeout(900);
+    return "skipped";
+  }
+  return "completed";
+}
+
 async function assessNavigateScreen(page) {
+  await clearReadinessGate(page);
   const body = (await page.locator("body").innerText().catch(() => "")) || "";
   // Chrome's network error page, not our UI.
   const isBrowserErrorPage =

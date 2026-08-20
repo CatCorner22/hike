@@ -4,7 +4,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { POST as createPlan } from "./plans/route";
 import { PATCH as updatePlan } from "./plans/[id]/route";
-import { POST as createActivity } from "./activities/route";
+import { GET as listActivitiesRoute, POST as createActivity } from "./activities/route";
 import { PATCH as updateActivity } from "./activities/[id]/route";
 import { GET as listPoints } from "./activities/[id]/points/route";
 import { GET as searchTrails } from "./trails/search/route";
@@ -68,7 +68,7 @@ describe("API input boundaries", () => {
         JSON.stringify({ name: "Original", notes: "Keep me" }),
       ),
     );
-    const created = (await createdResponse.json()) as { id: string };
+    const created = (await createdResponse.json()) as { id: string; updatedAt: string };
 
     const invalid = await updatePlan(
       jsonRequest(
@@ -84,7 +84,7 @@ describe("API input boundaries", () => {
       jsonRequest(
         `http://localhost/api/plans/${created.id}`,
         "PATCH",
-        JSON.stringify({ name: "Updated" }),
+        JSON.stringify({ name: "Updated", updatedAt: created.updatedAt }),
       ),
       { params: Promise.resolve({ id: created.id }) },
     );
@@ -221,5 +221,153 @@ describe("owner scoping", () => {
       params: Promise.resolve({ id }),
     });
     expect(response.status).toBe(404);
+  });
+});
+
+describe("activity integrity races", () => {
+  async function createOwnedActivity() {
+    const response = await createActivity(jsonRequest("http://localhost/api/activities", "POST", "{}"));
+    expect(response.status).toBe(200);
+    return (await response.json()) as { id: string };
+  }
+
+  it("returns the first point for concurrent tuple retries and client-key retries", async () => {
+    const activity = await createOwnedActivity();
+    const params = { params: Promise.resolve({ id: activity.id }) };
+    const tuplePayload = JSON.stringify({
+      lat: 37.775,
+      lng: -119.538,
+      elevation: 1234,
+      recordedAt: "2026-08-20T18:01:01.000Z",
+    });
+    const [first, retry] = await Promise.all([
+      addPoints(jsonRequest(`http://localhost/api/activities/${activity.id}/points`, "POST", tuplePayload), params),
+      addPoints(jsonRequest(`http://localhost/api/activities/${activity.id}/points`, "POST", tuplePayload), params),
+    ]);
+    expect([first.status, retry.status]).toEqual([200, 200]);
+    expect((await first.json()).id).toBe((await retry.json()).id);
+
+    const keyedFirst = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({
+          clientPointId: "durable-device-fix-1",
+          lat: 37.7751,
+          lng: -119.5379,
+          recordedAt: "2026-08-20T18:01:02.000Z",
+        }),
+      ),
+      params,
+    );
+    const keyedRetry = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({
+          clientPointId: "durable-device-fix-1",
+          lat: 37.7752,
+          lng: -119.5378,
+          recordedAt: "2026-08-20T18:01:03.000Z",
+        }),
+      ),
+      params,
+    );
+    expect((await keyedRetry.json()).id).toBe((await keyedFirst.json()).id);
+
+    const listed = (await listPoints(
+      getRequest(`http://localhost/api/activities/${activity.id}/points?limit=10`),
+      params,
+    ).then((response) => response.json())) as { points: unknown[] };
+    expect(listed.points).toHaveLength(2);
+  });
+
+  it("rejects a point after finalization and returns geometry derived from accepted points", async () => {
+    const activity = await createOwnedActivity();
+    const params = { params: Promise.resolve({ id: activity.id }) };
+    for (const point of [
+      { lat: 37.7749, lng: -119.5383, recordedAt: "2026-08-20T18:02:00.000Z" },
+      { lat: 37.7751, lng: -119.5379, recordedAt: "2026-08-20T18:02:01.000Z" },
+    ]) {
+      expect((await addPoints(
+        jsonRequest(`http://localhost/api/activities/${activity.id}/points`, "POST", JSON.stringify(point)),
+        params,
+      )).status).toBe(200);
+    }
+    expect((await updateActivity(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}`,
+        "PATCH",
+        JSON.stringify({ endedAt: "2026-08-20T18:02:02.000Z" }),
+      ),
+      params,
+    )).status).toBe(200);
+
+    const late = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({ lat: 37.7754, lng: -119.5375, recordedAt: "2026-08-20T18:02:02.000Z" }),
+      ),
+      params,
+    );
+    expect(late.status).toBe(409);
+
+    const detail = await getActivity(getRequest(`http://localhost/api/activities/${activity.id}`), params);
+    const detailBody = (await detail.json()) as {
+      pointCount: number;
+      activity: { trackGeometry: { coordinates: unknown[] } | null };
+    };
+    expect(detailBody.pointCount).toBe(2);
+    expect(detailBody.activity.trackGeometry?.coordinates).toHaveLength(2);
+  });
+
+  it("returns a conflict instead of silently applying a stale full plan snapshot", async () => {
+    const response = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Original", notes: "Original notes" }),
+      ),
+    );
+    const plan = (await response.json()) as { id: string; updatedAt: string };
+    const params = { params: Promise.resolve({ id: plan.id }) };
+    const [first, second] = await Promise.all([
+      updatePlan(
+        jsonRequest(
+          `http://localhost/api/plans/${plan.id}`,
+          "PATCH",
+          JSON.stringify({ name: "Name from tab A", notes: "Original notes", updatedAt: plan.updatedAt }),
+        ),
+        params,
+      ),
+      updatePlan(
+        jsonRequest(
+          `http://localhost/api/plans/${plan.id}`,
+          "PATCH",
+          JSON.stringify({ name: "Original", notes: "Notes from tab B", updatedAt: plan.updatedAt }),
+        ),
+        params,
+      ),
+    ]);
+    expect([first.status, second.status].sort()).toEqual([200, 409]);
+  });
+
+  it("exposes every open activity separately from bounded activity history", async () => {
+    const open = await createOwnedActivity();
+    const closed = await createOwnedActivity();
+    expect((await updateActivity(
+      jsonRequest(
+        `http://localhost/api/activities/${closed.id}`,
+        "PATCH",
+        JSON.stringify({ endedAt: "2026-08-20T19:00:00.000Z" }),
+      ),
+      { params: Promise.resolve({ id: closed.id }) },
+    )).status).toBe(200);
+
+    const response = await listActivitiesRoute(getRequest("http://localhost/api/activities"));
+    const body = (await response.json()) as { openActivities: Array<{ id: string }> };
+    expect(body.openActivities.map((activity) => activity.id)).toContain(open.id);
+    expect(body.openActivities.map((activity) => activity.id)).not.toContain(closed.id);
   });
 });

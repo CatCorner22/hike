@@ -1,4 +1,5 @@
 import * as turf from "@turf/turf";
+import { isValidCoordinate } from "@/lib/geo/coords";
 import { magneticDeclination, toMagneticBearing } from "@/lib/safety/declination";
 
 /** NATO mils: 6400 mils in a circle. */
@@ -30,7 +31,8 @@ export interface RangeAzimuth {
 export function rangeAzimuth(
   from: { lat: number; lng: number },
   to: { lat: number; lng: number },
-): RangeAzimuth {
+): RangeAzimuth | null {
+  if (!isValidCoordinate(from) || !isValidCoordinate(to)) return null;
   const meters = turf.distance(
     turf.point([from.lng, from.lat]),
     turf.point([to.lng, to.lat]),
@@ -62,14 +64,31 @@ export function deadReckon(
   start: { lat: number; lng: number },
   headingTrue: number,
   distanceM: number,
-): { lat: number; lng: number } {
+): { lat: number; lng: number } | null {
+  if (
+    !isValidCoordinate(start) ||
+    !Number.isFinite(headingTrue) ||
+    Math.abs(headingTrue) > 360 ||
+    !Number.isFinite(distanceM) ||
+    distanceM < 0 ||
+    distanceM > 40_075_017
+  ) return null;
   const dest = turf.destination(
     turf.point([start.lng, start.lat]),
     distanceM,
     headingTrue,
     { units: "meters" },
   );
-  return { lat: dest.geometry.coordinates[1], lng: dest.geometry.coordinates[0] };
+  // turf walks straight past +/-180 rather than wrapping, so a leg that crosses the
+  // antimeridian comes back as 180.019 and the on-globe validator threw it away —
+  // dead reckoning returned null for every step across the seam, in the western
+  // Aleutians, Fiji and the Chathams. Normalize the equivalent coordinate first, the
+  // same way utmToLatLng already does for the inverse projection.
+  const point = {
+    lat: dest.geometry.coordinates[1],
+    lng: ((dest.geometry.coordinates[0] + 180) % 360 + 360) % 360 - 180,
+  };
+  return isValidCoordinate(point) ? point : null;
 }
 
 export type PaceTerrain = "flat" | "up" | "down" | "sand" | "snow" | "night" | "brush";
@@ -254,6 +273,11 @@ const CONTAINMENT_95 = 2.45;
  * ~95% of the time even when the party shoots a sloppier 3 deg, and essentially
  * always at 2 deg.
  */
+/** Ground distance, or null where `rangeAzimuth` cannot answer. */
+function rangeMetres(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number | null {
+  return rangeAzimuth(a, b)?.meters ?? null;
+}
+
 export function fixUncertaintyM(
   rangeAM: number,
   rangeBM: number,
@@ -339,11 +363,10 @@ export function resection(
   const { lat, lng } = point;
   const cutDeg = smallestAngle(bearingToA, bearingToB);
   if (cutDeg == null) return null;
-  const uncertaintyM = fixUncertaintyM(
-    rangeAzimuth(point, knownA).meters,
-    rangeAzimuth(point, knownB).meters,
-    cutDeg,
-  );
+  const rangeA = rangeMetres(point, knownA);
+  const rangeB = rangeMetres(point, knownB);
+  const uncertaintyM =
+    rangeA == null || rangeB == null ? null : fixUncertaintyM(rangeA, rangeB, cutDeg);
   const warning =
     cutDeg < 30 || cutDeg > 150
       ? "Poor cut — shoot points 30–150° apart for a stable fix."
@@ -400,7 +423,9 @@ export function resection3(
   const point = { lat, lng };
   let spreadM = 0;
   for (const h of hits) {
-    spreadM = Math.max(spreadM, rangeAzimuth(point, h).meters);
+    const range = rangeAzimuth(point, h);
+    if (!range) return null;
+    spreadM = Math.max(spreadM, range.meters);
   }
 
   // Best-conditioned pair bounds the fix: a third bearing can tighten it, never
@@ -409,11 +434,10 @@ export function resection3(
   for (const [i, j] of pairs) {
     const cut = smallestAngle(obs[i].bearingTo, obs[j].bearingTo);
     if (cut == null) continue;
-    const pairUncertainty = fixUncertaintyM(
-      rangeAzimuth(point, obs[i].known).meters,
-      rangeAzimuth(point, obs[j].known).meters,
-      cut,
-    );
+    const rangeI = rangeMetres(point, obs[i].known);
+    const rangeJ = rangeMetres(point, obs[j].known);
+    if (rangeI == null || rangeJ == null) continue;
+    const pairUncertainty = fixUncertaintyM(rangeI, rangeJ, cut);
     if (pairUncertainty == null) continue;
     uncertaintyM = uncertaintyM == null ? pairUncertainty : Math.min(uncertaintyM, pairUncertainty);
   }
@@ -475,11 +499,10 @@ export function intersection(
   const { lat, lng } = point;
   const cutDeg = smallestAngle(bearingFromA, bearingFromB);
   if (cutDeg == null) return null;
-  const uncertaintyM = fixUncertaintyM(
-    rangeAzimuth(observerA, point).meters,
-    rangeAzimuth(observerB, point).meters,
-    cutDeg,
-  );
+  const rangeA = rangeMetres(observerA, point);
+  const rangeB = rangeMetres(observerB, point);
+  const uncertaintyM =
+    rangeA == null || rangeB == null ? null : fixUncertaintyM(rangeA, rangeB, cutDeg);
   const warning =
     cutDeg < 30 || cutDeg > 150
       ? "Poor cut — observers should be 30–150° apart as seen from the target."
@@ -505,7 +528,11 @@ export function deadReckonUncertaintyM(input: {
 }
 
 export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
-  if (![tsd.distanceM, tsd.speedKph, tsd.minutes].every((value) => Number.isFinite(value) && value >= 0)) return "—";
+  if (
+    !Number.isFinite(tsd.distanceM) || tsd.distanceM < 0 || tsd.distanceM > 40_075_017 ||
+    !Number.isFinite(tsd.speedKph) || tsd.speedKph < 0 || tsd.speedKph > 300 ||
+    !Number.isFinite(tsd.minutes) || tsd.minutes < 0 || tsd.minutes > 366 * 24 * 60
+  ) return "—";
   return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;
 }
 
@@ -519,18 +546,21 @@ export function deliberateOffset(
   headingTrue: number;
   catchTurn: "left" | "right";
   label: string;
-} {
+} | null {
   const ra = rangeAzimuth(from, to);
+  if (!ra || !Number.isFinite(offsetM) || offsetM < 0 || offsetM > 40_075_017) return null;
   const perp = (ra.trueDeg + (side === "right" ? 90 : 270)) % 360;
-  // The aim point was already clamped at zero, but the label kept quoting the
-  // raw number — so a typed "-100" aimed straight at the target while telling
-  // the party to turn when they hit the catching feature. Clamp once, say what
-  // was actually done.
-  const applied = Number.isFinite(offsetM) ? Math.max(0, offsetM) : 0;
-  const aim = deadReckon(to, perp, applied);
-  const headingTrue = rangeAzimuth(from, aim).trueDeg;
+  const aim = deadReckon(to, perp, offsetM);
+  if (!aim) return null;
+  const returnRange = rangeAzimuth(from, aim);
+  if (!returnRange) return null;
+  const headingTrue = returnRange.trueDeg;
   const catchTurn = side === "right" ? "left" : "right";
-  if (applied <= 0) {
+  // A negative or non-finite offset is refused by the guard above, but zero still
+  // reaches here — and zero is not an aim-off. The aim point IS the target, so
+  // "when you hit the catching feature, turn left" sends the party off the point
+  // they just arrived at.
+  if (offsetM <= 0) {
     return {
       aim,
       headingTrue,
@@ -542,7 +572,7 @@ export function deliberateOffset(
     aim,
     headingTrue,
     catchTurn,
-    label: `Aim ${Math.round(headingTrue)}° true, offset ${Math.round(applied)} m ${side}. When you hit the catching feature, turn ${catchTurn}.`,
+    label: `Aim ${Math.round(headingTrue)}° true, offset ${Math.round(offsetM)} m ${side}. When you hit the catching feature, turn ${catchTurn}.`,
   };
 }
 
@@ -556,7 +586,14 @@ export function obstacleBox(
   resume: { lat: number; lng: number };
   corners: Array<{ lat: number; lng: number }>;
   legs: Array<{ heading: number; meters: number }>;
-} {
+} | null {
+  if (
+    !isValidCoordinate(start) ||
+    !Number.isFinite(headingTrue) ||
+    Math.abs(headingTrue) > 360 ||
+    !Number.isFinite(widthM) || widthM < 0 || widthM > 40_075_017 ||
+    !Number.isFinite(depthM) || depthM < 0 || depthM > 40_075_017
+  ) return null;
   const right = side === "right";
   const legs = [
     { heading: (headingTrue + (right ? 90 : 270)) % 360, meters: widthM },
@@ -567,7 +604,9 @@ export function obstacleBox(
   const corners: Array<{ lat: number; lng: number }> = [];
   let here = start;
   for (const leg of legs.slice(0, 3)) {
-    here = deadReckon(here, leg.heading, leg.meters);
+    const next = deadReckon(here, leg.heading, leg.meters);
+    if (!next) return null;
+    here = next;
     corners.push(here);
   }
   return { resume: here, corners, legs };
@@ -591,8 +630,9 @@ function monthCode(month: number) {
   ];
 }
 
-export function formatRangeAzimuth(ra: RangeAzimuth): string {
+export function formatRangeAzimuth(ra: RangeAzimuth | null): string {
   if (
+    !ra ||
     !Number.isFinite(ra.meters) || !Number.isFinite(ra.trueDeg) ||
     !Number.isFinite(ra.mils) || !Number.isFinite(ra.backTrueDeg) ||
     (ra.magneticDeg != null && !Number.isFinite(ra.magneticDeg))

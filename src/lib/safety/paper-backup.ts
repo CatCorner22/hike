@@ -1,8 +1,9 @@
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { formatUsng } from "@/lib/safety/usng";
-import { formatCheckinLog, type CheckinEntry } from "@/lib/safety/checkin";
+import type { CheckinEntry } from "@/lib/safety/checkin";
 import type { IceProfile } from "@/lib/safety/profile";
 import { overdueStatus } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 function trailhead(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
   const first =
@@ -19,6 +20,20 @@ function trailhead(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
     start: { lng: first[0], lat: first[1] },
     end: { lng: last[0], lat: last[1] },
   };
+}
+
+function paperCheckinLines(entries: CheckinEntry[]): string[] {
+  if (entries.length === 0) return ["No check-ins logged."];
+  return entries.map((entry) => {
+    const lat = entry.lat;
+    const lng = entry.lng;
+    const grid =
+      typeof lat === "number" && Number.isFinite(lat) && typeof lng === "number" && Number.isFinite(lng)
+        ? ` @ ${lat.toFixed(5)}, ${lng.toFixed(5)}`
+        : "";
+    const note = entry.note ? ` — ${reportField(entry.note)}` : "";
+    return `${reportField(entry.recordedAt)}${grid}${note}`;
+  });
 }
 
 /**
@@ -80,33 +95,33 @@ export function buildPaperBackup(input: {
   const legs = routeCardLegs(input.geometry);
   const lines = [
     "=== HIKE PAPER BACKUP (hand to SAR) ===",
-    `Route: ${input.trailName}`,
-    input.packAge ? `Pack saved: ${input.packAge}` : "",
+    `Route: ${reportField(input.trailName)}`,
+    input.packAge ? `Pack saved: ${reportField(input.packAge)}` : "",
     "",
     "--- ROUTE ENDS ---",
     ...(ends ? routeEndLines(ends, input.startedFrom) : ["Route ends: unknown"]),
     "",
-    formatRouteCard(input.trailName, legs),
+    ...formatRouteCard(input.trailName, legs).split("\n"),
     "",
     "--- ICE ---",
-    `Hiker: ${input.profile.name || "(not set)"}`,
-    `Party: ${input.profile.partySize}`,
-    `ICE: ${input.profile.iceName || "—"} ${input.profile.icePhone || ""}`.trim(),
-    `Medical: ${input.profile.medical || "none noted"}`,
+    `Hiker: ${input.profile.name ? reportField(input.profile.name) : "(not set)"}`,
+    `Party: ${reportField(input.profile.partySize)}`,
+    `ICE: ${input.profile.iceName ? reportField(input.profile.iceName) : "—"} ${input.profile.icePhone ? reportField(input.profile.icePhone) : ""}`.trim(),
+    `Medical: ${input.profile.medical ? reportField(input.profile.medical) : "none noted"}`,
     "",
   ];
 
   if (input.returnAt) {
     const status = overdueStatus(input.returnAt);
-    lines.push("--- RETURN ---", `Return by: ${input.returnAt}`, status.label, "");
+    lines.push("--- RETURN ---", `Return by: ${reportField(input.returnAt)}`, reportField(status.label), "");
   }
 
   if (input.checkins && input.checkins.length > 0) {
-    lines.push("--- LAST CHECK-INS ---", formatCheckinLog(input.checkins), "");
+    lines.push("--- LAST CHECK-INS ---", ...paperCheckinLines(input.checkins), "");
   }
 
   lines.push(
     "This sheet matches the on-phone route card math. It is not a live GPS fix.",
   );
-  return lines.filter((l, i, arr) => !(l === "" && arr[i - 1] === "")).join("\n");
+  return formatReport(lines.filter((l, i, arr) => !(l === "" && arr[i - 1] === "")));
 }

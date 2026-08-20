@@ -35,7 +35,7 @@ describe("land nav math", () => {
   });
 
   it("dead-reckons about 1 km due north", () => {
-    const dest = deadReckon({ lat: 37.0, lng: -119.0 }, 0, 1000);
+    const dest = deadReckon({ lat: 37.0, lng: -119.0 }, 0, 1000)!;
     expect(dest.lat).toBeGreaterThan(37.008);
     expect(dest.lng).toBeCloseTo(-119.0, 3);
   });
@@ -45,7 +45,7 @@ describe("land nav math", () => {
   });
 
   it("gives range and azimuth between two points", () => {
-    const ra = rangeAzimuth({ lat: 37.0, lng: -119.0 }, { lat: 37.01, lng: -119.0 });
+    const ra = rangeAzimuth({ lat: 37.0, lng: -119.0 }, { lat: 37.01, lng: -119.0 })!;
     expect(ra.meters).toBeGreaterThan(1000);
     expect(ra.trueDeg === 0 || ra.trueDeg > 350).toBe(true);
   });
@@ -74,7 +74,7 @@ describe("land nav math", () => {
   it("aims off a destination with a deliberate offset", () => {
     const from = { lat: 37.0, lng: -119.0 };
     const to = { lat: 37.01, lng: -119.0 };
-    const off = deliberateOffset(from, to, 100, "right");
+    const off = deliberateOffset(from, to, 100, "right")!;
     expect(off.catchTurn).toBe("left");
     expect(off.aim.lng).toBeGreaterThan(to.lng);
     expect(off.headingTrue).toBeGreaterThan(0);
@@ -83,8 +83,8 @@ describe("land nav math", () => {
 
   it("boxes around an obstacle and resumes on the original line", () => {
     const start = { lat: 37.0, lng: -119.0 };
-    const box = obstacleBox(start, 0, 50, 100, "right");
-    const back = rangeAzimuth(start, box.resume);
+    const box = obstacleBox(start, 0, 50, 100, "right")!;
+    const back = rangeAzimuth(start, box.resume)!;
     expect(back.meters).toBeGreaterThan(90);
     expect(back.meters).toBeLessThan(120);
     expect(back.trueDeg === 0 || back.trueDeg > 350).toBe(true);
@@ -142,7 +142,7 @@ describe("MGRS parse / phonetic", () => {
     const grid = formatMgrs10(origin.lat, origin.lng)!;
     const parsed = parseUsng(grid, origin);
     expect(parsed).not.toBeNull();
-    const ra = rangeAzimuth(origin, parsed!);
+    const ra = rangeAzimuth(origin, parsed!)!;
     expect(ra.meters).toBeLessThan(25);
   });
 
@@ -188,6 +188,13 @@ describe("timeSpeedDistance", () => {
   });
 });
 
+/** deadReckon is nullable on invalid input; these fixtures are all valid. */
+function at(start: { lat: number; lng: number }, heading: number, metres: number) {
+  const point = deadReckon(start, heading, metres);
+  if (!point) throw new Error(`deadReckon returned null for ${heading}deg / ${metres}m`);
+  return point;
+}
+
 /**
  * Bearing fixes used to be cut with turf.lineIntersect, a *planar* crossing of
  * raw lng/lat degrees, while the rays themselves were great circles. The bias
@@ -214,8 +221,8 @@ describe("bearing fix geometry", () => {
       { lat: 37.7, lng: 179.98 },
     ]) {
       for (const rangeM of [1_000, 10_000, 20_000, 50_000]) {
-        const a = deadReckon(truth, 20, rangeM);
-        const b = deadReckon(truth, 110, rangeM);
+        const a = at(truth, 20, rangeM);
+        const b = at(truth, 110, rangeM);
         const fix = resection(a, bearingTo(truth, a), b, bearingTo(truth, b));
         expect(fix, `${truth.lat} @ ${rangeM} m`).not.toBeNull();
         expect(metresApart(truth, fix!.point), `${truth.lat} @ ${rangeM} m`).toBeLessThan(1);
@@ -225,8 +232,8 @@ describe("bearing fix geometry", () => {
 
   it("intersects two observer rays on the exact unknown", () => {
     const target = { lat: 61.2, lng: -149.9 };
-    const a = deadReckon(target, 200, 18_000);
-    const b = deadReckon(target, 290, 18_000);
+    const a = at(target, 200, 18_000);
+    const b = at(target, 290, 18_000);
     const hit = intersection(a, bearingTo(a, target), b, bearingTo(b, target));
     expect(hit).not.toBeNull();
     expect(metresApart(target, hit!.point)).toBeLessThan(1);
@@ -239,7 +246,7 @@ describe("bearing fix geometry", () => {
     expect(greatCircleFix(a, Number.NaN, b, 90)).toBeNull();
     // Both rays head away from the crossing.
     expect(greatCircleFix(a, 270, b, 90, 80_000)).toBeNull();
-    const far = deadReckon(a, 45, 900_000);
+    const far = at(a, 45, 900_000);
     expect(greatCircleFix(a, 45, far, 225)).toBeNull();
   });
 });
@@ -258,7 +265,7 @@ describe("resection confidence", () => {
 
   it("does not let three agreeing cuts understate a fix that is far off", () => {
     const truth = { lat: 37.7, lng: -119.6 };
-    const known = [30, 150, 270].map((brg) => deadReckon(truth, brg, 8_000));
+    const known = [30, 150, 270].map((brg) => at(truth, brg, 8_000));
     const fix = resection3([
       { known: known[0], bearingTo: bearingTo(truth, known[0]) },
       { known: known[1], bearingTo: (bearingTo(truth, known[1]) + 3) % 360 },
@@ -290,8 +297,8 @@ describe("resection confidence", () => {
 
   it("carries a radius on two-point and intersection fixes too", () => {
     const truth = { lat: 37.0, lng: -119.0 };
-    const a = deadReckon(truth, 20, 4_000);
-    const b = deadReckon(truth, 110, 4_000);
+    const a = at(truth, 20, 4_000);
+    const b = at(truth, 110, 4_000);
     const fix = resection(a, bearingTo(truth, a), b, bearingTo(truth, b));
     expect(fix!.uncertaintyM).toBeGreaterThan(0);
     const hit = intersection(a, bearingTo(a, truth), b, bearingTo(b, truth));
@@ -328,13 +335,49 @@ describe("land-nav readouts that must not mislead", () => {
   it("does not tell the party to turn when no offset was applied", () => {
     const from = { lat: 37.0, lng: -119.0 };
     const to = { lat: 37.01, lng: -119.0 };
-    for (const offset of [0, -100, Number.NaN]) {
-      const off = deliberateOffset(from, to, offset, "right");
-      expect(off.label, `${offset}`).not.toMatch(/turn (left|right)/i);
-      expect(off.label).not.toMatch(/-\d/);
-      expect(off.aim.lat).toBeCloseTo(to.lat, 6);
-      expect(off.aim.lng).toBeCloseTo(to.lng, 6);
+    // A negative or non-finite offset is refused outright.
+    for (const offset of [-100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(deliberateOffset(from, to, offset, "right"), `${offset}`).toBeNull();
     }
-    expect(deliberateOffset(from, to, 100, "right").label).toMatch(/turn left/i);
+    // Zero still resolves, and must not invent a side to turn toward.
+    const zero = deliberateOffset(from, to, 0, "right");
+    expect(zero).not.toBeNull();
+    expect(zero!.label).not.toMatch(/turn (left|right)/i);
+    expect(zero!.aim.lat).toBeCloseTo(to.lat, 6);
+    expect(zero!.aim.lng).toBeCloseTo(to.lng, 6);
+    expect(deliberateOffset(from, to, 100, "right")!.label).toMatch(/turn left/i);
+  });
+});
+
+describe("dead reckoning across the antimeridian", () => {
+  /**
+   * turf.destination walks straight past +/-180 rather than wrapping, so every leg
+   * that crossed the seam came back as e.g. 180.019 and was thrown away by the
+   * on-globe validator. Dead reckoning returned null for the whole crossing — in the
+   * western Aleutians, Fiji and the Chathams — with no GPS to fall back on, which is
+   * the only situation dead reckoning exists for.
+   */
+  it("wraps rather than discarding a leg that crosses the seam", () => {
+    for (const [lat, lng, heading, metres] of [
+      [37.7, 179.98, 20, 10_000],
+      [51.9, 179.9, 90, 20_000],
+      [-16.5, -179.95, 270, 15_000],
+      [52.0, -179.99, 270, 5_000],
+    ] as const) {
+      const point = deadReckon({ lat, lng }, heading, metres);
+      expect(point, `${lat},${lng} ${heading}deg`).not.toBeNull();
+      expect(Math.abs(point!.lng), `${lat},${lng}`).toBeLessThanOrEqual(180);
+      expect(Math.abs(point!.lat)).toBeLessThanOrEqual(90);
+      // The wrapped point is still the right distance away.
+      const back = rangeAzimuth({ lat, lng }, point!);
+      expect(back).not.toBeNull();
+      expect(back!.meters, `${lat},${lng}`).toBeCloseTo(metres, -1);
+    }
+  });
+
+  it("still refuses genuinely invalid input", () => {
+    expect(deadReckon({ lat: 37, lng: -119 }, Number.NaN, 100)).toBeNull();
+    expect(deadReckon({ lat: 37, lng: -119 }, 20, -100)).toBeNull();
+    expect(deadReckon({ lat: Number.NaN, lng: -119 }, 20, 100)).toBeNull();
   });
 });

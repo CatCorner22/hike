@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   flushPendingPoints,
   getPendingPointCount,
+  getOfflineDb,
+  MAX_PENDING_POINT_COUNT,
+  OfflinePointQueueFullError,
   queueActivityPoint,
   __resetOfflineDbForTests,
 } from "./index";
@@ -33,6 +36,43 @@ afterEach(() => {
 });
 
 describe("point sync failure handling", () => {
+  it("rejects a point at the recording budget instead of consuming route-pack capacity", async () => {
+    await queue(MAX_PENDING_POINT_COUNT);
+
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 38,
+      lng: -120,
+      recordedAt: new Date(),
+    })).rejects.toMatchObject({
+      name: "OfflinePointQueueFullError",
+      message: expect.stringContaining("GPS point was not saved"),
+    });
+    expect(await getPendingPointCount()).toBe(MAX_PENDING_POINT_COUNT);
+  });
+
+  it("surfaces an IndexedDB quota failure as a recorder-safe error", async () => {
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const quota = new DOMException("probe full", "QuotaExceededError");
+    const put = vi.spyOn(db, "put").mockRejectedValueOnce(quota);
+
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(),
+    })).rejects.toBeInstanceOf(OfflinePointQueueFullError);
+    put.mockRestore();
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37.1,
+      lng: -119,
+      recordedAt: new Date(),
+    })).resolves.toBeUndefined();
+    expect(await getPendingPointCount()).toBe(1);
+  });
+
   it("syncs points when the server accepts them", async () => {
     await queue(3);
     vi.stubGlobal("fetch", respondWith(200));

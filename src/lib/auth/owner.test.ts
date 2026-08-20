@@ -130,3 +130,24 @@ describe("readCookie", () => {
     expect(readCookie(request("not_hike_owner=nope"), "hike_owner")).toBeNull();
   });
 });
+
+/**
+ * An unreadable cookie is not a valid session. A malformed percent escape used
+ * to make decodeURIComponent throw, which surfaced to the client as HTTP 500.
+ */
+describe("readCookie tolerates malformed cookies", () => {
+  it("returns null instead of throwing on a bad percent escape", () => {
+    const request = new Request("https://example.test/api/plans", {
+      headers: { cookie: "hike_owner=%E0%A4%A" },
+    });
+    expect(() => readCookie(request, "hike_owner")).not.toThrow();
+    expect(readCookie(request, "hike_owner")).toBeNull();
+  });
+
+  it("still decodes a normal encoded cookie", () => {
+    const request = new Request("https://example.test/", {
+      headers: { cookie: "hike_owner=abc%2Ddef" },
+    });
+    expect(readCookie(request, "hike_owner")).toBe("abc-def");
+  });
+});

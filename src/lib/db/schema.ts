@@ -96,11 +96,20 @@ export const activityPoints = pgTable("activity_points", {
   activityId: uuid("activity_id")
     .notNull()
     .references(() => activities.id, { onDelete: "cascade" }),
+  // A durable device-generated key makes retrying an acknowledged-but-lost POST safe.
+  clientPointId: text("client_point_id"),
   lat: doublePrecision("lat").notNull(),
   lng: doublePrecision("lng").notNull(),
   elevation: doublePrecision("elevation"),
   recordedAt: timestamp("recorded_at").notNull(),
-});
+}, (table) => [
+  uniqueIndex("activity_points_activity_client_point_unique")
+    .on(table.activityId, table.clientPointId),
+  // Older clients have no key. The complete fix tuple is their safe fallback; timestamp
+  // alone is deliberately not unique because devices can report at coarse precision.
+  uniqueIndex("activity_points_activity_recorded_lat_lng_unique")
+    .on(table.activityId, table.recordedAt, table.lat, table.lng),
+]);
 
 export const campgrounds = pgTable("campgrounds", {
   id: uuid("id").primaryKey().defaultRandom(),

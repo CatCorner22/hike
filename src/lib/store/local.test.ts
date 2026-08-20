@@ -68,6 +68,33 @@ describe("local store durability", () => {
     await expect(createPlan({ ownerId: OWNER, name: "Must not overwrite" })).rejects.toThrow();
     expect(await readFile(storeFile, "utf8")).toBe('{"plans": [');
   });
+
+  it("preserves valid JSON whose root shape is not a local store", async () => {
+    const original = JSON.stringify({
+      data: {
+        plans: [{
+          id: "recoverable-plan",
+          ownerId: OWNER,
+          name: "Good map",
+          trailId: null,
+          plannedDate: null,
+          notes: null,
+          waypoints: null,
+          campgroundIds: [],
+          customGeometry: null,
+          createdAt: "2026-08-20T12:00:00.000Z",
+          updatedAt: "2026-08-20T12:00:00.000Z",
+        }],
+        activities: [],
+        points: [],
+      },
+    });
+    await writeFile(storeFile, original);
+
+    await expect(createPlan({ ownerId: OWNER, name: "Must not overwrite" }))
+      .rejects.toThrow("Local store format is unrecognized");
+    expect(await readFile(storeFile, "utf8")).toBe(original);
+  });
 });
 
 describe("local store owner scoping", () => {

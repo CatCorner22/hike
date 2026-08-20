@@ -419,12 +419,10 @@ export function SafetyPanel({
         setOverdue(false);
         return;
       }
+      // overdueStatus always returns a shaped result; an invalid deadline comes
+      // back with valid: false and a label that says the alarm is not armed.
+      // The label is rendered unconditionally, so that state stays visible.
       const status = overdueStatus(returnResolution.instant.toISOString());
-      if (!status) {
-        setOverdueLabel("Return time is invalid — set a new local return time.");
-        setOverdue(false);
-        return;
-      }
       setOverdueLabel(status.label);
       setOverdue(status.overdue);
     };
@@ -605,7 +603,12 @@ export function SafetyPanel({
     <Sheet>
       <SheetTrigger
         render={
-          <Button variant="secondary" size="icon-sm" aria-label="Safety and SOS" />
+          <Button
+            variant="secondary"
+            size="icon-sm"
+            className="navigate-emergency-trigger"
+            aria-label="Safety and SOS"
+          />
         }
       >
         <LifeBuoy className="size-4" />
@@ -620,6 +623,31 @@ export function SafetyPanel({
             Land-nav and rescue: resection, GPS-denied DR, SITREP, MARCH, USNG, ICE.
           </SheetDescription>
         </SheetHeader>
+
+        <section className="grid grid-cols-2 gap-2 px-4" aria-label="Emergency actions">
+          <Button className="min-h-11" onClick={() => void handleCopy()} variant="outline">
+            <Copy className="mr-2 size-4" />
+            {copied === "ok" ? "Grid copied" : copied === "fail" ? "Copy failed" : "Copy emergency grid"}
+          </Button>
+          <Button className="min-h-11" onClick={() => void handleShare()} variant="outline">
+            <Share2 className="mr-2 size-4" />
+            Share emergency grid
+          </Button>
+          <Button
+            className="min-h-11"
+            variant="outline"
+            onClick={() => {
+              window.location.href = smsHref(profile.icePhone, message);
+            }}
+          >
+            <MessageSquare className="mr-2 size-4" />
+            SMS ICE
+          </Button>
+          <Button className="min-h-11" variant="destructive" onClick={onBeacon}>
+            <Siren className="mr-2 size-4" />
+            Beacon
+          </Button>
+        </section>
 
         <div className="mt-4 space-y-4 px-4 pb-6">
           {daylightWarning && (
@@ -683,11 +711,11 @@ export function SafetyPanel({
             <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-3 text-sm">
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
               <div>
-                <p className="font-medium text-destructive">
+                <p className="font-medium text-safety-critical">
                   {Math.round(offTrailM)} m off route
                 </p>
                 {bearingToTrail != null && Number.isFinite(bearingToTrail) && (
-                  <p className="mt-1 text-muted-foreground">
+                  <p className="mt-1 text-safety-critical">
                     Walk {formatWalkBearing(bearingToTrail, lat, lng)} (
                     {compassLabel(bearingToTrail)}) toward the dashed orange line.
                   </p>
@@ -747,27 +775,6 @@ export function SafetyPanel({
           </div>
 
           <div className="grid grid-cols-2 gap-2">
-            <Button onClick={() => void handleCopy()} variant="outline">
-              <Copy className="mr-2 size-4" />
-              {copied === "ok" ? "Copied" : copied === "fail" ? "Copy failed" : "Copy"}
-            </Button>
-            <Button onClick={() => void handleShare()} variant="outline">
-              <Share2 className="mr-2 size-4" />
-              Share
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                window.location.href = smsHref(profile.icePhone, message);
-              }}
-            >
-              <MessageSquare className="mr-2 size-4" />
-              SMS ICE
-            </Button>
-            <Button variant="destructive" onClick={onBeacon}>
-              <Siren className="mr-2 size-4" />
-              Beacon
-            </Button>
             <Button
               variant={backtrackEnabled ? "default" : "outline"}
               disabled={!backtrackReady}
@@ -1125,8 +1132,8 @@ export function SafetyPanel({
                     setGotoInfo("Could not parse that USNG/MGRS grid.");
                     return;
                   }
-                  onGoto(parsed);
-                  if (lat != null && lng != null) {
+                onGoto(parsed);
+                if (lat != null && lng != null) {
                     setGotoInfo(formatRangeAzimuth(rangeAzimuth({ lat, lng }, parsed)));
                   } else {
                     setGotoInfo("Grid plotted. Waiting for GPS for range/azimuth.");
@@ -1199,6 +1206,10 @@ export function SafetyPanel({
                   heading,
                   distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65, terrain),
                 );
+                if (!dest) {
+                  setGotoInfo("Dead reckon unavailable — check GPS position, heading, and distance.");
+                  return;
+                }
                 onGoto(dest);
                 setGotoInfo(
                   formatRangeAzimuth(rangeAzimuth({ lat, lng }, dest)) + " (dead reckon)",
@@ -1362,14 +1373,18 @@ export function SafetyPanel({
             {resectInfo && <p className="text-xs text-muted-foreground">{resectInfo}</p>}
             <div className="grid grid-cols-2 gap-2">
               <Input value={offsetM} onChange={(e) => setOffsetM(e.target.value)} placeholder="Offset m" />
-              <select
-                className="h-9 rounded-lg border bg-background px-2 text-sm"
-                value={offsetSide}
-                onChange={(e) => setOffsetSide(e.target.value as "left" | "right")}
-              >
-                <option value="right">Offset right</option>
-                <option value="left">Offset left</option>
-              </select>
+              <div>
+                <Label htmlFor="aim-off-side">Aim-off side</Label>
+                <select
+                  id="aim-off-side"
+                  className="h-9 w-full rounded-lg border bg-background px-2 text-sm"
+                  value={offsetSide}
+                  onChange={(e) => setOffsetSide(e.target.value as "left" | "right")}
+                >
+                  <option value="right">Offset right</option>
+                  <option value="left">Offset left</option>
+                </select>
+              </div>
             </div>
             <Button
               variant="outline"
@@ -1387,6 +1402,10 @@ export function SafetyPanel({
                   Number(offsetM) || 0,
                   offsetSide,
                 );
+                if (!off) {
+                  setGotoInfo("Aim-off unavailable — check both positions and offset.");
+                  return;
+                }
                 onGoto(off.aim);
                 setGotoInfo(off.label);
               }}
@@ -1409,6 +1428,10 @@ export function SafetyPanel({
                   Number(boxD) || 0,
                   offsetSide,
                 );
+                if (!box) {
+                  setGotoInfo("Obstacle box unavailable — check GPS position, heading, and distances.");
+                  return;
+                }
                 onGoto(box.resume);
                 setGotoInfo(
                   `Box resume ${formatRangeAzimuth(rangeAzimuth({ lat, lng }, box.resume))}. Then continue original heading.`,
@@ -1467,18 +1490,22 @@ export function SafetyPanel({
               Solve TSD
             </Button>
             <div className="grid grid-cols-2 gap-2">
-              <select
-                className="h-9 rounded-lg border bg-background px-2 text-sm"
-                value={searchKind}
-                onChange={(e) =>
-                  setSearchKind(e.target.value as typeof searchKind)
-                }
-              >
-                <option value="square">Expanding square</option>
-                <option value="sector">Sector</option>
-                <option value="creep">Creeping line</option>
-                <option value="parallel">Parallel track</option>
-              </select>
+              <div>
+                <Label htmlFor="search-pattern">Search pattern</Label>
+                <select
+                  id="search-pattern"
+                  className="h-9 w-full rounded-lg border bg-background px-2 text-sm"
+                  value={searchKind}
+                  onChange={(e) =>
+                    setSearchKind(e.target.value as typeof searchKind)
+                  }
+                >
+                  <option value="square">Expanding square</option>
+                  <option value="sector">Sector</option>
+                  <option value="creep">Creeping line</option>
+                  <option value="parallel">Parallel track</option>
+                </select>
+              </div>
               <Input value={searchLeg} placeholder="Leg m" onChange={(e) => setSearchLeg(e.target.value)} />
             </div>
             <Button

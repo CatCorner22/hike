@@ -1,3 +1,5 @@
+import { isValidCoordinate } from "@/lib/geo/coords";
+
 /** Synodic month. New moon near 2000-01-06 18:14 UTC. */
 const SYNODIC = 29.530588;
 const NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14);
@@ -43,6 +45,9 @@ export function sunPosition(
   lat: number,
   lng: number,
 ): { azimuth: number; elevation: number } | null {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime()) || !isValidCoordinate({ lat, lng })) {
+    return null;
+  }
   const rad = Math.PI / 180;
   const d =
     (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes()) -
@@ -107,7 +112,8 @@ export function overheadSunNote(elevationDeg: number): string {
 
 export function sunCompassHint(date: Date, lat: number, lng: number): string | null {
   const pos = sunPosition(date, lat, lng);
-  if (!pos || pos.elevation < 5) return "Sun too low or below horizon — use moon, stars, or compass.";
+  if (!pos) return "Sun position unavailable — use a compass.";
+  if (pos.elevation < 5) return "Sun too low or below horizon — use moon, stars, or compass.";
   if (pos.elevation > SHADOW_MAX_ELEVATION_DEG) return overheadSunNote(pos.elevation);
   const stick = shadowStickHeading(pos.azimuth);
   return `Sun ~${roundBearing(pos.azimuth)}° true (elev ${Math.round(pos.elevation)}°). Shadow points ~${roundBearing(stick.shadowToward)}° — check your compass against that.`;
