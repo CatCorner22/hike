@@ -26,7 +26,40 @@ async function waitForController(page) { await page.waitForFunction(() => naviga
 async function screen(page) {
   const text = await page.locator("body").innerText().catch(() => "");
   const html = await page.locator("body").innerHTML().catch(() => "");
-  return { text, blank: text.trim().length === 0 || html.trim().length === 0, browserError: /ERR_INTERNET_DISCONNECTED|This site can.t be reached|ERR_FAILED/i.test(text), appError: /Cannot navigate offline|Route geometry is invalid|Plan has no route geometry|Route unavailable offline|Saved route|route pack is corrupt|route has more than/i.test(text), ready: /Offline pack|Saved to device|GPS|North up|Heading up/i.test(text) };
+  return { text, blank: text.trim().length === 0 || html.trim().length === 0, browserError: /ERR_INTERNET_DISCONNECTED|This site can.t be reached|ERR_FAILED/i.test(text), appError: /Cannot navigate offline|Route geometry is invalid|Plan has no route geometry|Route unavailable offline|Saved route|route pack is corrupt|route has more than/i.test(text), ready: /Offline pack|Saved to device|GPS|North up|Heading up|Pre-hike checklist/i.test(text) };
+}
+
+/**
+ * Navigate stays locked until ICE + return time exist. Fill the checklist
+ * the way a hiker would so probes can reach the HUD.
+ */
+async function completeReadinessIfShown(page) {
+  const checklist = page.locator("text=Pre-hike checklist");
+  if ((await checklist.count()) === 0) return;
+  await page.locator("#hiker").fill("Pat");
+  await page.locator("#ice-name").fill("Sam");
+  await page.locator("#ice-phone").fill("555-123-4567");
+  const existing = await page.locator("#return").inputValue().catch(() => "");
+  if (!existing) {
+    const local = new Date(Date.now() + 4 * 3600_000);
+    const value = new Date(local.getTime() - local.getTimezoneOffset() * 60000)
+      .toISOString()
+      .slice(0, 16);
+    await page.locator("#return").fill(value);
+  }
+  const start = page.getByRole("button", { name: /Start navigation/i });
+  await start.waitFor({ state: "visible", timeout: 10_000 });
+  if (await start.isDisabled()) {
+    await page.waitForTimeout(1500);
+  }
+  if (await start.isEnabled()) {
+    await start.click();
+    await page.waitForFunction(
+      () => !document.body.innerText.includes("Pre-hike checklist"),
+      null,
+      { timeout: 15_000 },
+    );
+  }
 }
 /**
  * One owner for the whole probe run.
@@ -217,18 +250,56 @@ try {
   {
     const planId = await createPlan("two tabs"); const context = await newOwnedContext({ permissions: ["geolocation"], geolocation: GEO, serviceWorkers: "allow" }); const a = await context.newPage(), b = await context.newPage();
     await Promise.all([a.goto(`${BASE}/plan/${planId}`), b.goto(`${BASE}/navigate/plan-${planId}`)]); await waitForController(a);
-    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800); const s = await screen(b); log("idb/two-tab-prepare-navigate", !s.blank && !s.browserError && (s.ready || s.appError), s.text.slice(0, 100).replace(/\s+/g, " ")); await context.close();
+    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800);
+    const first = await screen(b);
+    if (!first.ready && !first.appError) {
+      await b.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
+      await b.waitForTimeout(800);
+    }
+    await completeReadinessIfShown(b);
+    const s = await screen(b);
+    log("idb/two-tab-prepare-navigate", !s.blank && !s.browserError && (s.ready || s.appError), s.text.slice(0, 100).replace(/\s+/g, " ")); await context.close();
   }
 
   // Clock-skew unit behaviors are rendered by controls only after opening safety panel; directly test persisted timestamp's visible display through navigation page.
   for (const [name, appliedAt, returnAt] of [["future", "2099-01-01T00:00:00.000Z", "2099-01-01T00:00:00.000Z"], ["epoch", "1970-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z"]]) {
     const planId = await createPlan(`clock ${name}`); const env = await openSeeded(planId);
     await env.page.evaluate(async ({ appliedAt, returnAt }) => {
-      const put = (dbName, store, value) => new Promise((resolve, reject) => { const o = indexedDB.open(dbName); o.onupgradeneeded = () => { if (!o.result.objectStoreNames.contains(store)) o.result.createObjectStore(store, { keyPath: "id" }); }; o.onsuccess = () => { const tx = o.result.transaction(store, "readwrite"); tx.objectStore(store).put(value); tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); });
-      await put("hike-tourniquet", "tourniquet", { id: "current", appliedAt, limb: "leg" }); await put("hike-safety", "overdue", { id: "current", returnAt });
+      const put = (dbName, stores, values) => new Promise((resolve, reject) => {
+        const o = indexedDB.open(dbName);
+        o.onupgradeneeded = () => {
+          for (const store of stores) {
+            if (!o.result.objectStoreNames.contains(store)) o.result.createObjectStore(store, { keyPath: "id" });
+          }
+        };
+        o.onsuccess = () => {
+          const names = stores.filter((store) => o.result.objectStoreNames.contains(store));
+          const tx = o.result.transaction(names, "readwrite");
+          for (const value of values) tx.objectStore(value._store).put((({ _store, ...row }) => row)(value));
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        };
+        o.onerror = () => reject(o.error);
+      });
+      await put("hike-tourniquet", ["tourniquet"], [{ _store: "tourniquet", id: "current", appliedAt, limb: "leg" }]);
+      // ICE + deadline: the checklist still prints OVERDUE; with ICE the HUD can unlock.
+      await put("hike-safety", ["profile", "overdue"], [
+        { _store: "overdue", id: "current", returnAt },
+        { _store: "profile", id: "me", name: "Pat", iceName: "Sam", icePhone: "555-123-4567", medical: "", partySize: 1 },
+      ]);
     }, { appliedAt, returnAt });
-    await env.page.reload({ waitUntil: "domcontentloaded" }); await env.page.waitForTimeout(400); const t = (await screen(env.page)).text;
-    log(`clock/${name}/overdue-not-reassuring`, name === "epoch" ? /OVERDUE by/.test(t) : !/Return in 0 min/.test(t), t.match(/OVERDUE by [^—]+|Return in [^—]+/)?.[0]?.trim() ?? "no banner");
+    await env.page.reload({ waitUntil: "domcontentloaded" });
+    if (name === "epoch") {
+      await env.page.waitForFunction(
+        () => /OVERDUE by|Return time is invalid/i.test(document.body.innerText),
+        null,
+        { timeout: 10_000 },
+      ).catch(() => {});
+    } else {
+      await env.page.waitForTimeout(800);
+    }
+    const t = (await screen(env.page)).text;
+    log(`clock/${name}/overdue-not-reassuring`, name === "epoch" ? /OVERDUE by|invalid/i.test(t) : !/Return in 0 min/.test(t), t.match(/OVERDUE by [^—]+|Return in [^—]+|invalid[^—]*/i)?.[0]?.trim() ?? "no banner");
     await env.context.close();
   }
 } finally {

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   getIceProfile,
   getOverdueAlarm,
+  overdueStatus,
   resolveLocalDateTime,
   saveIceProfile,
   setOverdueAlarm,
@@ -34,6 +35,7 @@ export function ReadinessGate({
   const [checkinOn, setCheckinOn] = useState(false);
   const [checkinMin, setCheckinMin] = useState(60);
   const [missing, setMissing] = useState<string[]>([]);
+  const [overdueNote, setOverdueNote] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -48,6 +50,10 @@ export function ReadinessGate({
       if (alarm?.returnAt) {
         const d = new Date(alarm.returnAt);
         setReturnAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+        const status = overdueStatus(alarm.returnAt);
+        setOverdueNote(status.overdue ? status.label : null);
+      } else {
+        setOverdueNote(null);
       }
       const result = hikeReadiness({
         packReady,
@@ -88,6 +94,9 @@ export function ReadinessGate({
           <p className="text-sm text-muted-foreground">
             Navigate will not start until the route pack, ICE, and return time are set.
           </p>
+          {overdueNote && (
+            <p className="text-sm font-medium text-destructive">{overdueNote}</p>
+          )}
           {missing.length > 0 && (
             <ul className="list-disc pl-5 text-sm text-destructive">
               {missing.map((m) => (
