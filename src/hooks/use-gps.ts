@@ -36,17 +36,20 @@ export function useGps() {
   });
   const watchIdRef = useRef<number | null>(null);
   const lastFixRef = useRef<GpsFix | null>(null);
-  const lastCallbackRef = useRef(Date.now());
+  const lastCallbackRef = useRef(0);
   const deniedRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
+    lastCallbackRef.current = Date.now();
 
     if (!("geolocation" in navigator)) {
-      setState({
-        fix: null,
-        status: "unavailable",
-        message: "This device has no GPS. Navigation is map-only.",
+      queueMicrotask(() => {
+        if (!cancelled) setState({
+          fix: null,
+          status: "unavailable",
+          message: "This device has no GPS. Navigation is map-only.",
+        });
       });
       return;
     }

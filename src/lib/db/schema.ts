@@ -1,13 +1,13 @@
 import {
   boolean,
   doublePrecision,
-  integer,
   jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
   uuid,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const campingTypeEnum = pgEnum("camping_type", [
@@ -32,7 +32,7 @@ export const crowdLevelEnum = pgEnum("crowd_level", [
 
 export const trails = pgTable("trails", {
   id: uuid("id").primaryKey().defaultRandom(),
-  osmId: text("osm_id").notNull().unique(),
+  osmId: text("osm_id").notNull(),
   osmType: text("osm_type").notNull(),
   name: text("name").notNull(),
   geometry: jsonb("geometry").notNull(),
@@ -46,7 +46,9 @@ export const trails = pgTable("trails", {
   bbox: jsonb("bbox"),
   tags: jsonb("tags"),
   cachedAt: timestamp("cached_at").defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex("trails_osm_id_osm_type_unique").on(table.osmId, table.osmType),
+]);
 
 export const trailResearch = pgTable("trail_research", {
   id: uuid("id").primaryKey().defaultRandom(),

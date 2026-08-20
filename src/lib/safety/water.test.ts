@@ -1,0 +1,61 @@
+import { describe, expect, it } from "vitest";
+import {
+  boilTimeMinutes,
+  chemicalDoseWaitMinutes,
+  hydrationPlan,
+  sourceRisk,
+  sweatRateLitersPerHour,
+} from "./water";
+
+describe("water treatment", () => {
+  it("extends boiling time at the 2,000 m threshold", () => {
+    expect(boilTimeMinutes(1999)).toBe(1);
+    expect(boilTimeMinutes(2000)).toBe(3);
+    expect(boilTimeMinutes(Number.NaN)).toBeNull();
+  });
+
+  it("makes visible algae a hard stop before treatment", () => {
+    const risk = sourceRisk({
+      source: "lake",
+      upstreamGrazing: false,
+      upstreamCamping: false,
+      algaeVisible: true,
+    });
+    expect(risk.severity).toBe("critical");
+    expect(risk.treatBefore).toBe(true);
+    expect(risk.message).toMatch(/HARD STOP/);
+    expect(risk.message).toMatch(/cyanotoxins/i);
+  });
+
+  it("extends chemical contact time in cold or cloudy water", () => {
+    const warmClear = chemicalDoseWaitMinutes({
+      method: "bleach",
+      waterTempC: 20,
+      cloudy: false,
+    });
+    const coldClear = chemicalDoseWaitMinutes({
+      method: "bleach",
+      waterTempC: 5,
+      cloudy: false,
+    });
+    expect(coldClear).toBeGreaterThan(warmClear!);
+    expect(
+      chemicalDoseWaitMinutes({ method: "chlorine-dioxide", waterTempC: Number.NaN, cloudy: false }),
+    ).toBeNull();
+  });
+});
+
+describe("hydration planning", () => {
+  it("caps the conservative hourly estimate at 1.5 L/h", () => {
+    expect(sweatRateLitersPerHour({ tempC: 45, workRate: "hard", acclimatized: false })).toBe(1.5);
+    const plan = hydrationPlan({ hours: 2, tempC: 45, workRate: "hard" });
+    expect(plan?.liters).toBe(3);
+    expect(plan?.kg).toBe(3);
+    expect(plan?.note).toMatch(/hyponatremia/i);
+  });
+
+  it("rejects invalid hydration inputs", () => {
+    expect(sweatRateLitersPerHour({ tempC: Number.NaN, workRate: "easy", acclimatized: true })).toBeNull();
+    expect(hydrationPlan({ hours: Number.NaN, tempC: 20, workRate: "easy" })).toBeNull();
+  });
+});

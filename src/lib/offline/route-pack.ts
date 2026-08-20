@@ -1,8 +1,13 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry, gpxFromLineString } from "@/lib/geo";
 import { isValidGeometry, trailLengthMeters } from "@/lib/geo/navigation";
 
-export const ROUTE_PACK_VERSION = 2;
+/**
+ * Keep the payload shape and IndexedDB schema in lockstep. A route pack from
+ * an older schema is retained, but is not considered safe enough to load.
+ */
+export const ROUTE_PACK_VERSION = 3;
+export const ROUTE_PACK_DB_VERSION = 3;
 
 export interface RoutePack {
   id: string;
@@ -17,11 +22,20 @@ export interface RoutePack {
   version: number;
 }
 
+interface RoutePackAlias {
+  alias: string;
+  canonicalId: string;
+}
+
 interface RoutePackDB extends DBSchema {
   routePacks: {
     key: string;
     value: RoutePack;
-    indexes: { "by-alias": string };
+  };
+  aliases: {
+    key: string;
+    value: RoutePackAlias;
+    indexes: { "by-canonical": string };
   };
   lastFix: {
     key: string;
@@ -36,19 +50,94 @@ interface RoutePackDB extends DBSchema {
   };
 }
 
+export type RoutePackStatus = "ready" | "stale" | "invalid" | "missing";
+
+export interface RoutePackLookup {
+  pack: RoutePack | null;
+  status: RoutePackStatus;
+}
+
 let dbPromise: Promise<IDBPDatabase<RoutePackDB>> | null = null;
 
+function canonicalIdForLegacyPack(pack: RoutePack): string {
+  return pack.aliases?.[0] || pack.id;
+}
+
+function uniqueAliases(canonicalId: string, aliases: string[] = []): string[] {
+  return Array.from(new Set([canonicalId, ...aliases.filter(Boolean)]));
+}
+
+/**
+ * Converts the schema-v1 duplicated records into a canonical payload plus
+ * tiny alias pointers. Exported for a direct migration regression test.
+ */
+export function collapseLegacyRoutePacks(records: RoutePack[]): {
+  packs: RoutePack[];
+  aliases: RoutePackAlias[];
+} {
+  const groups = new Map<string, RoutePack[]>();
+
+  for (const record of records) {
+    const canonicalId = canonicalIdForLegacyPack(record);
+    const group = groups.get(canonicalId) ?? [];
+    group.push(record);
+    groups.set(canonicalId, group);
+  }
+
+  const packs: RoutePack[] = [];
+  const aliases: RoutePackAlias[] = [];
+  for (const [canonicalId, group] of groups) {
+    const source =
+      group.find((record) => record.id === canonicalId) ??
+      [...group].sort((a, b) => b.cachedAt.localeCompare(a.cachedAt))[0];
+    const aliasesForPack = uniqueAliases(
+      canonicalId,
+      group.flatMap((record) => [...(record.aliases ?? []), record.id]),
+    );
+    const pack: RoutePack = {
+      ...source,
+      id: canonicalId,
+      aliases: aliasesForPack,
+    };
+    packs.push(pack);
+    aliasesForPack.forEach((alias) => aliases.push({ alias, canonicalId }));
+  }
+
+  return { packs, aliases };
+}
+
 function getDb() {
-  if (typeof window === "undefined") return null;
+  if (typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
-    dbPromise = openDB<RoutePackDB>("hike-nav-packs", 1, {
-      upgrade(db) {
+    dbPromise = openDB<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
+      upgrade(db, oldVersion, _newVersion, transaction) {
         if (!db.objectStoreNames.contains("routePacks")) {
-          const packs = db.createObjectStore("routePacks", { keyPath: "id" });
-          packs.createIndex("by-alias", "aliases", { multiEntry: true });
+          db.createObjectStore("routePacks", { keyPath: "id" });
+        }
+        if (!db.objectStoreNames.contains("aliases")) {
+          const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
+          aliases.createIndex("by-canonical", "canonicalId");
         }
         if (!db.objectStoreNames.contains("lastFix")) {
           db.createObjectStore("lastFix", { keyPath: "id" });
+        }
+
+        // Version 1 stored a complete payload under every alias. Use native
+        // IDB requests so the versionchange transaction stays alive while
+        // the read completes.
+        if (oldVersion > 0 && oldVersion < ROUTE_PACK_DB_VERSION) {
+          const nativeTransaction = unwrap(transaction);
+          const legacyStore = nativeTransaction.objectStore("routePacks");
+          const aliasStore = nativeTransaction.objectStore("aliases");
+          const request = legacyStore.getAll();
+          request.onsuccess = () => {
+            const { packs, aliases } = collapseLegacyRoutePacks(
+              request.result as RoutePack[],
+            );
+            legacyStore.clear();
+            packs.forEach((pack) => legacyStore.put(pack));
+            aliases.forEach((alias) => aliasStore.put(alias));
+          };
         }
       },
     });
@@ -64,7 +153,7 @@ export function buildRoutePack(input: {
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
 }): RoutePack {
-  const aliases = Array.from(new Set([input.id, ...(input.aliases ?? [])]));
+  const aliases = uniqueAliases(input.id, input.aliases);
   return {
     id: input.id,
     aliases,
@@ -79,55 +168,86 @@ export function buildRoutePack(input: {
   };
 }
 
+export function routePackStatus(pack: RoutePack | null | undefined): RoutePackStatus {
+  if (!pack) return "missing";
+  if (!isValidGeometry(pack.geometry)) return "invalid";
+  return pack.version === ROUTE_PACK_VERSION ? "ready" : "stale";
+}
+
 export async function saveRoutePack(pack: RoutePack) {
   const db = await getDb();
   if (!db) return;
-  const aliases = Array.from(new Set([pack.id, ...pack.aliases]));
-  const stored: RoutePack = { ...pack, aliases, version: ROUTE_PACK_VERSION };
-  await db.put("routePacks", stored);
 
-  for (const alias of aliases) {
-    if (alias === pack.id) continue;
-    const existing = await db.get("routePacks", alias);
-    if (!existing) {
-      await db.put("routePacks", { ...stored, id: alias });
-    } else {
-      await db.put("routePacks", {
-        ...stored,
-        id: alias,
-        aliases: Array.from(new Set([...existing.aliases, ...aliases])),
-      });
-    }
-  }
+  const tx = db.transaction(["routePacks", "aliases"], "readwrite");
+  const aliasesStore = tx.objectStore("aliases");
+  const packStore = tx.objectStore("routePacks");
+  const initialAliases = uniqueAliases(pack.id, pack.aliases);
+  const existingPointers = await Promise.all(
+    initialAliases.map((alias) => aliasesStore.get(alias)),
+  );
+  const replacedCanonicalIds = Array.from(
+    new Set(
+      existingPointers
+        .flatMap((pointer) => (pointer ? [pointer.canonicalId] : []))
+        .filter((id) => id !== pack.id),
+    ),
+  );
+
+  // If aliases previously pointed at an older canonical record, fold all of
+  // those pointers into this one and remove the now-duplicated full payload.
+  const inheritedAliases = await Promise.all(
+    replacedCanonicalIds.map((canonicalId) =>
+      aliasesStore.index("by-canonical").getAll(canonicalId),
+    ),
+  );
+  const aliases = uniqueAliases(
+    pack.id,
+    [...initialAliases, ...inheritedAliases.flat().map((pointer) => pointer.alias)],
+  );
+  const stored: RoutePack = {
+    ...pack,
+    id: pack.id,
+    aliases,
+    version: ROUTE_PACK_VERSION,
+  };
+
+  await packStore.put(stored);
+  await Promise.all(
+    aliases.map((alias) => aliasesStore.put({ alias, canonicalId: stored.id })),
+  );
+  await Promise.all(replacedCanonicalIds.map((canonicalId) => packStore.delete(canonicalId)));
+  await tx.done;
+}
+
+async function findRoutePack(db: IDBPDatabase<RoutePackDB>, id: string) {
+  const pointer = await db.get("aliases", id);
+  if (pointer) return db.get("routePacks", pointer.canonicalId);
+  return db.get("routePacks", id);
+}
+
+export async function getRoutePackStatus(id: string): Promise<RoutePackLookup> {
+  const db = await getDb();
+  if (!db) return { pack: null, status: "missing" };
+  const pack = await findRoutePack(db, id);
+  return { pack: pack ?? null, status: routePackStatus(pack) };
 }
 
 export async function getRoutePack(id: string): Promise<RoutePack | null> {
-  const db = await getDb();
-  if (!db) return null;
-
-  const direct = await db.get("routePacks", id);
-  if (direct && isValidGeometry(direct.geometry)) return direct;
-
-  const aliased = await db.getAllFromIndex("routePacks", "by-alias", id);
-  const match = aliased.find((pack) => isValidGeometry(pack.geometry));
-  return match ?? null;
+  const lookup = await getRoutePackStatus(id);
+  return lookup.status === "ready" ? lookup.pack : null;
 }
 
 export async function listRoutePacks(): Promise<RoutePack[]> {
   const db = await getDb();
   if (!db) return [];
-  const packs = await db.getAll("routePacks");
-  const seen = new Set<string>();
-  return packs.filter((pack) => {
-    const key = pack.aliases[0] || pack.id;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return isValidGeometry(pack.geometry);
-  });
+  // Only canonical payload records live in this store as of schema v3. Keep
+  // stale-but-valid records visible so an offline user can still see what is
+  // on their device and refresh them once online.
+  return (await db.getAll("routePacks")).filter((pack) => isValidGeometry(pack.geometry));
 }
 
 export async function hasRoutePack(id: string): Promise<boolean> {
-  return Boolean(await getRoutePack(id));
+  return (await getRoutePackStatus(id)).status === "ready";
 }
 
 export async function saveLastFix(fix: {
@@ -160,4 +280,11 @@ export function packCandidateIds(navId: string): string[] {
   if (navId.startsWith("trail-")) ids.push(navId.slice("trail-".length));
   if (navId.startsWith("plan-")) ids.push(navId.slice("plan-".length));
   return Array.from(new Set(ids));
+}
+
+/** Test-only reset for fake-indexeddb; not used by the application. */
+export async function resetRoutePackDbForTests() {
+  const current = dbPromise;
+  dbPromise = null;
+  if (current) (await current).close();
 }
