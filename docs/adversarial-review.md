@@ -541,6 +541,71 @@ cold offline navigate.
 
 ---
 
+## Seventh pass — the sheet a searcher reads
+
+`paper-backup.ts` is the artifact handed to SAR when the phone is dead. Its header says
+"hand to SAR", so it is the one output where a wrong label costs the most.
+
+### P1. It printed the literal string `null` for a grid
+
+`formatUsng` started returning `string | null` when it began refusing latitudes outside
+the UTM grid, but the paper sheet interpolated the result straight into a template:
+
+```
+=== HIKE PAPER BACKUP (hand to SAR) ===
+--- GRIDS ---
+Start USNG: null
+End USNG: null
+```
+
+Now a grid or an explicit `unavailable (outside the UTM grid at this latitude)` — never a
+word a reader has to interpret.
+
+### P2. It named a trailhead it could not know
+
+The sheet labelled the westernmost end **"Start USNG"**. Stored line direction is
+arbitrary — `stitchRelationWays` normalises every OSM chain to run west-east
+(`overpass.ts`, the trailing `chain.reverse()`), which is the same root cause as the
+backwards-"Remaining" bug. On a route walked east-to-west, the page telling a searcher
+where to begin named **the wrong trailhead**.
+
+Fixed by not guessing. With no known start the sheet names both ends by compass position
+and says so plainly:
+
+```
+--- ROUTE ENDS ---
+West end: 11S KB 7445 8116
+East end: 11S KB 7974 8102
+Which end the party set off from is NOT recorded on this sheet — ask the contact.
+```
+
+The panel now passes the hiker's first breadcrumb, which *is* where they set off, and the
+sheet uses it when present:
+
+```
+TRAILHEAD (party set off here): 11S KB 7974 8102
+Far end of route: 11S KB 7445 8116
+```
+
+An existing test asserted the old `Start USNG` label; it pinned the unsafe behaviour and
+was updated deliberately.
+
+### Also checked, and found sound
+
+A regression sweep re-ran every earlier finding (F1–F17, N1–N14, S1) against current
+`main` after ~9,400 lines landed from parallel branches. All still hold. `overdueStatus`
+no longer matches the shape my fix used, but the change is an **improvement**: it fails
+closed with `overdue: true` and `remainingMin: null` rather than returning `null`, and
+DST-ambiguous local times are now resolved explicitly. Mutation-testing the direction fix
+(reverting `travelDirectionAlong` to the whole-session comparison) fails four tests across
+both the reference and cache paths, so that coverage genuinely bites.
+
+Verification: `tsc --noEmit` clean, `eslint` clean, `vitest run` 575/575 green,
+`next build` succeeds.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

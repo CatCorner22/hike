@@ -76,7 +76,7 @@ describe("stabilizeLoop", () => {
 });
 
 describe("buildPaperBackup", () => {
-  it("includes route card, ICE, and start/end grids", () => {
+  it("includes route card, ICE, and both route-end grids", () => {
     const text = buildPaperBackup({
       trailName: "Mist Trail",
       geometry: {
@@ -92,6 +92,66 @@ describe("buildPaperBackup", () => {
     expect(text).toMatch(/PAPER BACKUP/);
     expect(text).toMatch(/ROUTE CARD/);
     expect(text).toMatch(/Sam/);
-    expect(text).toMatch(/Start USNG/);
+    // Was `Start USNG`. That label asserted a trailhead from the arbitrary stored line
+    // direction; the sheet now names both ends by compass position unless the hiker's
+    // own start is supplied.
+    expect(text).toMatch(/West end/);
+    expect(text).toMatch(/East end/);
+  });
+});
+
+describe("buildPaperBackup — the sheet a searcher reads", () => {
+  const line: GeoJSON.LineString = {
+    type: "LineString",
+    coordinates: [
+      [-119.56, 37.75],
+      [-119.5, 37.75],
+    ],
+  };
+  const profile = { name: "H", iceName: "C", icePhone: "5551234567", medical: "", partySize: 2 };
+
+  /**
+   * Regression: formatUsng returns string | null since it started refusing latitudes
+   * outside the UTM grid, and the result was interpolated straight into the sheet —
+   * printing "Start USNG: null" on a page whose header says "hand to SAR".
+   */
+  it("never prints the string null for a grid", () => {
+    const polar: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: [[-120, 85.2], [-119.9, 85.3]],
+    };
+    const sheet = buildPaperBackup({ trailName: "Arctic", geometry: polar, profile });
+    expect(sheet).not.toMatch(/\bnull\b/);
+    expect(sheet).toMatch(/unavailable/i);
+  });
+
+  /**
+   * Regression: the sheet labelled the westernmost end "Start USNG". Stored line
+   * direction is arbitrary (stitchRelationWays normalises chains west-east), so on a
+   * route walked east-to-west that sent a searcher to the wrong trailhead.
+   */
+  it("does not claim a trailhead it cannot know", () => {
+    const sheet = buildPaperBackup({ trailName: "Ridge", geometry: line, profile });
+    expect(sheet).not.toMatch(/Start USNG/);
+    expect(sheet).toMatch(/West end/);
+    expect(sheet).toMatch(/East end/);
+    expect(sheet).toMatch(/NOT recorded on this sheet/);
+  });
+
+  it("names the trailhead once the hiker's own start is known", () => {
+    const fromEast = buildPaperBackup({
+      trailName: "Ridge", geometry: line, profile,
+      startedFrom: { lat: 37.75, lng: -119.5 },
+    });
+    expect(fromEast).toMatch(/TRAILHEAD \(party set off here\)/);
+    expect(fromEast).not.toMatch(/NOT recorded/);
+
+    const fromWest = buildPaperBackup({
+      trailName: "Ridge", geometry: line, profile,
+      startedFrom: { lat: 37.75, lng: -119.56 },
+    });
+    // The two starts must not resolve to the same grid.
+    const grid = (t: string) => t.split("\n").find((l) => l.startsWith("TRAILHEAD"));
+    expect(grid(fromEast)).not.toBe(grid(fromWest));
   });
 });
