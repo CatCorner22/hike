@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -104,5 +104,41 @@ describe("local store owner scoping", () => {
 
     expect(await listPlans(OWNER)).toHaveLength(0);
     expect(await getPlan(legacy.id, OWNER)).toBeNull();
+  });
+});
+
+/**
+ * The store keeps an in-memory copy to avoid re-parsing the whole file on every
+ * mutation. That is only safe if an external writer still wins, so assert it
+ * rather than assuming it.
+ */
+describe("local store cache coherence", () => {
+  it("sees a write made by another process", async () => {
+    const file = process.env.LOCAL_STORE_PATH!;
+    await createPlan({ ownerId: "owner-a", name: "first" });
+    expect((await listPlans("owner-a")).length).toBe(1);
+
+    // Simulate a second process replacing the file underneath us.
+    const raw = JSON.parse(await readFile(file, "utf8"));
+    raw.plans.push({
+      id: "externally-added",
+      ownerId: "owner-a",
+      name: "added out of band",
+      trailId: null,
+      plannedDate: null,
+      notes: null,
+      waypoints: null,
+      campgroundIds: [],
+      customGeometry: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    // Bump mtime deliberately: some filesystems have coarse timestamps, and the
+    // size change alone must also be enough to invalidate.
+    await writeFile(file, JSON.stringify(raw));
+    await utimes(file, new Date(Date.now() + 1000), new Date(Date.now() + 1000));
+
+    const plans = await listPlans("owner-a");
+    expect(plans.map((plan) => plan.id)).toContain("externally-added");
   });
 });

@@ -5,6 +5,7 @@
 import { performance } from "node:perf_hooks";
 import { stat, writeFile } from "node:fs/promises";
 import { cpus } from "node:os";
+import { fileURLToPath } from "node:url";
 import { progressAlongTrail } from "../src/lib/geo/navigation";
 import { fetchElevationProfile, gpxFromLineString } from "../src/lib/geo";
 import { buildRoutePack, MAX_ROUTE_PACK_COORDINATES } from "../src/lib/offline/route-pack";
@@ -97,7 +98,7 @@ async function main() {
   globalThis.fetch = previousFetch;
   result.elevation = { samplesReturned: elevation.value.length, ms: elevation.ms, postBytes };
 
-  process.env.LOCAL_STORE_PATH = "/home/user/workspace/hike/adversarial/local-store-50k.json";
+  process.env.LOCAL_STORE_PATH = fileURLToPath(new URL("./local-store-50k.json", import.meta.url));
   const { addActivityPoint } = await import("../src/lib/store/local");
   for (const count of [0, 1_000, 10_000, 50_000]) {
     const points = Array.from({ length: count }, (_, index) => ({ id: `seed-${index}`, activityId: "hostile-activity", lat: 37 + index / 1e7, lng: -119, elevation: null, recordedAt: new Date(1_700_000_000_000 + index * 1000).toISOString() }));
@@ -109,7 +110,9 @@ async function main() {
     result.localStore.push({ preexistingPoints: count, appendLatencyMs: ms(performance.now() - started), journalBytes });
   }
 
-  await writeFile("/home/user/workspace/hike/adversarial/perf-results.json", JSON.stringify(result, null, 2));
+  // Resolved relative to this file: the previous hardcoded absolute path
+  // only existed on one machine and would fail in CI.
+  await writeFile(new URL("./perf-results.json", import.meta.url), JSON.stringify(result, null, 2));
   console.log(`MAX_ROUTE_PACK_COORDINATES=${MAX_ROUTE_PACK_COORDINATES}`);
   console.log(`BENCH_JSON=${JSON.stringify(result, null, 2)}`);
 }

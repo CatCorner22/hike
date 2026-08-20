@@ -48,7 +48,14 @@ jobs:
         # can only be tested against a production build. Both env vars are
         # required because the server intentionally fails closed without them.
         env:
+<<<<<<< HEAD
+          # Ownership is verified with SESSION_SECRET (src/lib/auth/owner.ts).
+          # OWNER_TOKEN_SECRET is kept for the local-store fallback path.
           SESSION_SECRET: ci-only-session-secret
+          OWNER_TOKEN_SECRET: ci-only-owner-token-secret
+=======
+          SESSION_SECRET: ci-only-session-secret
+>>>>>>> origin/main
           ALLOW_LOCAL_STORE_IN_PRODUCTION: "true"
         run: |
           npx next start --port 3111 &
@@ -64,3 +71,27 @@ jobs:
         env:
           BASE: http://127.0.0.1:3111
         run: node e2e/offline-navigation.mjs
+      # The probes below were written but never wired into CI, so they rotted:
+      # two pinned an IndexedDB version the app had since migrated past and
+      # failed with a timeout that read as a hang. Running them here means a
+      # schema change breaks the build instead of quietly disarming a probe.
+      - name: API adversarial probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/api-probe.mjs
+      - name: Offline adversarial probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/offline-adversarial.mjs
+      - name: GPS adversarial probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/gps-adversarial.mjs
+      - name: Concurrency probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/retest-concurrency.mjs
+      - name: CSP probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/csp-check.mjs
