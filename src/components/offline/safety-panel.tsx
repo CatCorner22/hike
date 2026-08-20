@@ -45,7 +45,7 @@ import {
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { formatFixAge } from "@/lib/safety/gps-quality";
-import { isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { useWakeLockHeld } from "@/hooks/use-wake-lock";
 import {
   dropWaypoint,
   getIceProfile,
@@ -423,6 +423,8 @@ export function SafetyPanel({
     [lat, lng, waypoints],
   );
 
+  const wakeLockHeld = useWakeLockHeld();
+
   const checks = useMemo(
     () =>
       safetySelfCheck({
@@ -430,11 +432,11 @@ export function SafetyPanel({
         gpsTrusted,
         iceFilled: isIceFilled(profile),
         returnSet: Boolean(returnLocal),
-        wakeLock: isWakeLockHeld(),
+        wakeLock: wakeLockHeld,
         crumbs: trackPoints.length,
         gpsDenied,
       }),
-    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied],
+    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied, wakeLockHeld],
   );
 
   const moon = useMemo(() => moonPhase(), []);
