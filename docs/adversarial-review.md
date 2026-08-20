@@ -948,6 +948,70 @@ store — are each caught.
 
 ---
 
+## Eleventh pass — the sun as a direction reference (`astro.ts`)
+
+The ninth pass promoted the shadow line over the watch dial, so `sunPosition` is now the
+app's primary direction reference when there is no compass. That made verifying it my
+own responsibility rather than an optional extra.
+
+### A1. `sunPosition` itself is sound
+
+It works from **day-of-year**, not days since J2000 — the year is dropped entirely. That
+only holds because the mean-motion constants nearly close over a year, so the residual is
+the leap cycle, and it has to be measured rather than assumed. Against the same
+low-precision algorithm anchored correctly at J2000, over 2024–2035 at Yosemite,
+Anchorage, Key West and New Zealand, every hour of the day where the sun is above 5°:
+
+| | worst azimuth | worst elevation |
+|---|---|---|
+| 2024 | 1.13° | 0.53° |
+| 2026 | 0.70° | 0.32° |
+| 2035 | 0.86° | 0.39° |
+
+Comfortably inside what a shadow stick can resolve. Midsummer noon in London comes out at
+179.06° / 61.93°, which is where it should be. **No finding** — but now pinned by a test,
+because the whole shadow-line change rests on it.
+
+### A2. The shadow line was offered when there is no shadow
+
+Neither `sunCompassHint` nor `sunVsWatchCheck` had an **upper** elevation gate. Measured:
+
+| | sun elevation | shadow from a 1 m stick | azimuth drift |
+|---|---|---|---|
+| Yosemite, 21 Jun noon | 75.7° | 25 cm | 0.9°/min |
+| Maui, Lahaina Noon | 87.5° | **4.5 cm** | 0.4°/min |
+| Key West, 21 Jun noon | 88.9° | **2.0 cm** | **11.0°/min** |
+
+At Key West the app said *"Shadow points ~10° true — lay a stick along it and read
+directions off the shadow."* The shadow is two centimetres long and has swung further
+than the width of a compass rose by the time the stick is down. Hawaii gets this twice a
+year by definition — the subsolar point reaches 23.4°N.
+
+Gated at 80° (still 18 cm of shadow), with the reason given rather than a bare refusal:
+
+```
+Sun is 89° up — nearly overhead. A 1 m stick throws only ~2 cm of shadow and its bearing
+swings fast this close to noon, so neither the shadow nor a watch dial is a direction
+now. Use the compass, or wait an hour.
+```
+
+### A3. A bearing of 360°
+
+`Math.round(359.6)` is 360, so Yosemite at midsummer noon rendered *"Shadow points ~360°"*
+— a compass reading that does not exist, and the same slip as the 6400-mils one in the
+ninth pass. A shared `roundBearing` now keeps every rendered bearing inside [0, 360), with
+a property test over −720…720.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 608/608 green, `npm run build`
+succeeds. Five mutations — removing either upper gate, letting `roundBearing` emit 360,
+over-tightening the gate to 60°, and dropping the minutes term from GMST — are each
+caught.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

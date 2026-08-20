@@ -1,4 +1,4 @@
-import { sunPosition } from "@/lib/safety/astro";
+import { overheadSunNote, roundBearing, sunPosition, SHADOW_MAX_ELEVATION_DEG } from "@/lib/safety/astro";
 import { gridConvergence } from "@/lib/safety/declination";
 import { formatUsng } from "@/lib/safety/usng";
 import { formatReport, reportField } from "@/lib/safety/report-field";
@@ -222,6 +222,8 @@ const WATCH_DIAL_MAX_ERROR_DEG = 15;
 export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
+  // Too near overhead for either the shadow or the dial to mean anything.
+  if (sun.elevation > SHADOW_MAX_ELEVATION_DEG) return overheadSunNote(sun.elevation);
   const hemi = lat >= 0 ? "north" : "south";
   // Solar time, not the device clock: see `solarHour`. An explicit hour is accepted
   // for field checks; the dial angle is still not the same quantity as sun azimuth.
@@ -232,8 +234,8 @@ export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?
   const watch = watchMethodHeading(hour, hemi);
   if (!watch) return null;
 
-  const shadowDeg = Math.round((sun.azimuth + 180) % 360);
-  const shadowLine = `Sun bears ${Math.round(sun.azimuth)}° true, so your shadow points ${shadowDeg}° true — lay a stick along it and read directions off the shadow (do not compare the sun azimuth number to the watch-dial angle).`;
+  const shadowDeg = roundBearing(sun.azimuth + 180);
+  const shadowLine = `Sun bears ${roundBearing(sun.azimuth)}° true, so your shadow points ${shadowDeg}° true — lay a stick along it and read directions off the shadow (do not compare the sun azimuth number to the watch-dial angle).`;
 
   // Where the bisector actually lands, given the real sun. North: the hour hand is
   // aimed at the sun, so the 12 mark trails it by the dial angle. South: the 12 mark
