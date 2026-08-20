@@ -18,6 +18,12 @@ interface SafetyNavMapProps {
   search?: GeoJSON.LineString | null;
   showGrid?: boolean;
   nightMode?: "off" | "red" | "nvg";
+  /**
+   * Pixels of vertical space reserved at the top of the canvas for a page-level
+   * header overlay. Orientation labels are drawn below this so they stay legible
+   * when warning banners stack up in the header.
+   */
+  topInsetPx?: number;
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -78,6 +84,7 @@ export function SafetyNavMap({
   search = null,
   showGrid = true,
   nightMode = "off",
+  topInsetPx = 0,
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
@@ -313,15 +320,17 @@ export function SafetyNavMap({
 
       if (rotation) ctx.restore();
 
+      // Keep orientation labels clear of the page header overlay.
+      const labelTop = topInsetPx + 20;
       ctx.fillStyle = "#e5e7eb";
       ctx.font = "12px sans-serif";
-      ctx.fillText(headingUp ? "Heading up" : "North up", 12, 20);
+      ctx.fillText(headingUp ? "Heading up" : "North up", 12, labelTop);
       if (!headingUp) {
-        ctx.fillText("N", width / 2 - 4, 18);
+        ctx.fillText("N", width / 2 - 4, labelTop - 2);
         ctx.strokeStyle = "#9ca3af";
         ctx.beginPath();
-        ctx.moveTo(width / 2, 22);
-        ctx.lineTo(width / 2, 34);
+        ctx.moveTo(width / 2, labelTop + 2);
+        ctx.lineTo(width / 2, labelTop + 14);
         ctx.stroke();
       }
     };
@@ -330,7 +339,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bbox, endpoints, follow, ghost, goto, headingUp, lines, nearest, nightMode, search, showGrid, user, waypoints]);
+  }, [backtrack, bbox, endpoints, follow, ghost, goto, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, user, waypoints]);
 
   return (
     <canvas

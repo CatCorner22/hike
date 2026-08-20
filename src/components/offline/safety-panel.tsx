@@ -18,6 +18,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CapabilityTabs } from "@/components/safety/capability-tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -41,14 +42,8 @@ import {
   emergencyMessage,
   formatCoords,
 } from "@/lib/safety/emergency";
-import {
-  breadcrumbGpx,
-  downloadTextFile,
-  isIceFilled,
-  nearestWaypoint,
-  safeFilename,
-  safetySelfCheck,
-} from "@/lib/safety/field";
+import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
+import { gainLastHourM } from "@/lib/safety/backtrack";
 import { formatFixAge } from "@/lib/safety/gps-quality";
 import { isWakeLockHeld } from "@/lib/offline/wake-lock";
 import {
@@ -145,6 +140,29 @@ import {
 } from "@/lib/safety/sere";
 import { playWhistleBlasts, smsHref } from "@/lib/safety/strobe";
 import {
+  CHECKIN_INTERVALS,
+  checkinStatus,
+  formatCheckinLog,
+  getCheckinSettings,
+  listCheckins,
+  logCheckin,
+  saveCheckinSettings,
+  type CheckinEntry,
+  type CheckinSettings,
+} from "@/lib/safety/checkin";
+import { buildSafetyDossier } from "@/lib/safety/dossier";
+import { verifyRegroup } from "@/lib/safety/verify";
+import {
+  amsAssessment,
+  avalancheTerrainWarning,
+  bearSafetyCard,
+  snakeBiteSop,
+  wildernessFirstAidCard,
+  wildlifeEncounterSop,
+  type AmsSymptom,
+  type WildlifeAnimal,
+} from "@/lib/safety/wilderness";
+import {
   formatDdm,
   formatDms,
   formatMgrs10,
@@ -188,6 +206,7 @@ interface SafetyPanelProps {
   onSearchOverlay?: (line: GeoJSON.LineString | null) => void;
   onCommsAttempt?: () => void;
   lastCommsAt?: number | null;
+  onCheckinLogged?: () => void;
 }
 
 export function SafetyPanel({
@@ -225,6 +244,7 @@ export function SafetyPanel({
   onSearchOverlay,
   onCommsAttempt,
   lastCommsAt = null,
+  onCheckinLogged,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -283,9 +303,28 @@ export function SafetyPanel({
   const [lpqSeen, setLpqSeen] = useState("");
   const [lpqClothes, setLpqClothes] = useState("");
   const [canWalk, setCanWalk] = useState(true);
+  const [checkinSettings, setCheckinSettings] = useState<CheckinSettings>({
+    intervalMin: 60,
+    enabled: false,
+  });
+  const [checkins, setCheckins] = useState<CheckinEntry[]>([]);
+  const [checkinLabel, setCheckinLabel] = useState<string | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [wildlifeAnimal, setWildlifeAnimal] = useState<WildlifeAnimal>("bear_grizzly");
+  const [amsSymptoms, setAmsSymptoms] = useState<AmsSymptom[]>([]);
+  const [verifyChallengeIn, setVerifyChallengeIn] = useState("");
+  const [verifyPasswordIn, setVerifyPasswordIn] = useState("");
+  const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
+  const [dossierStatus, setDossierStatus] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
-  profileRef.current = profile;
+
+  // Mirror the latest profile into a ref so the unmount cleanup below can flush
+  // a pending debounced save. Syncing in an effect rather than during render
+  // keeps this off the render path.
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     void getIceProfile().then(setProfile);
@@ -303,7 +342,19 @@ export function SafetyPanel({
 
   useEffect(() => {
     void listNavLegs(packId).then(setLegs);
+    void getCheckinSettings().then(setCheckinSettings);
+    void listCheckins(packId).then(setCheckins);
   }, [packId]);
+
+  useEffect(() => {
+    const tick = () => {
+      const last = checkins[0]?.recordedAt ?? null;
+      setCheckinLabel(checkinStatus(last, checkinSettings)?.label ?? null);
+    };
+    tick();
+    const id = window.setInterval(tick, 30000);
+    return () => window.clearInterval(id);
+  }, [checkins, checkinSettings]);
 
   useEffect(() => {
     const tick = () => {
@@ -414,17 +465,39 @@ export function SafetyPanel({
     partySize: profile.partySize,
   });
   const beadsInfo = paceBeads(beads);
+  const amsResult = amsAssessment({
+    altitudeM,
+    gainLastHourM: gainLastHourM(trackPoints),
+    symptoms: amsSymptoms,
+  });
+  const avyNote =
+    slopePct != null ? avalancheTerrainWarning({ slopePct, aspectDeg: heading }) : null;
+
+  async function persistCheckinSettings(next: CheckinSettings) {
+    setCheckinSettings(next);
+    await saveCheckinSettings(next);
+  }
 
   async function persistReturn(value: string) {
     setReturnLocal(value);
     await setOverdueAlarm(value ? new Date(value) : null);
   }
 
-  async function markWaypoint(kind: SafetyWaypoint["kind"]) {
+  async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
     if (lat == null || lng == null) return;
-    const point = await dropWaypoint(packId, kind, lat, lng);
+    await dropWaypoint(packId, kind, lat, lng, note);
     onWaypointsChange(await listWaypoints(packId));
-    void point;
+  }
+
+  async function handleCheckin() {
+    const entry = await logCheckin(packId, {
+      lat,
+      lng,
+      note: checkinSettings.enabled ? "I'm OK" : undefined,
+    });
+    setCheckins((prev) => [entry, ...prev].slice(0, 20));
+    setCheckinLabel(checkinStatus(entry.recordedAt, checkinSettings)?.label ?? null);
+    onCheckinLogged?.();
   }
 
   return (
@@ -489,6 +562,19 @@ export function SafetyPanel({
             >
               <Timer className="mt-0.5 size-4 shrink-0" />
               <p>{overdueLabel}</p>
+            </div>
+          )}
+
+          {checkinLabel && (
+            <div
+              className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
+                checkinLabel.includes("OVERDUE")
+                  ? "border-destructive bg-destructive/10 text-destructive"
+                  : "border-amber-500/50 bg-amber-500/10"
+              }`}
+            >
+              <Timer className="mt-0.5 size-4 shrink-0" />
+              <p>{checkinLabel}</p>
             </div>
           )}
 
@@ -672,6 +758,10 @@ export function SafetyPanel({
               <Droplets className="mr-2 size-4" />
               I drank
             </Button>
+            <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
+              <CheckCircle2 className="mr-2 size-4" />
+              I'm OK
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -687,11 +777,193 @@ export function SafetyPanel({
             <Button variant="ghost" onClick={() => setBeads(0)}>
               Reset beads
             </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const text = buildSafetyDossier({
+                  profile,
+                  trailName,
+                  packId,
+                  lat,
+                  lng,
+                  accuracyM,
+                  stale,
+                  recordedAt,
+                  offTrailM,
+                  returnAt: returnLocal ? new Date(returnLocal).toISOString() : null,
+                  checkins,
+                  navLegs: legs,
+                  waypoints,
+                });
+                const ok = await copyEmergencyInfo(text);
+                if (!ok) {
+                  downloadTextFile(`${safeFilename(trailName)}-dossier.txt`, text, "text/plain");
+                  setDossierStatus("Dossier downloaded");
+                } else {
+                  setDossierStatus("Dossier copied");
+                }
+                window.setTimeout(() => setDossierStatus(null), 2500);
+              }}
+            >
+              <Download className="mr-2 size-4" />
+              {dossierStatus ?? "Safety dossier"}
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">
             Pace beads: {beadsInfo.label}
             {gmt ? ` · ${gmt}` : ""}
+            {dossierStatus ? ` · ${dossierStatus}` : ""}
           </p>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Periodic check-in
+            </p>
+            <label className="flex items-center gap-2 text-xs">
+              <input
+                type="checkbox"
+                checked={checkinSettings.enabled}
+                onChange={(e) =>
+                  void persistCheckinSettings({ ...checkinSettings, enabled: e.target.checked })
+                }
+              />
+              Remind me to check in on schedule
+            </label>
+            <div className="flex flex-wrap gap-1">
+              {CHECKIN_INTERVALS.map((min) => (
+                <Button
+                  key={min}
+                  size="sm"
+                  variant={checkinSettings.intervalMin === min ? "default" : "outline"}
+                  onClick={() =>
+                    void persistCheckinSettings({ ...checkinSettings, intervalMin: min })
+                  }
+                >
+                  {min} min
+                </Button>
+              ))}
+            </div>
+            <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
+              Log I'm OK now
+            </Button>
+            {checkins.length > 0 && (
+              <p className="whitespace-pre-wrap font-mono text-[10px] text-muted-foreground">
+                {formatCheckinLog(checkins.slice(0, 5))}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">Field note</p>
+            <Input
+              value={noteText}
+              placeholder="Landmark, hazard, or rally point note"
+              onChange={(e) => setNoteText(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              disabled={lat == null || !noteText.trim()}
+              onClick={async () => {
+                await markWaypoint("note", noteText.trim());
+                setNoteText("");
+              }}
+            >
+              Drop note waypoint
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Wilderness hazards
+            </p>
+            {avyNote && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">{avyNote}</p>
+            )}
+            <p className="text-xs font-medium text-foreground">Altitude illness (self-report)</p>
+            <div className="flex flex-wrap gap-2 text-xs">
+              {(
+                [
+                  ["headache", "Headache"],
+                  ["nausea", "Nausea"],
+                  ["fatigue", "Fatigue"],
+                  ["dizziness", "Dizzy"],
+                  ["insomnia", "Insomnia"],
+                  ["ataxia", "Unsteady gait"],
+                ] as Array<[AmsSymptom, string]>
+              ).map(([id, label]) => (
+                <label key={id} className="flex items-center gap-1">
+                  <input
+                    type="checkbox"
+                    checked={amsSymptoms.includes(id)}
+                    onChange={(e) =>
+                      setAmsSymptoms((prev) =>
+                        e.target.checked ? [...prev, id] : prev.filter((x) => x !== id),
+                      )
+                    }
+                  />
+                  {label}
+                </label>
+              ))}
+            </div>
+            {amsResult.warning && (
+              <p className="text-xs text-amber-700 dark:text-amber-400">{amsResult.warning}</p>
+            )}
+            {amsResult.actions.length > 0 && (
+              <ul className="list-disc pl-4 text-xs text-muted-foreground">
+                {amsResult.actions.map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Bear &amp; wildlife</summary>
+              <div className="mt-2 flex flex-wrap gap-1">
+                {(
+                  [
+                    ["bear_grizzly", "Grizzly"],
+                    ["bear_black", "Black bear"],
+                    ["moose", "Moose"],
+                    ["cougar", "Cougar"],
+                  ] as Array<[WildlifeAnimal, string]>
+                ).map(([id, label]) => (
+                  <Button
+                    key={id}
+                    size="sm"
+                    variant={wildlifeAnimal === id ? "default" : "outline"}
+                    onClick={() => setWildlifeAnimal(id)}
+                  >
+                    {label}
+                  </Button>
+                ))}
+              </div>
+              <ul className="mt-2 list-disc pl-4">
+                {wildlifeEncounterSop(wildlifeAnimal).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Food / bear basics</p>
+              <ul className="list-disc pl-4">
+                {bearSafetyCard().slice(0, 4).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </details>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">
+                Snake bite &amp; first aid
+              </summary>
+              <ul className="mt-2 list-disc pl-4">
+                {snakeBiteSop().map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <ul className="mt-2 list-disc pl-4">
+                {wildernessFirstAidCard().slice(0, 5).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            </details>
+          </div>
 
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1586,6 +1858,33 @@ export function SafetyPanel({
               placeholder="Expected reply"
               onChange={(e) => void persistProfile({ ...profile, password: e.target.value })}
             />
+            <p className="text-xs font-medium text-foreground">Night regroup verify</p>
+            <Input
+              value={verifyChallengeIn}
+              placeholder="Say the challenge word"
+              onChange={(e) => setVerifyChallengeIn(e.target.value)}
+            />
+            <Input
+              value={verifyPasswordIn}
+              placeholder="Reply with password"
+              onChange={(e) => setVerifyPasswordIn(e.target.value)}
+            />
+            <Button
+              variant="outline"
+              onClick={() => {
+                const r = verifyRegroup({
+                  challengeResponse: verifyChallengeIn,
+                  passwordResponse: verifyPasswordIn,
+                  expectedChallenge: profile.challenge,
+                  expectedPassword: profile.password,
+                });
+                setVerifyMsg(r.message);
+                window.setTimeout(() => setVerifyMsg(null), 3000);
+              }}
+            >
+              Verify party
+            </Button>
+            {verifyMsg && <p className="text-xs text-muted-foreground">{verifyMsg}</p>}
             <Label htmlFor="medical">Medical notes</Label>
             <Input
               id="medical"
@@ -1594,6 +1893,8 @@ export function SafetyPanel({
               onChange={(e) => void persistProfile({ ...profile, medical: e.target.value })}
             />
           </div>
+
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
 
           <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Tell 911 / SAR</p>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { batterySafetyAdvice } from "@/lib/safety/field-ops";
 
 export function useBatteryWarning(threshold = 0.15) {
   const [warning, setWarning] = useState<string | null>(null);
@@ -22,7 +23,8 @@ export function useBatteryWarning(threshold = 0.15) {
       if (!battery) return;
       if (!battery.charging && battery.level <= threshold) {
         setWarning(
-          `Battery ${Math.round(battery.level * 100)}% — enable battery saver and keep the screen dim.`,
+          batterySafetyAdvice(battery.level, battery.charging) ??
+            `Battery ${Math.round(battery.level * 100)}% — enable battery saver and keep the screen dim.`,
         );
       } else {
         setWarning(null);
