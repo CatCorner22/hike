@@ -105,13 +105,10 @@ export interface LitterEvacAdvice {
   message: string;
 }
 
-<<<<<<< HEAD
+const MAX_LITTER_DISTANCE_M = 100_000;
+
 export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
   const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
-  // Clamping a non-finite or negative distance to 0 produced a confident
-  // "Litter carry ~0 min for 0 m" from garbage input -- the worst possible
-  // answer, because a party would read it as "this is trivial, start walking".
-  // An unknown distance is refused instead.
   if (Number.isFinite(partySize) && partySize > MAX_PLAUSIBLE_PARTY) {
     return {
       feasible: false,
@@ -122,36 +119,17 @@ export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAd
         "time is given. Re-enter the number of people actually present.",
     };
   }
-  if (!Number.isFinite(distanceM) || distanceM < 0) {
+  if (!Number.isFinite(distanceM) || distanceM <= 0 || distanceM > MAX_LITTER_DISTANCE_M) {
     return {
       feasible: false,
       carriers: Math.max(0, party - 2),
       hours: null,
       message:
-        "Distance to the evacuation point is unknown, so no carry time can be given. " +
-        "Do not plan a litter carry on a guess: fix the position first, or shelter in " +
-        "place and send for help.",
+        "Distance to the evacuation point is unknown or not a plausible carry, so no carry " +
+        "time can be given. Do not plan a litter carry on a guess: fix the position first, " +
+        "or shelter in place and send for help.",
     };
   }
-=======
-const MAX_LITTER_DISTANCE_M = 100_000;
-const MAX_LITTER_PARTY = 50;
-
-function isSaneLitterInput(distanceM: number, partySize: number): boolean {
-  return (
-    Number.isFinite(distanceM) &&
-    distanceM > 0 &&
-    distanceM <= MAX_LITTER_DISTANCE_M &&
-    Number.isFinite(partySize) &&
-    partySize >= 1 &&
-    partySize <= MAX_LITTER_PARTY
-  );
-}
-
-export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice | null {
-  if (!isSaneLitterInput(distanceM, partySize)) return null;
-  const party = Math.floor(partySize);
->>>>>>> origin/main
   const metres = distanceM;
   // One casualty plus one attendant on the airway; everyone else can take a handle.
   const carriers = Math.max(0, party - 2);
@@ -185,6 +163,6 @@ export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAd
   };
 }
 
-export function litterEvacTime(distanceM: number, partySize = 2): string | null {
-  return litterEvacAdvice(distanceM, partySize)?.message ?? null;
+export function litterEvacTime(distanceM: number, partySize = 2): string {
+  return litterEvacAdvice(distanceM, partySize).message;
 }

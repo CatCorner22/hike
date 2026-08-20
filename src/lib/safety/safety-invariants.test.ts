@@ -118,16 +118,11 @@ describe("permanent safety invariants", () => {
     expect(radioHorizonKm(301)).toBeNull();
     expect(lineOfSightRangeKm(2, 301)).toBeNull();
     expect(ascentRateAdvice({ currentElevationM: 9001, previousNightElevationM: 100 })).toBeNull();
-<<<<<<< HEAD
     expect(refusesToEstimate(litterEvacTime(1, 1))).toBe(true);
-=======
-    // A solo party gets an explicit do-not-carry instruction, not silence: null renders
-    // nothing, and nothing is how a party of two talks itself into attempting a carry.
     expect(litterEvacTime(500, 1)).toMatch(/shelter in place|send for help/i);
     expect(litterEvacTime(500, 1)).not.toMatch(/~\d+(\.\d+)?\s*(h|min) for/);
-    expect(litterEvacTime(0, 4)).toBeNull();
-    expect(litterEvacTime(200_000, 8)).toBeNull();
->>>>>>> origin/main
+    expect(refusesToEstimate(litterEvacTime(0, 4))).toBe(true);
+    expect(refusesToEstimate(litterEvacTime(200_000, 8))).toBe(true);
   });
 
   it("never returns an off-trail all-clear for invalid position data", () => {
