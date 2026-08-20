@@ -107,6 +107,29 @@ async function waitForServiceWorker(page) {
   );
 }
 
+/**
+ * Navigate now refuses to unlock until ICE + return time are set.
+ * Complete the checklist the way a hiker would — including offline.
+ */
+async function completeReadinessIfShown(page) {
+  const checklist = page.locator("text=Pre-hike checklist");
+  if ((await checklist.count()) === 0) return;
+  await page.locator("#hiker").fill("Pat");
+  await page.locator("#ice-name").fill("Sam");
+  await page.locator("#ice-phone").fill("555-123-4567");
+  const local = new Date(Date.now() + 4 * 3600_000);
+  const value = new Date(local.getTime() - local.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+  await page.locator("#return").fill(value);
+  await page.getByRole("button", { name: /Start navigation/i }).click();
+  await page.waitForFunction(
+    () => !document.body.innerText.includes("Pre-hike checklist"),
+    null,
+    { timeout: 15_000 },
+  );
+}
+
 /** Does the navigate screen actually show navigation UI (not an error state)? */
 async function assessNavigateScreen(page) {
   const body = (await page.locator("body").innerText().catch(() => "")) || "";
@@ -189,6 +212,7 @@ async function run() {
     await waitForServiceWorker(page);
     // Let the route pack persist to IndexedDB.
     await page.waitForTimeout(2500);
+    await completeReadinessIfShown(page);
 
     const online = await assessNavigateScreen(page);
     log("A1 navigate online", online.ok ? "PASS" : "FAIL", JSON.stringify(online.signals) + " | " + online.excerpt);
@@ -196,6 +220,7 @@ async function run() {
     await context.setOffline(true);
     await page.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
     await page.waitForTimeout(2500);
+    await completeReadinessIfShown(page);
 
     const offline = await assessNavigateScreen(page);
     log(
@@ -320,6 +345,7 @@ async function run() {
         navError = e.message.split("\n")[0];
       });
     await page.waitForTimeout(2500);
+    if (!navError) await completeReadinessIfShown(page);
 
     const cold = navError
       ? { ok: false, excerpt: `navigation threw: ${navError}` }
