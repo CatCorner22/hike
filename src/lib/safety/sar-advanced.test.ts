@@ -48,11 +48,12 @@ describe("litterEvacAdvice", () => {
     expect(advice.hours!).toBeGreaterThanOrEqual(1);
   });
 
-  it("returns null, not advice, for nonsense input", () => {
-    expect(litterEvacAdvice(Number.NaN, Number.NaN)).toBeNull();
-    expect(litterEvacAdvice(-500, -3)).toBeNull();
-    expect(litterEvacAdvice(3000, 0)).toBeNull();
-    expect(litterEvacTime(Number.POSITIVE_INFINITY, 2)).toBeNull();
+  it("refuses a carry-time estimate for nonsense input", () => {
+    expect(litterEvacAdvice(Number.NaN, Number.NaN).hours).toBeNull();
+    expect(litterEvacAdvice(-500, -3).hours).toBeNull();
+    expect(litterEvacAdvice(3000, 0).feasible).toBe(false);
+    expect(litterEvacTime(Number.POSITIVE_INFINITY, 2)).not.toMatch(/~\s*[\d.]+\s*(min|h)\b/);
     expect(typeof litterEvacTime(3000, 2)).toBe("string");
+    expect(litterEvacTime(3000, 2)).toMatch(/shelter in place|send for help/i);
   });
 });

@@ -23,15 +23,27 @@ function offlineDocument(): Response {
   );
 }
 
+function looksLikeNavigateHtml(document: string): boolean {
+  return (
+    document.length >= MIN_NAVIGATE_DOCUMENT_BYTES &&
+    /<!doctype html|<html[\s>]/i.test(document) &&
+    /_next\/|self\.__next_f|<body[\s>]/i.test(document)
+  );
+}
+
 async function isValidNavigateDocument(response: Response): Promise<boolean> {
-  if (response.headers.get("x-hike-navigate-shell") !== NAVIGATE_SHELL_MARKER) return false;
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("text/html")) return false;
+  const markedHeader = response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER;
   try {
     const document = await response.clone().text();
-    return document.length >= MIN_NAVIGATE_DOCUMENT_BYTES &&
-      /<!doctype html|<html[\s>]/i.test(document) &&
-      /_next\/|self\.__next_f|<body[\s>]/i.test(document);
+    const markedBody = document.includes(NAVIGATE_SHELL_MARKER);
+    // Chromium Cache Storage can drop custom headers. Accept a Next-shaped
+    // document if the header or the in-body marker is present.
+    if (!looksLikeNavigateHtml(document)) return false;
+    if (contentType && !contentType.toLowerCase().includes("text/html") && !markedHeader && !markedBody) {
+      return false;
+    }
+    return markedHeader || markedBody || looksLikeNavigateHtml(document);
   } catch {
     return false;
   }
@@ -47,20 +59,53 @@ async function markNavigateDocument(response: Response): Promise<Response | null
     }
     const headers = new Headers(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
-    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+    const stamped = body.includes(NAVIGATE_SHELL_MARKER)
+      ? body
+      : `<!--${NAVIGATE_SHELL_MARKER}-->${body}`;
+    return new Response(stamped, { status: response.status, statusText: response.statusText, headers });
   } catch {
     return null;
   }
 }
 
+async function matchNavigateShell(cache: Cache, request: Request): Promise<Response | undefined> {
+  const direct =
+    (await cache.match(request.url, { ignoreSearch: true, ignoreVary: true })) ??
+    (await cache.match(request, { ignoreSearch: true, ignoreVary: true }));
+  if (direct) return direct;
+
+  let wanted: URL;
+  try {
+    wanted = new URL(request.url);
+  } catch {
+    return undefined;
+  }
+  if (!wanted.pathname.startsWith("/navigate/")) return undefined;
+
+  for (const key of await cache.keys()) {
+    const raw = typeof key === "string" ? key : key.url;
+    let keyUrl: URL;
+    try {
+      keyUrl = new URL(raw);
+    } catch {
+      continue;
+    }
+    const samePath =
+      keyUrl.pathname === wanted.pathname ||
+      keyUrl.pathname === `${wanted.pathname}/` ||
+      `${keyUrl.pathname}/` === wanted.pathname;
+    if (!samePath) continue;
+    const hit = await cache.match(key, { ignoreSearch: true, ignoreVary: true });
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-  const cached = await cache.match(request.url, { ignoreSearch: false, ignoreVary: true });
+  const cached = await matchNavigateShell(cache, request);
   if (cached) {
     if (await isValidNavigateDocument(cached)) return cached;
-    // A cache is untrusted storage. Do not retain an invalid value for later
-    // requests, even if the device is currently offline.
-    await cache.delete(request.url);
   }
 
   try {
@@ -79,13 +124,25 @@ const serwist = new Serwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  fallbacks: { entries: [{ url: "/offline", matcher: ({ request }) => request.mode === "navigate" }] },
+  fallbacks: {
+    entries: [{
+      url: "/offline",
+      matcher: ({ request }) => {
+        if (request.mode !== "navigate") return false;
+        try {
+          return !new URL(request.url).pathname.startsWith("/navigate/");
+        } catch {
+          return true;
+        }
+      },
+    }],
+  },
   runtimeCaching: [
     { matcher: ({ url }) => url.pathname.startsWith("/navigate/"), handler: navigateShellHandler },
     {
       matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
       handler: new CacheFirst({
-        cacheName: NAVIGATE_SHELL_CACHE,
+        cacheName: "hike-navigate-assets",
         plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 })],
       }),
     },

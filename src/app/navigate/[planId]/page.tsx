@@ -18,12 +18,6 @@ import {
   compassLabel,
   gpsAccuracyLabel,
   normalizeHeading,
-<<<<<<< HEAD
-=======
-  progressAlongTrail,
-  remainingElevationGain,
-  stabilizeLoop,
->>>>>>> origin/main
   travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
@@ -39,7 +33,11 @@ import {
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
-import { createRouteProgressCache, type RouteProgressCache } from "@/lib/offline/progress-cache";
+import {
+  createRouteProgressCache,
+  progressWithRouteCache,
+  type RouteProgressCache,
+} from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
 import { hikeReadiness } from "@/lib/safety/readiness";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
@@ -400,50 +398,16 @@ export default function NavigatePage() {
     if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
       progressCacheRef.current = createRouteProgressCache(loadState.pack);
     }
-<<<<<<< HEAD
-    // travelDirection MUST be passed. It was computed and listed in this
-    // effect's dependencies but never forwarded, so "Remaining" silently
-    // counted toward the stored end of the route rather than the end being
-    // walked to -- reintroducing the bug the direction fix was written for,
-    // and with it the silenced turnaround warning.
+    // travelDirection MUST be passed. Omitting it counts Remaining toward the
+    // stored line end, not the end you are walking to.
     const p = progressWithRouteCache(
       progressCacheRef.current,
       { lat: navFix.lat, lng: navFix.lng },
       travelDirection,
     );
-=======
-    const raw = progressAlongTrail(
-      { lat: navFix.lat, lng: navFix.lng },
-      loadState.pack.geometry,
-      loadState.pack.elevationProfile,
-      snapHintRef.current,
-      travelDirection,
-    );
-    const stabilized = stabilizeLoop(raw, snapHintRef.current);
-    const toEnd = Math.max(stabilized.totalMeters - stabilized.traveledMeters, 0);
-    const toStart = Math.max(stabilized.traveledMeters, 0);
-    const remainingMeters =
-      travelDirection === "backward"
-        ? toStart
-        : travelDirection === "forward"
-          ? toEnd
-          : Math.min(toStart, toEnd);
-    const resolvedDirection =
-      travelDirection !== "unknown" ? travelDirection : toStart <= toEnd ? "backward" : "forward";
-    const p: TrailProgress = {
-      ...stabilized,
-      remainingMeters,
-      remainingDirection: travelDirection,
-      remainingElevationMeters: remainingElevationGain(
-        loadState.pack.elevationProfile,
-        stabilized.traveledMeters,
-        resolvedDirection,
-      ),
-    };
     if (Number.isFinite(p.traveledMeters)) {
       snapHintRef.current = { traveledMeters: p.traveledMeters };
     }
->>>>>>> origin/main
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 

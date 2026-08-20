@@ -35,6 +35,16 @@ describe("hikeReadiness", () => {
     ).toBe(true);
   });
 
+  it("treats an epoch deadline as set so the HUD can show OVERDUE", () => {
+    expect(
+      hikeReadiness({
+        packReady: true,
+        profile: ice,
+        returnAt: "1970-01-01T00:00:00.000Z",
+      }).ok,
+    ).toBe(true);
+  });
+
   it("does not require a check-in interval", () => {
     expect(
       hikeReadiness({

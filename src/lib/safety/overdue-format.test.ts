@@ -10,6 +10,7 @@ describe("overdue deadline formatting", () => {
   });
   it("caps an absurd clock rather than printing millions of minutes", () => {
     const label = overdueStatus(new Date(0).toISOString(), now).label;
+    expect(label).toMatch(/OVERDUE by/);
     expect(label).toMatch(/check the device clock/);
     expect(label).not.toMatch(/\d{6,}/);
   });
