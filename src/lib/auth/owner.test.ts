@@ -89,9 +89,22 @@ describe("requireOwner", () => {
    * A missing secret must not degrade to "everybody shares one identity". Production
    * refuses the request outright rather than serving one person's plans to another.
    */
+  it("accepts OWNER_TOKEN_SECRET as a legacy alias for SESSION_SECRET", async () => {
+    // The CI workflow and some deployments were configured with the other name; a
+    // rename must not lock every device out of its own data.
+    vi.stubEnv("SESSION_SECRET", "");
+    vi.stubEnv("OWNER_TOKEN_SECRET", SECRET);
+    const ownerId = newOwnerId();
+    const token = await signOwnerToken(ownerId);
+    const result = await requireOwner(request(`hike_owner=${token}`));
+    expect(result.ok).toBe(true);
+    expect(result.ok && result.ownerId).toBe(ownerId);
+  });
+
   it("fails closed in production when SESSION_SECRET is absent", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SESSION_SECRET", "");
+    vi.stubEnv("OWNER_TOKEN_SECRET", "");
     const result = await requireOwner(request("hike_owner=anything"));
     expect(result.ok).toBe(false);
     expect(!result.ok && result.response.status).toBe(503);

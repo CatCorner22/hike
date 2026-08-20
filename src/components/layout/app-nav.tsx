@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   Compass,
   Footprints,
+  HelpCircle,
   Map,
   Mountain,
   Tent,
@@ -18,6 +19,9 @@ const navItems = [
   { href: "/plan", label: "Plans", icon: ClipboardList },
   { href: "/activities", label: "Activities", icon: Footprints },
   { href: "/camping", label: "Camping", icon: Tent },
+  // Desktop-only: the mobile bottom bar stays at five core destinations; on a phone the
+  // guide is reached from the home screen and from the navigate error state.
+  { href: "/guide", label: "Guide", icon: HelpCircle, desktopOnly: true },
 ];
 
 export function AppNav() {
@@ -56,7 +60,7 @@ export function AppNav() {
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background md:hidden">
         <div className="flex justify-around py-2">
-          {navItems.map(({ href, label, icon: Icon }) => (
+          {navItems.filter((item) => !item.desktopOnly).map(({ href, label, icon: Icon }) => (
             <Link
               key={href}
               href={href}

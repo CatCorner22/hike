@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDistance, formatDuration, formatElevation, formatPace } from "@/lib/geo";
+import { createGainTracker, type GainTracker } from "@/lib/geo/elevation-gain";
 import { queueActivityPoint } from "@/lib/offline";
 import { usePointSync } from "@/hooks/use-point-sync";
 import { Pause, Play, Square } from "lucide-react";
@@ -29,6 +30,7 @@ export function ActivityRecorder({ trailId, planId, onComplete }: ActivityRecord
   const uploadTimerRef = useRef<number | null>(null);
   const uploadingRef = useRef(false);
   const statsRef = useRef<LiveStats>(EMPTY_STATS);
+  const gainTrackerRef = useRef<GainTracker>(createGainTracker());
 
   const updateStats = useCallback((update: (previous: LiveStats) => LiveStats) => {
     const next = update(statsRef.current);
@@ -92,14 +94,16 @@ export function ActivityRecorder({ trailId, planId, onComplete }: ActivityRecord
       const distance = haversineMeters(previous.lat, previous.lng, point.lat, point.lng);
       const elapsedMs = point.recordedAt.getTime() - previous.recordedAt.getTime();
       if (distance < 10 && elapsedMs < 30_000) return;
+      // Smoothed + hysteresis, never a raw positive-delta sum: GPS altitude jitter of
+      // ~5 m turned a flat 5 km walk into ~1,300 m of reported climb.
+      const elevationGainMeters = gainTrackerRef.current.add(point.elevation);
       updateStats((current) => ({
         distanceMeters: current.distanceMeters + distance,
-        elevationGainMeters: current.elevationGainMeters + (
-          point.elevation != null && previous.elevation != null && point.elevation > previous.elevation
-            ? point.elevation - previous.elevation : 0),
+        elevationGainMeters,
         durationSeconds: currentDurationSeconds(), pointCount: current.pointCount + 1,
       }));
     } else {
+      gainTrackerRef.current.add(point.elevation);
       updateStats((current) => ({ ...current, durationSeconds: currentDurationSeconds(), pointCount: current.pointCount + 1 }));
     }
     lastPointRef.current = point;
@@ -132,6 +136,9 @@ export function ActivityRecorder({ trailId, planId, onComplete }: ActivityRecord
     if (id && statusRef.current !== "idle") {
       void fetch(`/api/activities/${encodeURIComponent(id)}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" },
+        // keepalive lets the request outlive the page: without it, closing the tab
+        // mid-hike abandons the activity with no end time and stale stats.
+        keepalive: true,
         body: JSON.stringify({ endedAt: new Date().toISOString(), stats: { ...statsRef.current, durationSeconds: currentDurationSeconds() } }),
       });
     }
@@ -149,10 +156,18 @@ export function ActivityRecorder({ trailId, planId, onComplete }: ActivityRecord
       activityIdRef.current = data.id;
       pointsRef.current = []; uploadQueueRef.current = []; lastPointRef.current = null;
       statsRef.current = EMPTY_STATS; setStats(EMPTY_STATS);
+      gainTrackerRef.current = createGainTracker();
       accumulatedMovingMsRef.current = 0; activeStartedAtRef.current = Date.now();
       setRecorderStatus("recording");
       startWatch();
-    } catch (caught) { setError(caught instanceof Error ? caught.message : "Failed to start"); }
+    } catch (caught) {
+      const offline = typeof navigator !== "undefined" && !navigator.onLine;
+      setError(
+        offline
+          ? "No connection — recording needs signal to start. Use Navigate instead: it records your track offline, and you can export the GPX afterwards."
+          : caught instanceof Error ? caught.message : "Failed to start",
+      );
+    }
   };
 
   const pauseRecording = () => {

@@ -54,6 +54,31 @@ export function trailLengthMeters(
   return turf.length(turf.feature(geometry), { units: "meters" });
 }
 
+/**
+ * Distance still to walk, given how far along the stored line the hiker is and which way
+ * they are travelling. Walking against the stored direction, "total - traveled" counts
+ * *up* as you approach your destination — it read 0.00 km at the trailhead and 5.28 km at
+ * the far end, and fed turnaroundWarning, silencing the daylight warning at the start of
+ * a long walk. With no direction established yet, the nearer end is the honest answer.
+ *
+ * Every code path that turns traveled metres into a "remaining" figure must go through
+ * this — the fast progress cache re-derived it independently once and re-introduced the
+ * backwards readout.
+ */
+export function resolveRemaining(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+): { remainingMeters: number; resolvedDirection: TravelDirection } {
+  const toEnd = Math.max(totalMeters - traveledMeters, 0);
+  const toStart = Math.max(traveledMeters, 0);
+  const remainingMeters =
+    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
+  const resolvedDirection: TravelDirection =
+    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  return { remainingMeters, resolvedDirection };
+}
+
 function progressOnSegment(
   point: LatLng,
   coordinates: GeoJSON.Position[],
@@ -75,16 +100,11 @@ function progressOnSegment(
     traveledOffsetMeters + segmentTraveled,
     totalMeters,
   );
-  const toEnd = Math.max(totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  // Walking against the stored direction, "total - traveled" counts *up* as you approach
-  // your destination: it read 0.00 km at the trailhead and 5.28 km at the far end. That
-  // also fed turnaroundWarning, so the daylight warning stayed silent at the start of a
-  // long walk. With no direction established yet, the nearer end is the honest answer.
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    totalMeters,
+    direction,
+  );
 
   return {
     nearest,
