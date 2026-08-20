@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
 import { deletePlan, getPlan, updatePlan } from "@/lib/store/local";
+import { parseJson, updatePlanSchema } from "@/lib/api/validation";
 
 export async function GET(
   _request: Request,
@@ -36,9 +37,11 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const body = await request.json();
 
   try {
+    const parsed = await parseJson(request, updatePlanSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
     if (hasDatabase()) {
       const db = getDb();
       const [plan] = await db
@@ -46,7 +49,12 @@ export async function PATCH(
         .set({
           name: body.name,
           trailId: body.trailId,
-          plannedDate: body.plannedDate ? new Date(body.plannedDate) : null,
+          plannedDate:
+            body.plannedDate === undefined
+              ? undefined
+              : body.plannedDate
+                ? new Date(body.plannedDate)
+                : null,
           notes: body.notes,
           waypoints: body.waypoints,
           campgroundIds: body.campgroundIds,
@@ -55,17 +63,12 @@ export async function PATCH(
         })
         .where(eq(hikePlans.id, id))
         .returning();
+      if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json(plan);
     }
 
     const plan = await updatePlan(id, {
-      name: body.name,
-      trailId: body.trailId ?? null,
-      plannedDate: body.plannedDate ?? null,
-      notes: body.notes ?? null,
-      waypoints: body.waypoints,
-      campgroundIds: body.campgroundIds,
-      customGeometry: body.customGeometry ?? null,
+      ...body,
     });
     if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(plan);

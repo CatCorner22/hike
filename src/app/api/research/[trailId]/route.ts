@@ -9,13 +9,10 @@ import { findOrCreateTrail } from "@/lib/trails/service";
 const REFRESH_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 export async function GET(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ trailId: string }> },
 ) {
   const { trailId } = await params;
-  const { searchParams } = new URL(request.url);
-  const refresh = searchParams.get("refresh") === "true";
-
   try {
     let trail = null;
     let resolvedId = trailId;
@@ -52,7 +49,6 @@ export async function GET(
 
       if (
         cached &&
-        !refresh &&
         Date.now() - cached.researchedAt.getTime() < REFRESH_COOLDOWN_MS
       ) {
         return NextResponse.json({ brief: cached.brief, cached: true });

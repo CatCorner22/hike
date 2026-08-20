@@ -3,6 +3,17 @@ import { desc } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities } from "@/lib/db/schema";
 import { createActivity, listActivities } from "@/lib/store/local";
+import { z } from "zod";
+
+const createActivitySchema = z.object({
+  trailId: z.string().max(200).nullish(),
+  planId: z.string().max(200).nullish(),
+  name: z.string().trim().max(200).nullish(),
+  startedAt: z
+    .string()
+    .refine((value) => !Number.isNaN(Date.parse(value)), "Invalid start time")
+    .optional(),
+});
 
 export async function GET() {
   try {
@@ -27,7 +38,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const parsed = createActivitySchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid activity", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const body = parsed.data;
     const startedAt = body.startedAt || new Date().toISOString();
 
     if (hasDatabase()) {
@@ -53,6 +71,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(activity);
   } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to start activity" },
       { status: 500 },

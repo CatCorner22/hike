@@ -110,9 +110,11 @@ export async function searchTrails(
   query: string,
   bbox?: [number, number, number, number],
 ): Promise<TrailSearchResult[]> {
-  const escaped = query.replace(/"/g, '\\"');
+  const escaped = query
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    .replace(/"/g, '\\"');
   const bboxFilter = bbox
-    ? `(${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]})`
+    ? `(${bbox[1]},${bbox[0]},${bbox[3]},${bbox[2]})`
     : "";
 
   const overpassQuery = `

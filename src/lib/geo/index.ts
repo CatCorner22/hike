@@ -274,12 +274,28 @@ function escapeXml(str: string): string {
 }
 
 export function parseGpx(gpxContent: string): GeoJSON.LineString | null {
-  const trkptRegex = /<trkpt[^>]*lat="([^"]+)"[^>]*lon="([^"]+)"[^>]*>/g;
+  const trkptRegex = /<trkpt\b([^>]*)>/gi;
   const coordinates: GeoJSON.Position[] = [];
   let match;
 
   while ((match = trkptRegex.exec(gpxContent)) !== null) {
-    coordinates.push([parseFloat(match[2]), parseFloat(match[1])]);
+    const attributes = match[1];
+    const latMatch = attributes.match(/\blat\s*=\s*["']([^"']+)["']/i);
+    const lngMatch = attributes.match(/\blon\s*=\s*["']([^"']+)["']/i);
+    if (!latMatch || !lngMatch) continue;
+    const lat = Number(latMatch[1]);
+    const lng = Number(lngMatch[1]);
+    if (
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lng) ||
+      lat < -90 ||
+      lat > 90 ||
+      lng < -180 ||
+      lng > 180
+    ) {
+      return null;
+    }
+    coordinates.push([lng, lat]);
   }
 
   if (coordinates.length < 2) return null;

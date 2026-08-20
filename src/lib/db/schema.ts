@@ -1,7 +1,6 @@
 import {
   boolean,
   doublePrecision,
-  integer,
   jsonb,
   pgEnum,
   pgTable,

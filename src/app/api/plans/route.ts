@@ -3,6 +3,7 @@ import { desc } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
 import { createPlan, listPlans } from "@/lib/store/local";
+import { createPlanSchema, parseJson } from "@/lib/api/validation";
 
 export async function GET() {
   try {
@@ -27,10 +28,9 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    if (!body.name || typeof body.name !== "string") {
-      return NextResponse.json({ error: "Plan name is required" }, { status: 400 });
-    }
+    const parsed = await parseJson(request, createPlanSchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
 
     if (hasDatabase()) {
       const db = getDb();

@@ -8,6 +8,7 @@ import {
   listActivityPoints,
   updateActivity,
 } from "@/lib/store/local";
+import { parseJson, updateActivitySchema } from "@/lib/api/validation";
 
 export async function GET(
   _request: Request,
@@ -50,9 +51,19 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const body = await request.json();
 
   try {
+    const parsed = await parseJson(request, updateActivitySchema);
+    if (!parsed.success) return parsed.response;
+    const body = parsed.data;
+    const existing = hasDatabase()
+      ? await getDb().query.activities.findFirst({
+          where: eq(activities.id, id),
+        })
+      : await getActivity(id);
+    if (!existing) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     const points = hasDatabase()
       ? await getDb().query.activityPoints.findMany({
           where: eq(activityPoints.activityId, id),
@@ -70,20 +81,26 @@ export async function PATCH(
       const [updated] = await db
         .update(activities)
         .set({
-          endedAt: body.endedAt ? new Date(body.endedAt) : undefined,
+          endedAt:
+            body.endedAt === undefined
+              ? undefined
+              : body.endedAt
+                ? new Date(body.endedAt)
+                : null,
           stats: body.stats,
           notes: body.notes,
           trackGeometry,
         })
         .where(eq(activities.id, id))
         .returning();
+      if (!updated) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
       return NextResponse.json(updated);
     }
 
     const updated = await updateActivity(id, {
-      endedAt: body.endedAt ?? null,
-      stats: body.stats ?? null,
-      notes: body.notes ?? null,
+      ...body,
       trackGeometry,
     });
     if (!updated) return NextResponse.json({ error: "Not found" }, { status: 404 });

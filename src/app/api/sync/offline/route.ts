@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import { gpxFromLineString } from "@/lib/geo";
 import { parseOsmTrailId } from "@/lib/ids";
 import { findOrCreateTrail, getTrailById } from "@/lib/trails/service";
+import { z } from "zod";
+
+const importSchema = z.object({
+  gpx: z.string().min(1).max(5_000_000),
+  name: z.string().trim().max(255).optional(),
+});
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const trailId = searchParams.get("trailId");
-  const planId = searchParams.get("planId");
 
   if (!trailId) {
     return NextResponse.json({ error: "trailId required" }, { status: 400 });
@@ -52,12 +57,19 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  const { gpx, name } = body;
-
-  if (!gpx) {
-    return NextResponse.json({ error: "GPX content required" }, { status: 400 });
+  let parsed;
+  try {
+    parsed = importSchema.safeParse(await request.json());
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Invalid GPX request", issues: parsed.error.issues },
+      { status: 400 },
+    );
+  }
+  const { gpx, name } = parsed.data;
 
   const { parseGpx } = await import("@/lib/geo");
   const geometry = parseGpx(gpx);

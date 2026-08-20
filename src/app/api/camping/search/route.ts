@@ -15,6 +15,7 @@ import {
 } from "@/lib/state-parks";
 import { searchBackcountryCamps } from "@/lib/osm/overpass";
 import { filterSeedCampgrounds } from "@/lib/camping/seed";
+import { parseBbox } from "@/lib/camping/bbox";
 
 async function syncCampgrounds(query?: string, state?: string) {
   if (!hasDatabase()) return;
@@ -92,13 +93,25 @@ export async function GET(request: Request) {
   const permitRequired = searchParams.get("permitRequired") || undefined;
   const source = searchParams.get("source") || undefined;
   const bboxParam = searchParams.get("bbox");
-  const sync = searchParams.get("sync") === "true";
+  const bbox = parseBbox(bboxParam);
+
+  if (bboxParam && !bbox) {
+    return NextResponse.json({ error: "Invalid bbox" }, { status: 400 });
+  }
+  if (
+    (q && (q.length > 200 || /[\u0000-\u001f\u007f]/.test(q))) ||
+    (state && state !== "all" && !/^[A-Z]{2}$/.test(state)) ||
+    (campingType &&
+      !["all", "developed_tent", "rv", "backcountry", "walk_in"].includes(
+        campingType,
+      )) ||
+    (permitRequired && !["all", "yes", "no"].includes(permitRequired)) ||
+    (source && !["all", "nps", "ridb", "state", "osm"].includes(source))
+  ) {
+    return NextResponse.json({ error: "Invalid search filters" }, { status: 400 });
+  }
 
   try {
-    if (sync) {
-      await syncCampgrounds(q, state);
-    }
-
     if (!hasDatabase()) {
       const seeded = filterSeedCampgrounds({
         q,
@@ -107,7 +120,16 @@ export async function GET(request: Request) {
         permitRequired,
         source,
       });
-      return NextResponse.json({ campgrounds: seeded });
+      const campgroundsInBounds = bbox
+        ? seeded.filter(
+            (camp) =>
+              camp.longitude >= bbox[0] &&
+              camp.longitude <= bbox[2] &&
+              camp.latitude >= bbox[1] &&
+              camp.latitude <= bbox[3],
+          )
+        : seeded;
+      return NextResponse.json({ campgrounds: campgroundsInBounds });
     }
 
     const db = getDb();
@@ -144,8 +166,8 @@ export async function GET(request: Request) {
       });
     }
 
-    if (bboxParam) {
-      const [west, south, east, north] = bboxParam.split(",").map(Number);
+    if (bbox) {
+      const [west, south, east, north] = bbox;
       rows = rows.filter(
         (c) =>
           c.longitude >= west &&
@@ -155,8 +177,8 @@ export async function GET(request: Request) {
       );
     }
 
-    if (bboxParam && rows.length < 20) {
-      const [south, west, north, east] = bboxParam.split(",").map(Number);
+    if (bbox && rows.length < 20) {
+      const [west, south, east, north] = bbox;
       const osmCamps = await searchBackcountryCamps([south, west, north, east]);
       const osmRecords = osmCamps.map((c) => ({
         id: `osm-${c.osmId}`,
