@@ -293,6 +293,31 @@ export function fixUncertaintyM(
   return (CONTAINMENT_95 * Math.hypot(rangeAM * sigma, rangeBM * sigma)) / sin;
 }
 
+/**
+ * Mean of a few nearby points, taken on the sphere rather than in raw degrees.
+ *
+ * An arithmetic mean of longitudes is wrong the moment the points straddle
+ * +/-180: three pairwise cuts at -180.0000, +180.0000 and -180.0000 average to
+ * **-60**, putting the fix 9 619 km away in the Atlantic — and the panel hands
+ * that straight to `onGoto`. Averaging the unit vectors has no seam.
+ */
+function meanPoint(points: Array<{ lat: number; lng: number }>): { lat: number; lng: number } | null {
+  if (points.length === 0) return null;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const point of points) {
+    const [px, py, pz] = toVec(point.lat, point.lng);
+    x += px;
+    y += py;
+    z += pz;
+  }
+  const mean = unit([x, y, z]);
+  // Only antipodal-ish inputs cancel to nothing, which cannot happen for cuts
+  // that all passed the range cap.
+  return mean ? vecToLatLng(mean) : null;
+}
+
 /** Shortest signed a - b, in (-180, 180]. */
 function signedDelta(a: number, b: number): number {
   return ((((a - b) % 360) + 540) % 360) - 180;
@@ -418,9 +443,8 @@ export function resection3(
     if (hit) hits.push(hit);
   }
   if (hits.length === 0) return null;
-  const lng = hits.reduce((sum, p) => sum + p.lng, 0) / hits.length;
-  const lat = hits.reduce((sum, p) => sum + p.lat, 0) / hits.length;
-  const point = { lat, lng };
+  const point = meanPoint(hits);
+  if (!point) return null;
   let spreadM = 0;
   for (const h of hits) {
     const range = rangeAzimuth(point, h);
@@ -497,7 +521,12 @@ export function intersection(
   const point = greatCircleFix(observerA, bearingFromA, observerB, bearingFromB);
   if (!point) return null;
   const { lat, lng } = point;
-  const cutDeg = smallestAngle(bearingFromA, bearingFromB);
+  // The warning below already says "as seen from the target", but the angle was
+  // the difference of the bearings shot *at the observers*. Over a curved Earth
+  // those are not the same: at 83 N with observers 79 km out, a true 90 deg cut
+  // reported as 95.8 and a true 160 deg cut as 161.8. Small, but it can flip the
+  // poor-cut warning either way near the threshold and skews the radius with it.
+  const cutDeg = smallestAngle(bearingBetween(point, observerA), bearingBetween(point, observerB));
   if (cutDeg == null) return null;
   const rangeA = rangeMetres(observerA, point);
   const rangeB = rangeMetres(observerB, point);

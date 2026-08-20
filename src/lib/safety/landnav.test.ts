@@ -381,3 +381,61 @@ describe("dead reckoning across the antimeridian", () => {
     expect(deadReckon({ lat: Number.NaN, lng: -119 }, 20, 100)).toBeNull();
   });
 });
+
+/**
+ * Found by review on PR #35, verified before fixing.
+ */
+describe("bearing fixes near the seam and at high latitude", () => {
+  const bearingTo = (from: { lat: number; lng: number }, to: { lat: number; lng: number }) =>
+    (turf.bearing(turf.point([from.lng, from.lat]), turf.point([to.lng, to.lat])) + 360) % 360;
+  const metresApart = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+    turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), { units: "meters" });
+
+  /**
+   * The three-point fix averaged raw longitudes. With cuts straddling +/-180 —
+   * -180.0000, +180.0000, -180.0000 — that mean is **-60**, a fix 9 619 km away
+   * in the Atlantic, which SafetyPanel hands straight to `onGoto`.
+   */
+  it("averages cuts that straddle the antimeridian without crossing the planet", () => {
+    for (const lng of [-179.9999, 180, 179.9999, 179.99]) {
+      const truth = { lat: 37.7, lng };
+      const known = [30, 150, 270].map((brg) => at(truth, brg, 8_000));
+      for (const errors of [[0.02, -0.02, 0.01], [0.05, -0.05, 0.03], [0.1, -0.1, 0.05]]) {
+        const fix = resection3(
+          known.map((point, index) => ({
+            known: point,
+            bearingTo: (bearingTo(truth, point) + errors[index] + 360) % 360,
+          })) as Parameters<typeof resection3>[0],
+        );
+        expect(fix, `${lng} / ${errors}`).not.toBeNull();
+        expect(Math.abs(fix!.point.lng)).toBeLessThanOrEqual(180);
+        expect(metresApart(truth, fix!.point), `${lng} / ${errors}`).toBeLessThan(100);
+      }
+    }
+  });
+
+  /**
+   * `intersection` warns that observers should be 30-150 deg apart "as seen from
+   * the target", but measured the angle between the bearings shot at the two
+   * observers. Over a curved Earth those differ — a true 90 deg cut read as 95.8
+   * at 83 N with observers 79 km out — which can flip the warning near the
+   * threshold and skews the radius derived from it.
+   */
+  it("measures an intersection cut where the rays actually meet", () => {
+    for (const [lat, rangeKm, separation] of [
+      [83, 79, 160],
+      [83, 79, 90],
+      [70, 50, 120],
+      [37.7, 8, 120],
+    ] as const) {
+      const target = { lat, lng: -100 };
+      const a = at(target, 0, rangeKm * 1_000);
+      const b = at(target, separation, rangeKm * 1_000);
+      const hit = intersection(a, bearingTo(a, target), b, bearingTo(b, target));
+      expect(hit, `${lat} / ${separation}`).not.toBeNull();
+      let trueCut = Math.abs(((bearingTo(target, a) - bearingTo(target, b)) % 360 + 360) % 360);
+      if (trueCut > 180) trueCut = 360 - trueCut;
+      expect(hit!.cutDeg, `${lat} / ${separation}`).toBeCloseTo(trueCut, 1);
+    }
+  });
+});

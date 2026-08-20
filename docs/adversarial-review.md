@@ -1090,6 +1090,99 @@ artifact could break a deployment path I cannot verify from here.
 
 ---
 
+## Thirteenth pass — three findings from review on PR #35
+
+An automated reviewer (Codex) raised three issues on the land-nav work. All three were
+verified by execution before being touched, and all three were real. One was mine, one
+predated me in code I had edited, one was overstated in magnitude but correct in kind.
+
+### R1. The watch hint's words contradicted its own number
+
+The ninth pass corrected the dial angle to the long arc outside 06:00–18:00 solar — and
+left the prose saying **"midway between the hour hand and 12 — the short way round"**.
+
+At 05:00 solar the hour hand is 150° from 12. The short-arc midpoint is 75°; the correct
+answer is 255°. So the hint quoted 255° while instructing the reader to find 75° — a
+party following the words walked **180° from the south the same sentence promised them**.
+The number was fixed and the instruction was left carrying the original bug.
+
+| solar hour | short-arc midpoint | value returned | on the short arc? |
+|---|---|---|---|
+| 05:00 | 75° | 255° | **no** |
+| 05:30 | 82.5° | 262.5° | **no** |
+| 09:00 | 315° | 315° | yes |
+| 15:00 | 45° | 45° | yes |
+| 19:00 | 285° | 105° | **no** |
+| 20:00 | 300° | 120° | **no** |
+
+Fixed by removing the choice rather than describing it better — one named dial position,
+which is also easier to follow with cold hands:
+
+```
+Point the hour hand at the sun. South is then 255° clockwise from the 12 mark
+(about the 8:30 mark).
+```
+
+A property test over all 24 hours in both hemispheres asserts the hint never says
+"midway" or "short way", and always quotes the value the function actually returns.
+
+### R2. The three-point fix averaged longitudes across the antimeridian
+
+`resection3` took an arithmetic mean of the pairwise cuts' longitudes. Straddling ±180
+that is not a mean at all. Measured, at 37.7°N / −179.9999° with ordinary bearing slop:
+
+```
+pairwise cuts at lng  -180.0000, +180.0000, -180.0000
+arithmetic mean       -60.0000
+fix returned          37.7000, -60.0000   →  9 619 013 m from the party
+```
+
+The Atlantic Ocean, and `SafetyPanel` passes it straight to `onGoto`. The same fixture now
+returns 9 m. Replaced with a mean of the unit vectors, which has no seam — consistent
+with the great-circle work in the eighth pass. This one predates the eighth pass, but it
+was in code that pass edited, so it counts.
+
+### R3. An intersection's cut angle was measured in the wrong place
+
+`intersection` warns that observers should be 30–150° apart **"as seen from the target"**
+— and then computed the angle by subtracting the bearings shot *at the observers*. Over a
+curved Earth those are not the same quantity.
+
+The review put the error at 148.8° for a true 160° cut. Measured, it is smaller than that:
+
+| | reported | true, at the target |
+|---|---|---|
+| 83°N, observers 79 km out, 160° apart | 161.8° | 160.0° |
+| 83°N, observers 79 km out, 90° apart | 95.8° | 90.0° |
+| 70°N, 50 km, 120° apart | 121.1° | 120.0° |
+
+1.8–5.8°, not 11°. Still worth fixing: it can flip the poor-cut warning either way within
+a few degrees of the threshold, and the uncertainty radius is derived from `1/sin(cut)`,
+so it carries the same skew. Now computed from the bearings back to each observer *from
+the fix*, which is what the warning always claimed. Reported and true cuts now agree to
+two decimal places at every case above.
+
+`resection` and `resection3` were checked and are **not** affected: their bearings are
+both taken at the party's own position, so their difference already is the cut angle
+there.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 672/672 green, `npm run build`
+succeeds. Four mutations — restoring the arithmetic longitude mean, measuring the
+intersection cut at the observers, restoring the "short way round" prose, and mis-scaling
+the dial position — are each caught.
+
+### CI
+
+Both jobs pass on this branch at `d072f01`, **including the offline navigation e2e** that
+is red on `main` at `3fde385`. So B3 is intermittent on the runner rather than broken by
+either tree, and the diagnostics added in the twelfth pass remain armed for the next time
+it fires.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

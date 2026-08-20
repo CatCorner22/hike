@@ -223,3 +223,33 @@ describe("sun compass against real ephemeris", () => {
     }
   });
 });
+
+describe("the watch hint has to match the number it quotes", () => {
+  /**
+   * The dial angle was corrected to the long arc outside 06:00-18:00 solar, but
+   * the prose still said "midway ... the short way round". At 05:00 the hour hand
+   * is 150 deg from 12: the short-arc midpoint is 75 deg and the answer is 255,
+   * so a party following the words walked 180 deg from the south the same
+   * sentence promised. One named dial position, no arc to choose.
+   */
+  it("never tells the party to take the short way round", () => {
+    for (const hemisphere of ["north", "south"] as const) {
+      for (let hour = 0; hour < 24; hour += 0.25) {
+        const heading = watchMethodHeading(hour, hemisphere)!;
+        expect(heading.hint, `${hemisphere} ${hour}`).not.toMatch(/short way|midway/i);
+        // The hint must quote the value it actually returns.
+        expect(heading.hint, `${hemisphere} ${hour}`).toContain(
+          `${Math.round(heading.clockAzimuthFrom12)}° clockwise from the 12 mark`,
+        );
+        expect(heading.hint).toMatch(/o'clock|\d:\d\d/);
+      }
+    }
+  });
+
+  it("names the dial position the angle corresponds to", () => {
+    expect(watchMethodHeading(5, "north")!.hint).toContain("255° clockwise from the 12 mark (about the 8:30 mark)");
+    expect(watchMethodHeading(12, "north")!.hint).toContain("(about the 12 o'clock mark)");
+    expect(watchMethodHeading(20, "north")!.hint).toContain("(about the 4 o'clock mark)");
+    expect(watchMethodHeading(15, "south")!.hint).toMatch(/North is then 45°/);
+  });
+});

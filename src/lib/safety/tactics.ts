@@ -48,20 +48,41 @@ export function watchMethodHeading(
   // already 17 deg up, it called azimuth 349 deg "south". The test that covered this
   // sampled 06:30-17:30 only, which is exactly the window where the old branch works.
   const mid = ((15 * h + 180) % 360 + 360) % 360;
-  const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
+  const clock = `${Math.round(mid)}° clockwise from the 12 mark (about the ${dialPosition(mid)} mark)`;
 
   if (hemisphere === "north") {
     return {
       toward: "S",
       clockAzimuthFrom12: mid,
-      hint: `Point the hour hand at the sun. Midway between the hour hand and 12 — the short way round, ${clock} — is south.`,
+      hint: `Point the hour hand at the sun. South is then ${clock}.`,
     };
   }
   return {
     toward: "N",
     clockAzimuthFrom12: mid,
-    hint: `Point the 12 mark at the sun. Midway between 12 and the hour hand — the short way round, ${clock} — is north.`,
+    hint: `Point the 12 mark at the sun. North is then ${clock}.`,
   };
+}
+
+/**
+ * The dial angle as a clock face position, so the instruction can be followed
+ * without deciding anything.
+ *
+ * "Midway between the hour hand and 12, the short way round" is the way this
+ * method is taught, and it is wrong for half the daylight hours at high latitude:
+ * before 06:00 and after 18:00 solar the correct bisector is on the LONGER arc.
+ * At 05:00 the hour hand is 150 deg from 12, the short-arc midpoint is 75 deg,
+ * and the answer is 255 deg — so a party following the prose walked 180 deg from
+ * the south the same sentence had just promised them. Naming one dial position
+ * removes the choice that was being got wrong.
+ */
+function dialPosition(degreesClockwiseFrom12: number): string {
+  const hours = degreesClockwiseFrom12 / 30;
+  const whole = Math.floor(hours) === 0 ? 12 : Math.floor(hours);
+  const minutes = Math.round((hours - Math.floor(hours)) * 60);
+  if (minutes === 0) return `${whole} o'clock`;
+  if (minutes === 60) return `${whole === 12 ? 1 : whole + 1} o'clock`;
+  return `${whole}:${String(minutes).padStart(2, "0")}`;
 }
 
 export function polarisHint(lat: number): string | null {
