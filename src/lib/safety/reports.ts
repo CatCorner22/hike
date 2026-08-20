@@ -13,9 +13,13 @@ export function sitrep(input: {
   needs?: string;
   stale?: boolean;
 }): string {
-  const loc =
-    input.lat != null && input.lng != null
-      ? `${formatUsng(input.lat, input.lng)}${input.stale ? " (LAST KNOWN)" : ""}`
+  const grid = input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : null;
+  // A null grid (non-finite or off the UTM band) used to interpolate as the
+  // literal "null (LAST KNOWN)" into a SITREP read over the radio.
+  const loc = grid
+    ? `${grid}${input.stale ? " (LAST KNOWN)" : ""}`
+    : input.lat != null && input.lng != null
+      ? `NO GRID — LAT/LONG ${input.lat.toFixed(5)} ${input.lng.toFixed(5)}${input.stale ? " (LAST KNOWN)" : ""}`
       : "UNKNOWN";
   const who = input.profile?.name || "Hiker";
   const party = input.profile?.partySize ?? 1;

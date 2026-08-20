@@ -219,6 +219,25 @@ interface SafetyPanelProps {
   packWeather?: PackWeather | null;
 }
 
+/**
+ * A plotted fix can land outside the UTM grid's 80S-84N validity band, where
+ * formatUsng returns null. Interpolated raw that printed "Resection null".
+ */
+function gridOrUnavailable(lat: number, lng: number): string {
+  return formatUsng(lat, lng) ?? "grid unavailable at this latitude — use lat/long";
+}
+
+/**
+ * How far the party might really be from a bearing fix. The 3-pt readout used
+ * to quote the spread of the three cuts instead, which is a cocked-hat
+ * agreement check, not an accuracy: three cuts can close to half a metre on a
+ * point 500 m from the party.
+ */
+function radiusPhrase(uncertaintyM: number | null): string {
+  if (uncertaintyM == null) return "radius unquotable — cut too shallow";
+  return `treat as ±${Math.round(uncertaintyM)} m`;
+}
+
 export function SafetyPanel({
   lat,
   lng,
@@ -1237,7 +1256,7 @@ export function SafetyPanel({
                 }
                 onGoto(fix.point);
                 setResectInfo(
-                  `Resection ${formatUsng(fix.point.lat, fix.point.lng)} · cut ${Math.round(fix.cutDeg)}°${fix.warning ? ` — ${fix.warning}` : ""}`,
+                  `Resection ${gridOrUnavailable(fix.point.lat, fix.point.lng)} · cut ${Math.round(fix.cutDeg)}° · ${radiusPhrase(fix.uncertaintyM)}${fix.warning ? ` — ${fix.warning}` : ""}`,
                 );
               }}
             >
@@ -1288,7 +1307,7 @@ export function SafetyPanel({
                 }
                 onGoto(fix.point);
                 setResectInfo(
-                  `3-pt ${formatUsng(fix.point.lat, fix.point.lng)} · spread ${Math.round(fix.spreadM)} m${fix.warning ? ` — ${fix.warning}` : ""}`,
+                  `3-pt ${gridOrUnavailable(fix.point.lat, fix.point.lng)} · ${radiusPhrase(fix.uncertaintyM)} · cuts agree to ${Math.round(fix.spreadM)} m (agreement is not accuracy)${fix.warning ? ` — ${fix.warning}` : ""}`,
                 );
               }}
             >
@@ -1324,7 +1343,7 @@ export function SafetyPanel({
                 }
                 onGoto(hit.point);
                 setResectInfo(
-                  `Intersection ${formatUsng(hit.point.lat, hit.point.lng)} · cut ${Math.round(hit.cutDeg)}°${hit.warning ? ` — ${hit.warning}` : ""}`,
+                  `Intersection ${gridOrUnavailable(hit.point.lat, hit.point.lng)} · cut ${Math.round(hit.cutDeg)}° · ${radiusPhrase(hit.uncertaintyM)}${hit.warning ? ` — ${hit.warning}` : ""}`,
                 );
               }}
             >

@@ -606,6 +606,152 @@ Verification: `tsc --noEmit` clean, `eslint` clean, `vitest run` 575/575 green,
 
 ---
 
+## Eighth pass — the compass fixes (`landnav.ts`)
+
+Resection, three-point resection and intersection are how a party with a dead GPS
+works out where they are and then reads that position to a dispatcher. Every finding
+below was measured against a known truth position using **perfect, error-free
+bearings**, so none of it is compass slop — it is all the code.
+
+### L1. Every bearing fix was plotted on the wrong geometry
+
+The rays were built with `turf.destination`, which walks a **great circle**, and then
+crossed with `turf.lineIntersect`, which is a **planar** intersection of raw
+longitude/latitude degrees. A great circle is a curve in degree space, so the straight
+chord `lineIntersect` actually crossed did not carry the bearing that was shot.
+
+With exact bearings, `resection` returned:
+
+| Known points at | 25.1 N | 37.7 N | 45 N | 61.2 N | 70 N |
+|---|---|---|---|---|---|
+| 1 km | 3.6 m | 6.0 m | 7.8 m | 14.1 m | 21.2 m |
+| 5 km | 18.8 m | 30.9 m | 40.0 m | 72.5 m | 109.1 m |
+| 20 km | 83.2 m | **137.2 m** | 177.4 m | **321.9 m** | 484.9 m |
+| 50 km | 241.9 m | 399.0 m | 516.0 m | 937.0 m | **1 412.4 m** |
+
+The error fitted `range² · tan(latitude) / R` exactly — and because it was identical for
+every pair of points, averaging three cuts did not cancel it.
+
+Two things were wrong, and both are fixed:
+
+1. **The crossing.** `greatCircleFix` intersects the two rays as what they are — great
+   circles — using the plane normals `P × heading`. The circles meet at `±(N₁ × N₂)`,
+   which is exact rather than fitted, and `dot(candidate, heading) > 0` keeps the
+   crossing that lies ahead of both shooters rather than behind them. A range cap
+   survives from the old 80 km ray length, so nonsense bearings still return `null`
+   instead of a confident point on the far side of the continent.
+2. **The back azimuth.** A resection bearing is read *at the unknown position*, so
+   `bearing + 180` is only the true reverse azimuth on a flat sheet; on the globe the two
+   ends of a long line differ by the convergence of the meridians. `resectionFix` re-reads
+   the bearings at the current fix and nudges each plotted ray by however much they
+   disagree. The correction is second order, so it settles in two passes.
+
+Residual error after both fixes, over the same table plus the equator, the southern
+hemisphere and the antimeridian: **0.00 m at every cell**, including 50 km at 70 N.
+
+### L2. Three cuts agreeing was sold as the fix being accurate
+
+`resection3` reported `spreadM` — how tightly the three pairwise cuts close — and the
+readout printed it as the accuracy of the fix:
+
+```
+3-pt 11S KB 7445 8116 · spread 37 m — Fix spread ~37 m, typical compass error.
+```
+
+This is the cocked hat, and a small one has never meant a good fix. Bearings off by
+0°, +3° and −3° to three points 8 km out put **all three cuts within half a metre of
+each other, 499 m from the party** — reported as `spread 0 m`, no warning.
+
+Monte Carlo, 500 fixes per case, three known points, a realistic 2° compass:
+
+| Known points at | median error | p95 error | error > 3× the quoted spread | no warning at all while >100 m off |
+|---|---|---|---|---|
+| 2 km | 68 m | 163 m | 17% | 4% |
+| 8 km | 310 m | 647 m | 18% | 4% |
+| 15 km | 538 m | 1 264 m | 16% | 2% |
+
+At 15 km the p95-error case carried a *smaller* spread (416 m) than the median-error
+case (579 m). The number was uncorrelated with the thing it was labelled as.
+
+Fixed by separating the two ideas:
+
+- `spreadM` stays, but only as the blunder check it really is — a wide spread means a
+  misidentified peak or a misread bearing, and it now says so
+  (`"Cuts disagree by ~87 m — one bearing or peak is wrong; re-shoot."`). It no longer
+  produces a reassuring message when it is small.
+- `fixUncertaintyM` is the number that actually bounds the fix, and it comes from the
+  geometry: each ray is off sideways by `range · σ`, and a shallow cut multiplies that by
+  `1/sin(cut)`. Quoted at the Rayleigh 95th percentile (2.45 σ) with σ = 2°, because a
+  fix goes out as a search radius and under-quoting sends searchers to the wrong side of
+  a drainage.
+
+Measured containment over 500 fixes per case, at 1–15 km known-point ranges:
+
+| Party's real compass error | 3-point coverage | 2-point coverage |
+|---|---|---|
+| 1° | 100% | — |
+| 2° | 99–100% | 100% |
+| 3° (sloppier than assumed) | 94–98% | 93–95% |
+
+`resection` and `intersection` carry the radius too, where before there was no error
+figure at all. All three readouts now lead with `treat as ±N m`.
+
+### L3. Smaller readouts that could mislead
+
+- **A full circle read as `6400 mils`.** `degreesToMils(359.99)` rounded up to 6400,
+  which is a whole revolution, not a bearing. Now wraps to 0 — north.
+- **A wide heading error *shrank* the dead-reckon ring.** `deadReckonUncertaintyM` used
+  `tan(headingError)`, which goes infinite at 90° and negative past it: a 120° error
+  reported **−1 622 m** of uncertainty, and 179° reported less than 15° did. Clamped at
+  80°, past which a heading carries no information anyway. No production caller passes
+  the parameter today, so this was latent.
+- **Aim-off told the party to turn when it had not offset anything.** `deliberateOffset`
+  clamped a negative offset to zero but kept quoting the raw number:
+  `"Aim 38° true, offset -100 m right. When you hit the catching feature, turn left."` —
+  the aim point *was* the target, so there was nothing to turn from. The label now
+  describes what was actually applied, and says plainly that there is no side to turn
+  toward.
+
+### L4. `null` grids reaching the reader, again
+
+P1 fixed this on the paper sheet; the same `formatUsng` null was still interpolated raw
+in four other places. It fires for a non-finite position and for anything off the UTM
+band, not only at the poles:
+
+| Where | Was |
+|---|---|
+| `dossier.ts` | `USNG: null` / `MGRS10: null` on the sheet handed to searchers |
+| `reports.ts` | `LOC: null (LAST KNOWN)` in a SITREP read over the radio |
+| `safety-panel.tsx` ×3 | `Resection null · cut 90°` |
+| `navigate/[planId]` | the grid line silently rendered empty |
+
+Each now names the problem: `USNG/MGRS: unavailable for this position — use the lat/long
+above`, `NO GRID — LAT/LONG 86.20000 -60.00000 (LAST KNOWN)`, `grid unavailable at this
+latitude — use lat/long`.
+
+### Also checked, and found sound
+
+`obstacleBox` returns to the original line to within 1 cm at every heading tried, and
+resumes at exactly the requested depth. `milRelationRange`, `distanceFromPaces`,
+`courseCorrection`, `timeSpeedDistance` and `parseTypedHeading` all behave. Magnetic
+bearings *are* converted before they reach `resection`/`intersection`, and the panel
+refuses to guess when declination is unavailable — that path was already right.
+`emergency.ts` and `report-field.ts` were read in full with no findings; every
+`formatReport` caller spreads its arrays, so no formatter-owned line can be collapsed.
+A dense coordinate sweep (UTM round-trip over −78°..82°, 1 m MGRS over 1 540 contiguous-US
+points, zone seams at ten 6° meridians, band seams at 32/40/48/56/64/72) produced worst
+errors of 0.05–1.4 m and zero nulls — no finding.
+
+Mutation testing: seven mutations, each reverting one fix above, are each caught by the
+new tests (dropping the convergence refinement fails 1, dropping the forward-ray test
+fails 6, quoting the spread as the radius again fails 1, and so on).
+
+Verification: `tsc --noEmit` clean, `eslint` clean (3 pre-existing warnings, 0 errors),
+`vitest run` 588/588 green, `npm run build` succeeds.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

@@ -46,8 +46,16 @@ export function buildSafetyDossier(input: {
       lines.push("STATUS: last known — GPS not live");
     }
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
-    lines.push(`USNG: ${formatUsng(input.lat, input.lng)}`);
-    lines.push(`MGRS10: ${formatMgrs10(input.lat, input.lng)}`);
+    const usng = formatUsng(input.lat, input.lng);
+    const mgrs = formatMgrs10(input.lat, input.lng);
+    // formatUsng returns null for a non-finite or out-of-grid position; printing
+    // it raw put the literal text "USNG: null" on a sheet handed to searchers.
+    if (usng && mgrs) {
+      lines.push(`USNG: ${usng}`);
+      lines.push(`MGRS10: ${mgrs}`);
+    } else {
+      lines.push("USNG/MGRS: unavailable for this position — use the lat/long above.");
+    }
     if (input.recordedAt) {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
     }
