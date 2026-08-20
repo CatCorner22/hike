@@ -125,6 +125,13 @@ Two things to be clear about:
 Rows created before owner scoping have no owner and are hidden. `drizzle/0002_owner_scoping.sql`
 explains how to claim them.
 
+## How to use it
+
+The app ships its own hiker-facing guide at **`/guide`** (linked from the home screen):
+plan → **Prepare offline** while you still have signal → Navigate at the trailhead →
+what to do when something goes wrong. If you read nothing else, read that page's rule:
+save the route before you lose coverage.
+
 ## Offline navigation (life-safety)
 
 Navigation is designed to keep working after cell service drops. Do this **before** you leave coverage:

@@ -655,6 +655,12 @@ export default function NavigatePage() {
               <Button className="mt-4" variant="outline" onClick={() => void loadPack()}>
                 Retry
               </Button>
+              <p className="mt-3 text-xs text-muted-foreground">
+                First time here?{" "}
+                <Link href="/guide#offline" className="text-primary underline">
+                  How offline routes work
+                </Link>
+              </p>
             </div>
           </CardContent>
         </Card>
