@@ -752,6 +752,111 @@ Verification: `tsc --noEmit` clean, `eslint` clean (3 pre-existing warnings, 0 e
 
 ---
 
+## Ninth pass — the sun compass and the pace count (`tactics.ts`)
+
+### T1. The watch method was still 180° wrong, just in a narrower window
+
+An earlier pass fixed `watchMethodHeading` from `hourOn12 / 2` to
+`hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)`. That branch is correct from **06:00 to
+18:00 solar and 180° wrong outside it** — and the test written alongside it sampled
+`[6.5, 8, 9, 10.5, 12, 13.5, 15, 16, 17.5]`, exactly the window where it works.
+
+Outside that window is not hypothetical. Measured against real ephemeris:
+
+| | solar hour | sun elevation | claimed south | true south | error |
+|---|---|---|---|---|---|
+| Anchorage, 21 Jun | 05:30 | 16.7° up | az 349° | 180° | **169°** |
+| Anchorage, 21 Jun | 20:00 | 7.5° up | az 6° | 180° | **174°** |
+| Yosemite, 21 Jun | 19:00 | 3.3° up | az 12° | 180° | **168°** |
+
+The Anchorage 05:30 case is not gated out — the panel renders it:
+
+> Point the hour hand at the sun. Midway between the hour hand and 12 — the short way
+> round, **~83° clockwise from the 12 mark — is south.**
+
+That points at azimuth 349°. North.
+
+Both readings collapse to one dial angle — `15 · h + 180`, the same in both hemispheres —
+so the branch is gone. Every case above is now within the method's own error (169° → 11°,
+174° → 6°). The property test now runs 04:00–21:00 solar.
+
+### T2. Even when it points the right way, the dial can be 38° out
+
+The watch method assumes the sun's azimuth sweeps a uniform 15°/hour. That holds near
+the equinox and near the horizon and fails badly in summer at mid-latitude:
+
+| | error vs real ephemeris |
+|---|---|
+| Yosemite, 21 Dec, 09:00 solar | 2.8° |
+| Yosemite, 21 Mar, 09:00 solar | 15.7° |
+| Yosemite, 21 Jun, 09:00 solar | **38.3°** |
+| Patagonia, 21 Dec, 15:00 solar | **34.0°** |
+
+The hint was quoted flat, with no indication of which day you were having. But this
+string only ever renders on a phone that is *already computing the sun's position*, so
+it does not have to approximate at all. `sunVsWatchCheck` now leads with the exact
+shadow line, and measures the dial against the real sun rather than guessing:
+
+```
+Sun bears 97° true, so your shadow points 277° true — lay a stick along it and read
+directions off the shadow (do not compare the sun azimuth number to the watch-dial
+angle). The watch method is 38° out at this latitude and season — use the shadow, not
+the dial.
+```
+
+and where the dial is fine it is kept, with its measured error attached:
+
+```
+Sun bears 138° true, so your shadow points 318° true — … Watch method: Point the hour
+hand at the sun. … (dial runs ~3° out here)
+```
+
+### T3. Nine pace beads were counted as a kilometre
+
+A Ranger pace counter has nine lower beads, one pulled per 100 m. The ninth bead is
+**900 m** — the kilometre bead goes across on the *tenth* hundred and the lower nine
+reset. `paceBeads` divided by 9:
+
+| walked | reported | overstated by |
+|---|---|---|
+| 900 m | 1 km + 0 beads | 100 m |
+| 1 000 m | 1 km + 1 bead | 100 m |
+| 4 500 m | 5 km + 0 beads | 500 m |
+| 10 000 m | 11 km + 1 bead | 1.1 km |
+
+An 11% overstatement that grows linearly, fed straight into a GPS-denied dead-reckoning
+position. Two existing assertions (`paceBeads(9).km === 1`, `paceBeads(10).beads === 1`)
+pinned the wrong behaviour and were updated deliberately, as the `Start USNG` assertion
+was in P2. The label now shows the metres too, and a property test over 0–25 km asserts
+`km · 1000 + beads · 100 === hundreds · 100` — the arithmetic cannot drift again.
+
+### T4. An unmeasured distance was reported as "close"
+
+`casevacDecision`'s two distance branches defaulted a missing `remainingM` in **opposite
+directions** — `?? 0` in the first, `?? 99999` in the second. An unknown distance
+therefore satisfied `<= 1500` and came back as:
+
+> **walk-out** — "Ambulatory and close — slow walk-out on the packed route with a buddy."
+
+The panel passes `remainingMeters`, an optional prop that is undefined whenever the route
+has not been matched — which is precisely when a party is most likely to be lost. An
+injured, ambulatory party was being told the trailhead was within 1.5 km on no evidence.
+
+Now the missing case is its own branch: injured → stay and fix your position first;
+uninjured → walk out, but with `distance out NOT measured` said plainly. When the
+distance *is* known the reason quotes it (`close (~400 m)`), so the claim is always
+backed by a number.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 595/595 green, `npm run build`
+succeeds. Five mutations — restoring the `hourOn12 > 180` branch, restoring `/ 9` beads,
+restoring the `?? 0` distance default, never withdrawing the dial, and always withdrawing
+it — are each caught.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

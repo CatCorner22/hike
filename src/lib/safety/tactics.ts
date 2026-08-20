@@ -20,16 +20,18 @@ export function solarHour(date: Date, lng: number): number {
  * Analog-watch sun compass. `hourSolar` is local *solar* time (see `solarHour`).
  *
  * The bisector must be taken across the SMALLER arc between the hour hand and the 12
- * mark. Before noon the hour hand sits more than 180 deg clockwise of 12, so the smaller
- * arc is on the other side and the bisector is 180 deg away from `hourOn12 / 2`.
+ * mark, and which arc that is depends on morning versus afternoon — not on where the
+ * hour hand happens to sit relative to the 180 deg mark. Both readings collapse to one
+ * dial angle: 15 deg per solar hour, plus half a turn. It is the same angle in both
+ * hemispheres; only which hand you aim at the sun, and whether the bisector reads south
+ * or north, differ.
  *
- * The previous formula used `hourOn12 / 2` unconditionally for the northern hemisphere
- * and its reflex for the southern, which pointed exactly backwards for half of every day
- * in each: northern mornings and southern afternoons. On a method used precisely when
- * there is no compass, that sent people 180 deg wrong.
- *
- * The dial position is the same in both hemispheres; only which hand you aim at the sun,
- * and whether the bisector reads south or north, differ.
+ * This has been wrong twice. First `hourOn12 / 2` unconditionally, which pointed
+ * backwards for northern mornings and southern afternoons. Then the `hourOn12 > 180`
+ * branch, which is right from 06:00 to 18:00 solar and 180 deg wrong outside it — live
+ * in high-latitude summer, where the sun is well up at 05:00 and 20:00. On a method you
+ * reach for precisely because you have no compass, either one sends people the wrong way
+ * down the wrong drainage.
  */
 export function watchMethodHeading(
   hourSolar: number,
@@ -37,8 +39,15 @@ export function watchMethodHeading(
 ): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } | null {
   if (!Number.isFinite(hourSolar) || hourSolar < 0 || hourSolar > 24 || (hemisphere !== "north" && hemisphere !== "south")) return null;
   const h = ((hourSolar % 24) + 24) % 24;
-  const hourOn12 = (h % 12) * 30; // degrees clockwise from the 12 mark
-  const mid = (hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)) % 360;
+  // The bisector sits where the sun-referenced pole falls, which is 15 deg per hour
+  // from the 12 mark plus half a turn — the same dial angle in both hemispheres.
+  //
+  // Picking the branch on `hourOn12 > 180` instead only agrees with that between
+  // 06:00 and 18:00 solar. Outside those hours it lands on the opposite arc and the
+  // hint points 180 deg wrong: at Anchorage on 21 June at 05:30 solar, with the sun
+  // already 17 deg up, it called azimuth 349 deg "south". The test that covered this
+  // sampled 06:30-17:30 only, which is exactly the window where the old branch works.
+  const mid = ((15 * h + 180) % 360 + 360) % 360;
   const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
 
   if (hemisphere === "north") {
@@ -112,14 +121,35 @@ export function casevacDecision(input: {
       reason: "Injured after dark — shelter and signal. Move at first light unless fire/flood/lightning.",
     };
   }
-  if (input.canWalk && (input.remainingM ?? 0) <= 1500 && (input.partySize ?? 1) >= 2) {
+  // The two distance branches used to default a missing `remainingM` in opposite
+  // directions — 0 in the first, 99999 in the second — so an unknown distance took
+  // the first branch and was reported as "Ambulatory and close". The panel passes an
+  // optional prop that is undefined whenever the route has not been matched, which is
+  // exactly when a party is most likely to be lost.
+  const remainingM = Number.isFinite(input.remainingM) ? (input.remainingM as number) : null;
+  if (remainingM == null && input.canWalk) {
+    return input.injured
+      ? {
+          choice: "stay",
+          medicalPriority: false,
+          reason:
+            "Ambulatory, but the distance out is not known — do not start an unmeasured walk-out with an injury. Fix your position (grid or resection), then decide.",
+        }
+      : {
+          choice: "walk-out",
+          medicalPriority: false,
+          reason:
+            "Ambulatory, distance out NOT measured — walk out on the packed route, and confirm the remaining distance before committing to a long leg.",
+        };
+  }
+  if (input.canWalk && remainingM != null && remainingM <= 1500 && (input.partySize ?? 1) >= 2) {
     return {
       choice: "walk-out",
       medicalPriority: false,
-      reason: "Ambulatory and close — slow walk-out on the packed route with a buddy.",
+      reason: `Ambulatory and close (~${Math.round(remainingM)} m) — slow walk-out on the packed route with a buddy.`,
     };
   }
-  if (input.canWalk && (input.remainingM ?? 99999) > 1500) {
+  if (input.canWalk && remainingM != null && remainingM > 1500) {
     return {
       choice: "short-carry",
       medicalPriority: false,
@@ -170,6 +200,25 @@ export function lostPersonQuery(input: {
   ]);
 }
 
+/**
+ * Past this, the dial is not a direction aid any more — say so instead of dressing it up.
+ */
+const WATCH_DIAL_MAX_ERROR_DEG = 15;
+
+/**
+ * Sun compass for a phone that can still compute, which is the only situation in which
+ * this string gets rendered at all.
+ *
+ * The watch method assumes the sun's azimuth sweeps a uniform 15 deg per hour. That
+ * holds near the equinox and near the horizon, and badly fails in summer at
+ * mid-latitude: measured against real ephemeris it is 38 deg out at Yosemite on
+ * 21 June at 09:00 solar and 34 deg out in Patagonia on 21 December at 15:00 — while
+ * being 2.8 deg out at the same Yosemite spot in December. Quoting the hint with no
+ * indication of which day you are having sends a party down the wrong drainage.
+ *
+ * So lead with the shadow line, which is exact and needs no dial, and measure the dial
+ * against it — the sun's true azimuth is right here, so the error is known, not guessed.
+ */
 export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
@@ -178,20 +227,44 @@ export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?
   // for field checks; the dial angle is still not the same quantity as sun azimuth.
   const hour =
     localHour != null && Number.isFinite(localHour)
-      ? ((localHour % 24) + 24) % 24 + date.getMinutes() / 60 + date.getSeconds() / 3600
+      ? (((localHour % 24) + 24) % 24 + date.getMinutes() / 60 + date.getSeconds() / 3600) % 24
       : solarHour(date, lng);
   const watch = watchMethodHeading(hour, hemi);
   if (!watch) return null;
-  return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
+
+  const shadowDeg = Math.round((sun.azimuth + 180) % 360);
+  const shadowLine = `Sun bears ${Math.round(sun.azimuth)}° true, so your shadow points ${shadowDeg}° true — lay a stick along it and read directions off the shadow (do not compare the sun azimuth number to the watch-dial angle).`;
+
+  // Where the bisector actually lands, given the real sun. North: the hour hand is
+  // aimed at the sun, so the 12 mark trails it by the dial angle. South: the 12 mark
+  // is the one aimed at the sun.
+  const dialDeg = (hour % 12) * 30;
+  const twelveMarkTrue = hemi === "north" ? ((sun.azimuth - dialDeg) % 360 + 360) % 360 : sun.azimuth;
+  const bisectorTrue = (twelveMarkTrue + watch.clockAzimuthFrom12) % 360;
+  const wanted = watch.toward === "S" ? 180 : 0;
+  const dialErrorDeg = Math.abs((((bisectorTrue - wanted + 180) % 360) + 360) % 360 - 180);
+
+  if (dialErrorDeg > WATCH_DIAL_MAX_ERROR_DEG) {
+    return `${shadowLine} The watch method is ${Math.round(dialErrorDeg)}° out at this latitude and season — use the shadow, not the dial.`;
+  }
+  return `${shadowLine} Watch method: ${watch.hint} (dial runs ~${Math.round(dialErrorDeg)}° out here)`;
 }
 
-/** 9 beads × 100 m = 1 km. Returns how many km completed plus leftover beads. */
+/**
+ * Ranger pace counter: nine lower beads, one pulled every 100 m. The ninth bead is
+ * 900 m — the kilometre bead goes across on the *tenth* hundred, and the lower nine
+ * reset. So a kilometre is ten beads' worth of ground, not nine.
+ *
+ * Dividing by 9 turned 900 m into "1 km" and grew from there: 4 500 m read as
+ * "5 km + 0 beads", and 10 km read as "11 km + 1 bead". That is an 11% overstatement
+ * of distance walked, fed straight into a GPS-denied dead-reckoning position.
+ */
 export function paceBeads(totalHundreds: number): { km: number; beads: number; label: string } {
   if (!Number.isFinite(totalHundreds) || totalHundreds < 0 || totalHundreds > 10_000) {
     return { km: 0, beads: 0, label: "Cannot determine — verify your pace-bead input." };
   }
   const n = Math.floor(totalHundreds);
-  const km = Math.floor(n / 9);
-  const beads = n % 9;
-  return { km, beads, label: `${km} km + ${beads} beads (×100 m)` };
+  const km = Math.floor(n / 10);
+  const beads = n % 10;
+  return { km, beads, label: `${km} km + ${beads} beads (×100 m) = ${n * 100} m` };
 }
