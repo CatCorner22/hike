@@ -1,25 +1,55 @@
 import { sunPosition } from "@/lib/safety/astro";
+import { gridConvergence } from "@/lib/safety/declination";
 import { formatUsng } from "@/lib/safety/usng";
 
-/** Analog-watch sun compass. hour = 0–23 local. */
+/**
+ * Local apparent solar hour (0-24) from longitude.
+ *
+ * The watch method assumes the watch reads solar time. A device clock reads zone time
+ * plus daylight saving, and one hour of error is 30 deg on the dial — halved into 15 deg
+ * of heading error, in the season when most people are out. Deriving the hour from
+ * longitude removes both the DST and the zone-offset error.
+ */
+export function solarHour(date: Date, lng: number): number {
+  const utcHours = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  return ((utcHours + lng / 15) % 24 + 24) % 24;
+}
+
+/**
+ * Analog-watch sun compass. `hourSolar` is local *solar* time (see `solarHour`).
+ *
+ * The bisector must be taken across the SMALLER arc between the hour hand and the 12
+ * mark. Before noon the hour hand sits more than 180 deg clockwise of 12, so the smaller
+ * arc is on the other side and the bisector is 180 deg away from `hourOn12 / 2`.
+ *
+ * The previous formula used `hourOn12 / 2` unconditionally for the northern hemisphere
+ * and its reflex for the southern, which pointed exactly backwards for half of every day
+ * in each: northern mornings and southern afternoons. On a method used precisely when
+ * there is no compass, that sent people 180 deg wrong.
+ *
+ * The dial position is the same in both hemispheres; only which hand you aim at the sun,
+ * and whether the bisector reads south or north, differ.
+ */
 export function watchMethodHeading(
-  hourLocal: number,
+  hourSolar: number,
   hemisphere: "north" | "south",
 ): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } {
-  const h = ((hourLocal % 24) + 24) % 24;
-  const hourOn12 = ((h % 12) + (h % 1)) * 30; // 0° = 12 o'clock
-  const mid = hemisphere === "north" ? hourOn12 / 2 : (hourOn12 + 360) / 2;
+  const h = ((hourSolar % 24) + 24) % 24;
+  const hourOn12 = (h % 12) * 30; // degrees clockwise from the 12 mark
+  const mid = (hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)) % 360;
+  const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
+
   if (hemisphere === "north") {
     return {
       toward: "S",
       clockAzimuthFrom12: mid,
-      hint: `Point the hour hand at the sun. Halfway to 12 is south (~${Math.round(mid)}° from 12 on the watch).`,
+      hint: `Point the hour hand at the sun. Midway between the hour hand and 12 — the short way round, ${clock} — is south.`,
     };
   }
   return {
     toward: "N",
     clockAzimuthFrom12: mid,
-    hint: `Point 12 at the sun. Halfway to the hour hand is north.`,
+    hint: `Point the 12 mark at the sun. Midway between 12 and the hour hand — the short way round, ${clock} — is north.`,
   };
 }
 
@@ -31,13 +61,6 @@ export function polarisHint(lat: number): string {
     return "Southern Cross: long axis through the pointers, extend 4.5 lengths — that is the south celestial pole.";
   }
   return "Near the equator both poles are low. Use the sun / moon compass instead.";
-}
-
-/** Rough grid convergence (true minus grid), degrees. East-positive longitude. */
-export function gridConvergence(lat: number, lng: number): number {
-  const zone = Math.floor((lng + 180) / 6) + 1;
-  const central = -183 + zone * 6;
-  return (lng - central) * Math.sin((lat * Math.PI) / 180);
 }
 
 export function formatGmtCard(trueDeg: number, magneticDeg: number | null, lat: number, lng: number): string {
@@ -126,16 +149,12 @@ export function lostPersonQuery(input: {
     .join("\n");
 }
 
-export function sunVsWatchCheck(
-  date: Date,
-  lat: number,
-  lng: number,
-  localHour: number,
-): string | null {
+export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   const hemi = lat >= 0 ? "north" : "south";
-  const watch = watchMethodHeading(localHour, hemi);
+  // Solar time, not the device clock: see `solarHour`.
+  const watch = watchMethodHeading(solarHour(date, lng), hemi);
   return `Watch method: ${watch.hint} Sun ephemeris ${Math.round(sun.azimuth)}° true — they should agree within ~20°.`;
 }
 

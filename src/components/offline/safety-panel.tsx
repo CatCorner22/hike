@@ -45,7 +45,7 @@ import {
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { formatFixAge } from "@/lib/safety/gps-quality";
-import { isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { useWakeLockHeld } from "@/hooks/use-wake-lock";
 import {
   dropWaypoint,
   getIceProfile,
@@ -423,6 +423,8 @@ export function SafetyPanel({
     [lat, lng, waypoints],
   );
 
+  const wakeLockHeld = useWakeLockHeld();
+
   const checks = useMemo(
     () =>
       safetySelfCheck({
@@ -430,11 +432,11 @@ export function SafetyPanel({
         gpsTrusted,
         iceFilled: isIceFilled(profile),
         returnSet: Boolean(returnLocal),
-        wakeLock: isWakeLockHeld(),
+        wakeLock: wakeLockHeld,
         crumbs: trackPoints.length,
         gpsDenied,
       }),
-    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied],
+    [gpsTrusted, profile, returnLocal, trackPoints.length, gpsDenied, wakeLockHeld],
   );
 
   const moon = useMemo(() => moonPhase(), []);
@@ -462,7 +464,7 @@ export function SafetyPanel({
       : null;
   const watchHint =
     lat != null && lng != null
-      ? sunVsWatchCheck(new Date(), lat, lng, new Date().getHours())
+      ? sunVsWatchCheck(new Date(), lat, lng)
       : null;
   const evac = casevacDecision({
     injured: (Number(injured) || 0) > 0,
@@ -477,8 +479,8 @@ export function SafetyPanel({
     gainLastHourM: gainLastHourM(trackPoints),
     symptoms: amsSymptoms,
   });
-  const avyNote =
-    slopePct != null ? avalancheTerrainWarning({ slopePct, aspectDeg: heading }) : null;
+  // No aspect: heading is the direction of travel, not the direction the slope faces.
+  const avyNote = slopePct != null ? avalancheTerrainWarning({ slopePct }) : null;
 
   async function persistCheckinSettings(next: CheckinSettings) {
     setCheckinSettings(next);

@@ -216,6 +216,104 @@ zooming tighter than the old minimum.
 
 ---
 
+## Fifth pass — the pre-departure self-check and power
+
+### W1. "Screen wake lock is held" could be false
+
+The self-check shows six rows a hiker uses to decide whether they are ready to leave
+coverage. One is the screen wake lock — if the screen sleeps mid-navigation, the
+off-trail banner goes with it.
+
+Nothing listened for the sentinel's `release` event. Per the Screen Wake Lock spec the
+browser releases the sentinel on its own when the document is hidden, and may drop it for
+its own reasons such as battery saver. `lockHeld` was set once on a successful acquire
+and **stayed true forever** afterwards, so the check reported a lock that was gone.
+
+`requestWakeLock` now attaches a `release` listener and publishes changes through a
+subscription.
+
+### W2. The self-check row never updated anyway
+
+`isWakeLockHeld()` was called inside a `useMemo` whose dependency array did not — and
+could not — contain it. The row was computed from a module global at whatever moment one
+of the *other* dependencies last changed, and never recomputed when the lock changed.
+
+Replaced with a `useSyncExternalStore` hook, which is the supported way to read a value
+that lives outside React and changes on its own.
+
+**A bug in the fix, caught by its own test.** The first version notified subscribers from
+inside `acquire()`, before `activeLock` was assigned. Since `isWakeLockHeld()` is
+`lockHeld && activeLock != null`, every subscriber read `false` for a lock that had just
+been granted — and no further notification was coming, so the UI would have stayed wrong
+in a new way. The handle is now published before acquiring.
+
+### W3. The 20% battery tier was unreachable
+
+`batterySafetyAdvice` has tiers at 20%, 10% and 5%. `useBatteryWarning` gated at
+`threshold = 0.15`, so "Battery 20% — plan your next comms window before the phone dies"
+could never display: between 16% and 20%, the band where there is still time to act on
+it, the app said nothing. Threshold raised to 0.20 to match the advice it calls.
+
+`getBattery()` could also resolve after unmount and subscribe listeners that then had
+nothing to remove them; guarded.
+
+---
+
+## Sixth pass — land-nav fallbacks and fabricated inputs
+
+### L1. The watch sun-compass pointed 180° wrong for half of every day
+
+`watchMethodHeading` is the no-compass fallback: aim a hand at the sun, and the bisector
+between the hour hand and the 12 mark gives you a pole. The bisector has to cross the
+**smaller** arc between them. Before noon the hour hand sits more than 180° clockwise of
+12, so the smaller arc is on the other side and the bisector is 180° away from
+`hourOn12 / 2`.
+
+The code used `hourOn12 / 2` unconditionally in the northern hemisphere and its reflex in
+the southern. Checked against where the bisector actually points in true degrees, given
+the sun's true azimuth at that solar hour:
+
+```
+cases: 18  |  old formula wrong in: 9  |  new formula wrong in: 0
+```
+
+Northern **mornings** and southern **afternoons** were exactly backwards — on the method
+you reach for precisely when you have no compass. One shared bisector is correct for both
+hemispheres; only which hand you aim at the sun, and whether the result reads south or
+north, differ.
+
+### L2. The watch method was fed the device clock instead of solar time
+
+The method assumes the watch reads *solar* time. The panel passed
+`new Date().getHours()` — zone time including daylight saving. One hour of error is 30° on
+the dial, halved into **15° of heading error**, through the season when most people are
+out. `solarHour(date, lng)` now derives it from longitude, which removes the DST and
+zone-offset error together.
+
+### L3. Travel heading was fabricated as slope aspect
+
+The panel called `avalancheTerrainWarning({ slopePct, aspectDeg: heading })`. Aspect is
+the direction a slope *faces* — its downhill direction. `heading` is where the hiker is
+pointed. Traverse a slope and your heading is roughly perpendicular to its aspect; climb
+it and your heading is its opposite.
+
+That fed the "classic avalanche start zone" branch, so identical terrain warned or stayed
+silent depending only on which way the hiker happened to be walking.
+
+The app cannot derive aspect: the elevation profile is along-track only, which gives
+gradient but not cross-slope orientation. So the parameter is gone rather than guessed —
+the slope-angle warnings remain and now say to check the forecast for aspect and wind
+loading, which is what `avalanche.ts` collects deliberately from a person.
+
+### L4. Two disagreeing `gridConvergence` implementations
+
+`tactics.ts` and `declination.ts` both exported a `gridConvergence`. `tactics.ts` derived
+the UTM zone with a bare `Math.floor((lng + 180) / 6) + 1`, missing the Norway and
+Svalbard exceptions that `utmZone()` handles, so the two picked different central
+meridians there. Consolidated onto the tested one.
+
+---
+
 ## Second pass — the safety decision aids
 
 The first pass covered navigation, time, GPS and the API. A second pass over the ~2,000

@@ -52,9 +52,9 @@ describe("amsAssessment", () => {
 });
 
 describe("avalancheTerrainWarning", () => {
-  it("warns on steep leeward slopes in winter", () => {
+  it("warns on start-zone angles in snow season", () => {
     expect(
-      avalancheTerrainWarning({ slopePct: 35, aspectDeg: 180, month: 1, snowOnGround: true }),
+      avalancheTerrainWarning({ slopePct: 35, month: 1, snowOnGround: true }),
     ).toMatch(/avalanche/i);
   });
 
@@ -64,6 +64,26 @@ describe("avalancheTerrainWarning", () => {
 
   it("warns on very steep terrain regardless of season", () => {
     expect(avalancheTerrainWarning({ slopePct: 50, month: 7 })).toMatch(/45%|avalanche/i);
+  });
+
+  /**
+   * Regression: the warning keyed off an `aspectDeg` the caller filled with the hiker's
+   * travel heading. Aspect is the direction a slope faces; heading is where the hiker is
+   * pointed. Identical terrain warned or stayed silent depending only on which way they
+   * happened to be walking.
+   */
+  it("gives the same answer for the same terrain however the hiker is facing", () => {
+    const answers = new Set(
+      [0, 45, 90, 135, 180, 225, 270, 315].map(() =>
+        avalancheTerrainWarning({ slopePct: 32, month: 1, snowOnGround: true }),
+      ),
+    );
+    expect(answers.size).toBe(1);
+    expect([...answers][0]).toMatch(/forecast/i);
+  });
+
+  it("says nothing off-season on a moderate slope", () => {
+    expect(avalancheTerrainWarning({ slopePct: 32, month: 7, snowOnGround: false })).toBeNull();
   });
 });
 
