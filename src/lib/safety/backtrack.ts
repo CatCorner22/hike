@@ -70,3 +70,22 @@ export function rapidAscentWarning(
   }
   return null;
 }
+
+export function gainLastHourM(
+  points: Array<TrackPoint & { altitude?: number; recordedAt?: number | string }>,
+  now = Date.now(),
+): number {
+  const recent = points.filter((p) => {
+    if (p.altitude == null) return false;
+    const t =
+      typeof p.recordedAt === "number"
+        ? p.recordedAt
+        : p.recordedAt
+          ? Date.parse(p.recordedAt)
+          : now;
+    return now - t <= 60 * 60 * 1000;
+  });
+  if (recent.length < 2) return 0;
+  const alts = recent.map((p) => p.altitude as number);
+  return alts[alts.length - 1] - Math.min(...alts);
+}
