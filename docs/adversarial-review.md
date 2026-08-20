@@ -398,6 +398,57 @@ green, `next build` succeeds.
 
 ---
 
+## Fifth pass — the route's stored direction
+
+### D1. "Remaining" counted up as you walked toward your destination
+
+`stitchRelationWays` normalises every stitched OSM relation chain so it runs west-east
+(`overpass.ts`, the trailing `if (first[0] > last[0]) chain.reverse()`). That is fine for
+determinism and says nothing about which end anyone starts from — but
+`progressAlongTrail` computed `remainingMeters` as `totalMeters - traveledMeters`,
+measured from coordinate 0, and `trailheadPoint` takes coordinate 0 as "the trailhead".
+
+So for a hiker who parked at the east end — roughly half of all traversals — the primary
+readout ran backwards. Measured on a 5.3 km route:
+
+```
+                    Remaining
+at the trailhead     0.00 km
+                     1.32 km
+halfway              2.64 km
+                     3.96 km
+at the destination   5.28 km
+```
+
+"Climb left" was wrong the same way, summing the ascent behind the hiker rather than
+ahead of them.
+
+The consequence is not cosmetic. `turnaroundWarning` takes `remainingMeters`, so standing
+at the trailhead with 40 minutes of daylight and a 5.3 km walk ahead:
+
+```
+before:  null                    <- silent
+after:   "This route still needs ~63 min; sunset is in 40 min.
+          Turn around or finish with a headlamp."
+```
+
+The daylight warning was switched off at exactly the moment it had something to say, and
+"Est. time" read `Done` at the start of the walk.
+
+**Fix.** `TrailProgress` is now direction-aware. `travelDirectionAlong` establishes which
+way the hiker is moving from their own breadcrumb track (two line snaps, not one per fix),
+and below 40 m of along-line movement it answers `unknown` rather than guessing from GPS
+jitter. `remainingMeters` counts to the end being walked toward; `remainingElevationGain`
+sums the climb in that direction. Before direction is established the readout reports the
+nearer end and the label changes to **"To nearer end"**, rather than asserting a figure it
+cannot know.
+
+Verification after this pass: `tsc --noEmit` clean, `eslint` clean, `vitest run` 367/367
+green, `next build` succeeds.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
