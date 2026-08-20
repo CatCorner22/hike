@@ -312,10 +312,19 @@ async function run() {
       if (shellCached) break;
       await page.waitForTimeout(500);
     }
+    const cacheKeys = await page.evaluate(async () => {
+      try {
+        const cache = await caches.open("hike-navigate-shell");
+        const keys = await cache.keys();
+        return keys.map((k) => (typeof k === "string" ? k : k.url)).slice(0, 12);
+      } catch {
+        return [];
+      }
+    });
     log(
       "B1 prepare offline",
       prepared.via !== "none" ? "PASS" : "SKIP",
-      `via ${prepared.via}; navigate shell cached=${shellCached}`,
+      `via ${prepared.via}; navigate shell cached=${shellCached}; keys=${cacheKeys.join(" | ")}`,
     );
     const prepareScreenText =
       (await page.locator("body").innerText().catch(() => "")) || "";

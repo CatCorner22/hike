@@ -68,16 +68,44 @@ async function markNavigateDocument(response: Response): Promise<Response | null
   }
 }
 
-const navigateShellHandler = async ({ request }: { request: Request }) => {
-  const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-  const cached =
+async function matchNavigateShell(cache: Cache, request: Request): Promise<Response | undefined> {
+  const direct =
     (await cache.match(request.url, { ignoreSearch: true, ignoreVary: true })) ??
     (await cache.match(request, { ignoreSearch: true, ignoreVary: true }));
+  if (direct) return direct;
+
+  let wanted: URL;
+  try {
+    wanted = new URL(request.url);
+  } catch {
+    return undefined;
+  }
+  if (!wanted.pathname.startsWith("/navigate/")) return undefined;
+
+  for (const key of await cache.keys()) {
+    const raw = typeof key === "string" ? key : key.url;
+    let keyUrl: URL;
+    try {
+      keyUrl = new URL(raw);
+    } catch {
+      continue;
+    }
+    const samePath =
+      keyUrl.pathname === wanted.pathname ||
+      keyUrl.pathname === `${wanted.pathname}/` ||
+      `${keyUrl.pathname}/` === wanted.pathname;
+    if (!samePath) continue;
+    const hit = await cache.match(key, { ignoreSearch: true, ignoreVary: true });
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+const navigateShellHandler = async ({ request }: { request: Request }) => {
+  const cache = await caches.open(NAVIGATE_SHELL_CACHE);
+  const cached = await matchNavigateShell(cache, request);
   if (cached) {
     if (await isValidNavigateDocument(cached)) return cached;
-    // A cache is untrusted storage. Do not retain an invalid value for later
-    // requests, even if the device is currently offline.
-    await cache.delete(request.url);
   }
 
   try {
@@ -96,7 +124,19 @@ const serwist = new Serwist({
   skipWaiting: true,
   clientsClaim: true,
   navigationPreload: true,
-  fallbacks: { entries: [{ url: "/offline", matcher: ({ request }) => request.mode === "navigate" }] },
+  fallbacks: {
+    entries: [{
+      url: "/offline",
+      matcher: ({ request }) => {
+        if (request.mode !== "navigate") return false;
+        try {
+          return !new URL(request.url).pathname.startsWith("/navigate/");
+        } catch {
+          return true;
+        }
+      },
+    }],
+  },
   runtimeCaching: [
     { matcher: ({ url }) => url.pathname.startsWith("/navigate/"), handler: navigateShellHandler },
     {
