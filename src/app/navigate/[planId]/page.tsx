@@ -16,8 +16,6 @@ import {
   compassLabel,
   gpsAccuracyLabel,
   normalizeHeading,
-  progressAlongTrail,
-  travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -31,6 +29,7 @@ import {
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
+import { createRouteProgressCache, progressWithRouteCache, type RouteProgressCache } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
@@ -122,6 +121,7 @@ export default function NavigatePage() {
   const [headerHeight, setHeaderHeight] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
+  const progressCacheRef = useRef<RouteProgressCache | null>(null);
   const pendingPointsRef = useRef<
     Array<{
       lat: number;
@@ -245,9 +245,7 @@ export default function NavigatePage() {
       return;
     }
     if (fix.heading == null || !Number.isFinite(fix.heading)) {
-      setDeniedError(
-        "No heading yet — walk a few paces in your intended direction, then arm DR. Dead reckoning cannot guess which way you are facing.",
-      );
+      setDeniedError("No heading yet — walk a few paces in your intended direction, then arm DR. Dead reckoning cannot guess which way you are facing.");
       return;
     }
     setDeniedAnchor({ lat: fix.lat, lng: fix.lng, heading: fix.heading, at: Date.now() });
@@ -256,77 +254,65 @@ export default function NavigatePage() {
   }, [gpsDenied, gps.fix, gpsTrusted]);
 
   const loadPack = useCallback(async (options: { forceNetwork?: boolean } = {}) => {
-    // A manual refresh must not tear the map down — losing the route mid-hike to show a
-    // spinner is exactly the failure this screen exists to avoid. The button shows its
-    // own progress instead.
+    let terminal = false;
+    const complete = (next: LoadState) => {
+      if (terminal) return;
+      terminal = true;
+      setLoadState(next);
+    };
     if (!options.forceNetwork) setLoadState({ status: "loading" });
-
-    // Cache wins by default — this screen has to work with no signal. `forceNetwork`
-    // is the manual refresh, and still falls back to the cached pack if the fetch
-    // fails, so asking for fresh data can never leave you with no route.
-    const cached = await loadCachedRoutePack(navId);
-    if (cached && !options.forceNetwork) {
-      setLoadState({ status: "ready", pack: cached, source: "cache" });
-      return;
-    }
-
-    const target = parseNavigateTarget(navId);
-    if (!target) {
-      if (cached) {
-        setLoadState({ status: "ready", pack: cached, source: "cache" });
-        return;
-      }
-      setLoadState({
-        status: "error",
-        message: "Invalid route id. Open the trail or plan and tap Prepare offline first.",
-      });
-      return;
-    }
-
+    const timeout = window.setTimeout(() => complete({
+      status: "error",
+      message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
+    }), 12_000);
+    let cached: RoutePack | null = null;
     try {
-      if (target.kind === "trail") {
-        const res = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${target.id}`, { signal }),
-          8000,
-        );
-        if (!res.ok) throw new Error("Trail not found on server");
-        const data = await res.json();
-        const pack = await persistRoutePack(packFromTrailApi(navId, data));
-        setLoadState({ status: "ready", pack, source: "network" });
+      try {
+        cached = await loadCachedRoutePack(navId);
+      } catch (error) {
+        complete({ status: "error", message: error instanceof Error ? error.message : "Saved route does not match this trail — re-download while you have signal." });
         return;
       }
-
-      const planRes = await withNetworkTimeout(
-        (signal) => fetch(`/api/plans/${target.id}`, { signal }),
-        8000,
-      );
-      if (!planRes.ok) throw new Error("Plan not found on server");
-      const plan = await planRes.json();
-      let trail = null;
-      if (plan.trailId) {
-        const trailRes = await withNetworkTimeout(
-          (signal) => fetch(`/api/trails/${plan.trailId}`, { signal }),
-          8000,
-        );
-        if (trailRes.ok) trail = await trailRes.json();
-      }
-      const built = packFromPlanApi(navId, plan, trail);
-      if (!built) throw new Error("Plan has no route geometry");
-      const pack = await persistRoutePack(built);
-      setLoadState({ status: "ready", pack, source: "network" });
-    } catch (err) {
-      const retry = cached ?? (await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 }));
-      if (retry) {
-        setLoadState({ status: "ready", pack: retry, source: "cache" });
+      // Cache wins by default; a manual refresh never removes a working route.
+      if (cached && !options.forceNetwork) {
+        complete({ status: "ready", pack: cached, source: "cache" });
         return;
       }
-      setLoadState({
-        status: "error",
-        message:
-          err instanceof Error
-            ? `${err.message}. Prepare offline on Wi‑Fi before you lose service.`
-            : "Route unavailable offline. Prepare offline before heading out.",
-      });
+      const target = parseNavigateTarget(navId);
+      if (!target) {
+        if (cached) complete({ status: "ready", pack: cached, source: "cache" });
+        else complete({ status: "error", message: "Invalid route id. Open the trail or plan and tap Prepare offline first." });
+        return;
+      }
+      try {
+        if (target.kind === "trail") {
+          const res = await withNetworkTimeout((signal) => fetch(`/api/trails/${target.id}`, { signal }), 8000);
+          if (!res.ok) throw new Error("Trail not found on server");
+          const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
+          complete({ status: "ready", pack, source: "network" });
+          return;
+        }
+        const planRes = await withNetworkTimeout((signal) => fetch(`/api/plans/${target.id}`, { signal }), 8000);
+        if (!planRes.ok) throw new Error("Plan not found on server");
+        const plan = await planRes.json();
+        let trail = null;
+        if (plan.trailId) {
+          const trailRes = await withNetworkTimeout((signal) => fetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          if (trailRes.ok) trail = await trailRes.json();
+        }
+        const built = packFromPlanApi(navId, plan, trail);
+        if (!built) throw new Error("Plan has no route geometry");
+        complete({ status: "ready", pack: await persistRoutePack(built), source: "network" });
+      } catch (error) {
+        let retry = cached;
+        if (!retry) {
+          try { retry = await loadCachedRoutePack(navId, { retries: 5, retryMs: 400 }); } catch { /* report network error below */ }
+        }
+        if (retry) complete({ status: "ready", pack: retry, source: "cache" });
+        else complete({ status: "error", message: error instanceof Error ? `${error.message}. Prepare offline on Wi‑Fi before you lose service.` : "Route unavailable offline. Prepare offline before heading out." });
+      }
+    } finally {
+      window.clearTimeout(timeout);
     }
   }, [navId]);
 
@@ -365,12 +351,10 @@ export default function NavigatePage() {
       if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
-    const p = progressAlongTrail(
-      { lat: navFix.lat, lng: navFix.lng },
-      loadState.pack.geometry,
-      loadState.pack.elevationProfile,
-      travelDirection,
-    );
+    if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
+      progressCacheRef.current = createRouteProgressCache(loadState.pack);
+    }
+    const p = progressWithRouteCache(progressCacheRef.current, { lat: navFix.lat, lng: navFix.lng });
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 
@@ -761,7 +745,7 @@ export default function NavigatePage() {
                 packId={pack.id}
                 offTrailM={trusted ? progress?.offsetMeters : undefined}
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
-                bearingToStart={bearingToStart}
+                bearingToStart={bearingToStart ?? undefined}
                 daylightWarning={skyWarning}
                 isDark={Boolean(daylight?.isDark)}
                 altitudeM={gps.fix?.altitude}

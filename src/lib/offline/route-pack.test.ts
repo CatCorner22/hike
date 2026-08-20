@@ -9,6 +9,7 @@ import {
   listRoutePacks,
   resetRoutePackDbForTests,
   saveRoutePack,
+  validateRoutePack,
 } from "./route-pack";
 
 const DB_NAME = "hike-nav-packs";
@@ -148,5 +149,54 @@ describe("route pack aliases and migration", () => {
     await expect(getRoutePackStatus("plan-stale")).resolves.toMatchObject({
       status: "stale",
     });
+  });
+});
+
+describe("route pack integrity boundaries", () => {
+  it("rejects an alias pointer whose payload does not claim the requested id", async () => {
+    const pack = buildRoutePack({ id: "evil-canonical", aliases: ["unrelated"], name: "Wrong trail", geometry });
+    // Initialize the v4 schema before simulating an attacker-controlled record.
+    await saveRoutePack(buildRoutePack({ id: "seed", name: "Seed", geometry }));
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, 4);
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction(["routePacks", "aliases"], "readwrite");
+        tx.objectStore("routePacks").put(pack);
+        tx.objectStore("aliases").put({ alias: "plan-victim", canonicalId: "evil-canonical" });
+        tx.oncomplete = () => { db.close(); resolve(); };
+        tx.onerror = () => reject(tx.error);
+      };
+      request.onerror = () => reject(request.error);
+    });
+    await resetRoutePackDbForTests();
+    await expect(getRoutePack("plan-victim")).resolves.toBeNull();
+    await expect(getRoutePackStatus("plan-victim")).resolves.toMatchObject({
+      status: "invalid",
+      error: "Saved route does not match this trail — re-download while you have signal.",
+    });
+  });
+
+  it("rejects unbounded or malformed safety metadata", () => {
+    const pack = buildRoutePack({ id: "plan-safe", name: "Safe route", geometry });
+    expect(validateRoutePack({
+      ...pack,
+      elevationProfile: [{ distanceMeters: 2, elevation: 1 }, { distanceMeters: 2, elevation: 2 }],
+    })).toContain("elevation");
+    expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
+  });
+
+  it("aborts the payload transaction when an alias write throws synchronously", async () => {
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function patchedPut(this: IDBObjectStore, value: unknown) {
+      if (this.name === "aliases") throw new DOMException("synthetic alias failure", "QuotaExceededError");
+      return original.call(this, value);
+    };
+    try {
+      await expect(saveRoutePack(buildRoutePack({ id: "plan-atomic", name: "Atomic", geometry }))).rejects.toThrow("synthetic alias failure");
+    } finally {
+      IDBObjectStore.prototype.put = original;
+    }
+    expect(await recordCount()).toBe(0);
   });
 });

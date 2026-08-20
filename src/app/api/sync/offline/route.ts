@@ -4,7 +4,8 @@ import { errorResponse } from "@/lib/api/errors";
 import { parseJsonBody } from "@/lib/api/validation";
 import { gpxFromLineString, parseGpx } from "@/lib/geo";
 import { parseOsmTrailId } from "@/lib/ids";
-import { findOrCreateTrail, getTrailById } from "@/lib/trails/service";
+import { getTrailById, getTrailByOsmId } from "@/lib/trails/service";
+import { getTrailDetail } from "@/lib/osm/overpass";
 
 const MAX_GPX_BYTES = 5 * 1024 * 1024;
 const gpxImportSchema = z.object({
@@ -21,8 +22,13 @@ export async function GET(request: Request) {
     let name = "Trail";
     const osm = parseOsmTrailId(trailId);
     if (osm) {
-      const result = await findOrCreateTrail(osm.osmId, osm.osmType);
-      if (result) { geometry = result.detail.geometry; name = result.detail.name; }
+      const cached = await getTrailByOsmId(osm.osmId, osm.osmType);
+      if (cached) { geometry = cached.geometry as GeoJSON.LineString | GeoJSON.MultiLineString; name = cached.name; }
+      else {
+        // Export discovery must not silently insert/update shared rows.
+        const detail = await getTrailDetail(osm.osmId, osm.osmType);
+        if (detail) { geometry = detail.geometry; name = detail.name; }
+      }
     } else {
       const trail = await getTrailById(trailId);
       if (trail) { geometry = trail.geometry as GeoJSON.LineString | GeoJSON.MultiLineString; name = trail.name; }
@@ -39,7 +45,7 @@ export async function POST(request: Request) {
   if (Number.isFinite(contentLength) && contentLength > MAX_GPX_BYTES + 4096) {
     return NextResponse.json({ error: "GPX payload is too large" }, { status: 413 });
   }
-  const parsed = await parseJsonBody(request, gpxImportSchema);
+  const parsed = await parseJsonBody(request, gpxImportSchema, { maxBytes: MAX_GPX_BYTES + 8_192 });
   if (!parsed.ok) return parsed.response;
   if (new TextEncoder().encode(parsed.data.gpx).byteLength > MAX_GPX_BYTES) {
     return NextResponse.json({ error: "GPX payload is too large" }, { status: 413 });

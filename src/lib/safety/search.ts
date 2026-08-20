@@ -1,4 +1,5 @@
 import { deadReckon } from "@/lib/safety/landnav";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export interface SearchLeg {
   headingTrue: number;
@@ -132,12 +133,13 @@ export function searchLineFromLegs(
 }
 
 export function formatSearchPlan(name: string, legs: SearchLeg[]): string {
-  return [
-    `${name.toUpperCase()} SEARCH`,
+  const rounded = (value: number) => (Number.isFinite(value) ? String(Math.round(value)) : "UNKNOWN");
+  return formatReport([
+    `SEARCH PLAN — ${reportField(name).toUpperCase()} SEARCH`,
     ...legs.map(
       (l, i) =>
-        `L${i + 1}  ${Math.round(l.headingTrue)}° / ${Math.round(l.meters)} m  (cum ${Math.round(l.cumMeters)} m)`,
+        `L${i + 1}  ${rounded(l.headingTrue)}° / ${rounded(l.meters)} m  (cum ${rounded(l.cumMeters)} m)`,
     ),
     "Mark trail tape / cairns at each corner. Yell and listen between legs.",
-  ].join("\n");
+  ]);
 }

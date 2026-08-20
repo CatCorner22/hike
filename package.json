@@ -11,7 +11,11 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "test:offline": "node e2e/offline-navigation.mjs"
+    "test:offline": "node e2e/offline-navigation.mjs",
+    "test:adversarial": "vitest run adversarial",
+    "test:api-probe": "node adversarial/api-probe.mjs",
+    "test:offline-probe": "node adversarial/offline-adversarial.mjs",
+    "bench": "vitest run adversarial/perf.bench.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.43",

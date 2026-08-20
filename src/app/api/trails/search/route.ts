@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { errorResponse } from "@/lib/api/errors";
 import { parseBbox } from "@/lib/geo/bbox";
 import { searchTrailsWithCache } from "@/lib/trails/service";
+import { rateLimit } from "@/lib/api/rate-limit";
 
 export async function GET(request: Request) {
+  const limited = rateLimit(request, "trails-search", 20);
+  if (limited) return limited;
   const { searchParams } = new URL(request.url);
   const q = searchParams.get("q")?.trim() ?? "";
   const bboxParam = searchParams.get("bbox");

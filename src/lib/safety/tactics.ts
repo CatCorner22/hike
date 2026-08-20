@@ -1,6 +1,7 @@
 import { sunPosition } from "@/lib/safety/astro";
 import { gridConvergence } from "@/lib/safety/declination";
 import { formatUsng } from "@/lib/safety/usng";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 /**
  * Local apparent solar hour (0-24) from longitude.
@@ -33,11 +34,13 @@ export function solarHour(date: Date, lng: number): number {
 export function watchMethodHeading(
   hourSolar: number,
   hemisphere: "north" | "south",
-): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } {
+): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } | null {
+  if (!Number.isFinite(hourSolar) || hourSolar < 0 || hourSolar > 24 || (hemisphere !== "north" && hemisphere !== "south")) return null;
   const h = ((hourSolar % 24) + 24) % 24;
   const hourOn12 = (h % 12) * 30; // degrees clockwise from the 12 mark
   const mid = (hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)) % 360;
   const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
+
 
   if (hemisphere === "north") {
     return {
@@ -53,7 +56,8 @@ export function watchMethodHeading(
   };
 }
 
-export function polarisHint(lat: number): string {
+export function polarisHint(lat: number): string | null {
+  if (!Number.isFinite(lat) || lat < -90 || lat > 90) return null;
   if (lat >= 5) {
     return `Polaris is ~${Math.round(lat)}° above the northern horizon (your latitude). Face it = true north.`;
   }
@@ -63,14 +67,16 @@ export function polarisHint(lat: number): string {
   return "Near the equator both poles are low. Use the sun / moon compass instead.";
 }
 
-export function formatGmtCard(trueDeg: number, magneticDeg: number | null, lat: number, lng: number): string {
+export function formatGmtCard(trueDeg: number, magneticDeg: number | null, lat: number, lng: number): string | null {
   const conv = gridConvergence(lat, lng);
+  if (conv == null || !Number.isFinite(trueDeg) || trueDeg < 0 || trueDeg >= 360 || (magneticDeg != null && (!Number.isFinite(magneticDeg) || magneticDeg < 0 || magneticDeg >= 360))) return null;
   const grid = ((trueDeg - conv) % 360 + 360) % 360;
   const mag = magneticDeg != null ? ` · ${Math.round(magneticDeg)}° mag` : "";
   return `${Math.round(trueDeg)}° true · ${Math.round(grid)}° grid (conv ${conv >= 0 ? "+" : ""}${conv.toFixed(1)}°)${mag}`;
 }
 
 export type CasevacChoice = "stay" | "short-carry" | "walk-out";
+export type MedicalOverride = "severe-altitude-illness" | "uncontrolled-hemorrhage" | "airway-compromise" | "severe-hypothermia";
 
 export function casevacDecision(input: {
   injured: boolean;
@@ -78,32 +84,50 @@ export function casevacDecision(input: {
   isDark: boolean;
   remainingM?: number;
   partySize?: number;
-}): { choice: CasevacChoice; reason: string } {
+  medicalOverride?: MedicalOverride;
+}): { choice: CasevacChoice | "urgent-assisted-descent"; reason: string; medicalPriority: boolean } {
+  if (input.medicalOverride) {
+    const labels: Record<MedicalOverride, string> = {
+      "severe-altitude-illness": "severe altitude illness",
+      "uncontrolled-hemorrhage": "uncontrolled hemorrhage",
+      "airway-compromise": "airway compromise",
+      "severe-hypothermia": "severe hypothermia",
+    };
+    return {
+      choice: "urgent-assisted-descent",
+      medicalPriority: true,
+      reason: `MEDICAL PRIORITY: ${labels[input.medicalOverride]} requires urgent assisted descent/evacuation and rescue activation. The generic stay-put rule does not apply; move only as terrain safety permits while arranging rescue.`,
+    };
+  }
   if (input.injured && !input.canWalk) {
     return {
       choice: "stay",
+      medicalPriority: false,
       reason: "Non-walker — stay put, signal, send 9-line / MIST. Litter only if the site is immediately dangerous.",
     };
   }
   if (input.isDark && input.injured) {
     return {
       choice: "stay",
+      medicalPriority: false,
       reason: "Injured after dark — shelter and signal. Move at first light unless fire/flood/lightning.",
     };
   }
   if (input.canWalk && (input.remainingM ?? 0) <= 1500 && (input.partySize ?? 1) >= 2) {
     return {
       choice: "walk-out",
+      medicalPriority: false,
       reason: "Ambulatory and close — slow walk-out on the packed route with a buddy.",
     };
   }
   if (input.canWalk && (input.remainingM ?? 99999) > 1500) {
     return {
       choice: "short-carry",
+      medicalPriority: false,
       reason: "Long way yet — consider a short assisted move to a better LZ / handrail, then stay.",
     };
   }
-  return { choice: "stay", reason: "Default: stay, improve shelter, run beacon." };
+  return { choice: "stay", medicalPriority: false, reason: "Default: stay, improve shelter, run beacon." };
 }
 
 export function fordSop(): string[] {
@@ -135,18 +159,16 @@ export function lostPersonQuery(input: {
   lat?: number;
   lng?: number;
 }): string {
-  return [
+  return formatReport([
     "LOST PERSON QUERY (for 911 / SAR)",
-    `Name: ${input.name ?? "unknown"}`,
-    `Last seen: ${input.lastSeen ?? "not stated"}`,
-    `Clothing: ${input.clothing ?? "not stated"}`,
-    `Direction of travel: ${input.direction ?? "unknown"}`,
-    `Medical: ${input.medical ?? "unknown"}`,
-    input.lat != null && input.lng != null ? `Your grid now: ${formatUsng(input.lat, input.lng)}` : "",
+    `Name: ${reportField(input.name ?? "unknown")}`,
+    `Last seen: ${reportField(input.lastSeen ?? "not stated")}`,
+    `Clothing: ${reportField(input.clothing ?? "not stated")}`,
+    `Direction of travel: ${reportField(input.direction ?? "unknown")}`,
+    `Medical: ${reportField(input.medical ?? "unknown")}`,
+    input.lat != null && input.lng != null ? `Your grid now: ${reportField(formatUsng(input.lat, input.lng))}` : "",
     "Stay on the line. Do not have the whole party search in different directions.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ]);
 }
 
 export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | null {
@@ -155,12 +177,16 @@ export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | 
   const hemi = lat >= 0 ? "north" : "south";
   // Solar time, not the device clock: see `solarHour`.
   const watch = watchMethodHeading(solarHour(date, lng), hemi);
+  if (!watch) return null;
   return `Watch method: ${watch.hint} Sun ephemeris ${Math.round(sun.azimuth)}° true — they should agree within ~20°.`;
 }
 
 /** 9 beads × 100 m = 1 km. Returns how many km completed plus leftover beads. */
 export function paceBeads(totalHundreds: number): { km: number; beads: number; label: string } {
-  const n = Math.max(0, Math.floor(totalHundreds));
+  if (!Number.isFinite(totalHundreds) || totalHundreds < 0 || totalHundreds > 10_000) {
+    return { km: 0, beads: 0, label: "Cannot determine — verify your pace-bead input." };
+  }
+  const n = Math.floor(totalHundreds);
   const km = Math.floor(n / 9);
   const beads = n % 9;
   return { km, beads, label: `${km} km + ${beads} beads (×100 m)` };

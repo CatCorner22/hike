@@ -63,9 +63,16 @@ describe("overdueStatus", () => {
   // Regression: an unparseable stored time produced NaN, which is neither <= 0 nor > 0,
   // so the alarm reported "Return in NaN min" and never fired. Downstream, the panel fed
   // the same value to new Date(...).toISOString(), which throws and kills the screen.
-  it("returns null for an unreadable return time instead of a silent NaN", () => {
-    expect(overdueStatus("garbage")).toBeNull();
-    expect(overdueStatus("")).toBeNull();
-    expect(overdueStatus("NaN-NaN-NaNTNaN:NaN")).toBeNull();
+  it("reports an unreadable return time as unknown, never overdue and never safe", () => {
+    // Callers render `label` directly, so the shaped result carries a usable
+    // message. The safety property is that a corrupt stored deadline must not
+    // raise a false overdue alarm, and must not silently read as fine either.
+    for (const bad of ["garbage", "", "NaN-NaN-NaNTNaN:NaN"]) {
+      const status = overdueStatus(bad);
+      expect(status.overdue).toBe(false);
+      expect(status.remainingMin).toBeNull();
+      expect(status.label).toMatch(/invalid/i);
+      expect(status.label).not.toMatch(/NaN/);
+    }
   });
 });
