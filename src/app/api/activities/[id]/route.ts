@@ -77,6 +77,9 @@ export async function PATCH(
         })
         .where(eq(activities.id, id))
         .returning();
+      if (!updated) {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
       return NextResponse.json(updated);
     }
 

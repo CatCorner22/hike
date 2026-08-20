@@ -55,6 +55,7 @@ export async function PATCH(
         })
         .where(eq(hikePlans.id, id))
         .returning();
+      if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json(plan);
     }
 

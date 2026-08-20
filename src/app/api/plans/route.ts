@@ -3,6 +3,26 @@ import { desc } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
 import { createPlan, listPlans } from "@/lib/store/local";
+import { z } from "zod";
+import { isValidGeometry } from "@/lib/geo/navigation";
+
+const dateString = z.string().refine((value) => !Number.isNaN(Date.parse(value)), {
+  message: "Invalid planned date",
+});
+const geometry = z.custom<GeoJSON.LineString | GeoJSON.MultiLineString>(
+  isValidGeometry,
+  "Invalid route geometry",
+);
+
+const createPlanSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  trailId: z.string().max(200).nullish(),
+  plannedDate: dateString.nullish(),
+  notes: z.string().max(50_000).nullish(),
+  waypoints: z.unknown().optional(),
+  campgroundIds: z.array(z.string().max(200)).max(500).optional(),
+  customGeometry: geometry.nullish(),
+});
 
 export async function GET() {
   try {
@@ -27,10 +47,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    if (!body.name || typeof body.name !== "string") {
-      return NextResponse.json({ error: "Plan name is required" }, { status: 400 });
+    const parsed = createPlanSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "Invalid plan", issues: parsed.error.issues },
+        { status: 400 },
+      );
     }
+    const body = parsed.data;
 
     if (hasDatabase()) {
       const db = getDb();
@@ -60,6 +84,9 @@ export async function POST(request: Request) {
     });
     return NextResponse.json(plan);
   } catch (error) {
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to create plan" },
       { status: 500 },

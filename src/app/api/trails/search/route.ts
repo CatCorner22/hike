@@ -6,8 +6,11 @@ export async function GET(request: Request) {
   const q = searchParams.get("q");
   const bboxParam = searchParams.get("bbox");
 
-  if (!q || q.length < 2) {
+  if (!q || q.trim().length < 2) {
     return NextResponse.json({ trails: [] });
+  }
+  if (q.length > 200 || /[\u0000-\u001f\u007f]/.test(q)) {
+    return NextResponse.json({ error: "Invalid search query" }, { status: 400 });
   }
 
   let bbox: [number, number, number, number] | undefined;

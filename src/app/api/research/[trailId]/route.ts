@@ -52,7 +52,6 @@ export async function GET(
 
       if (
         cached &&
-        !refresh &&
         Date.now() - cached.researchedAt.getTime() < REFRESH_COOLDOWN_MS
       ) {
         return NextResponse.json({ brief: cached.brief, cached: true });
@@ -82,7 +81,7 @@ export async function GET(
       });
     }
 
-    return NextResponse.json({ brief, cached: false });
+    return NextResponse.json({ brief, cached: false, refreshed: refresh });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Research failed" },
