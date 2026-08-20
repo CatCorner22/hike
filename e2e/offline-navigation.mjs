@@ -161,7 +161,11 @@ async function grantDurableStorage(browser, context, origin) {
 
 async function run() {
   const results = [];
-  const browser = await chromium.launch();
+  // CI installs a matching Chromium; other environments (including the review sandbox)
+  // supply one out of band. Honour it or the probe is unrunnable there.
+  const browser = await chromium.launch(
+    process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
+  );
 
   // ---------- Scenario A: warm start ----------
   {

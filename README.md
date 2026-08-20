@@ -40,9 +40,8 @@ cp .env.example .env.local
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `OWNER_TOKEN_SECRET` | **Yes in production** | Signs the anonymous device-owner cookie that scopes plans, activities and GPS tracks to a device. Generate with `openssl rand -base64 32`. The server refuses to start without it in production rather than serve location history unscoped. |
 | `DATABASE_URL` | Yes* | Neon Postgres connection string |
-| `SESSION_SECRET` | Yes, in production | Signs the owner cookie that scopes plans and activities. Without it the API refuses user data rather than sharing it |
+| `SESSION_SECRET` | **Yes in production** | Signs the anonymous device-owner cookie that scopes plans, activities and GPS tracks. Generate with `openssl rand -base64 32`. Without it the server refuses user data rather than serving location history unscoped. (`OWNER_TOKEN_SECRET` is accepted as a legacy alias.) |
 | `NPS_API_KEY` | For NPS camping/research | [developer.nps.gov](https://developer.nps.gov/) |
 | `RIDB_API_KEY` | For federal camping | [ridb.recreation.gov/profile](https://ridb.recreation.gov/profile) |
 | `OPENAI_API_KEY` | For AI research | OpenAI or compatible provider |
