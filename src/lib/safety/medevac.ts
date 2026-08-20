@@ -1,6 +1,7 @@
 import { formatDdm, formatMgrs10, formatUsng, phonetic } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
 import { formatReport, reportField } from "@/lib/safety/report-field";
+import type { PositionSource } from "@/lib/safety/emergency";
 
 export function nineLineMedevac(input: {
   lat?: number;
@@ -12,10 +13,26 @@ export function nineLineMedevac(input: {
   precedence?: "A" | "B" | "C";
   marking?: string;
   terrain?: string;
+  positionSource?: PositionSource;
+  stale?: boolean;
 }): string {
-  const grid = input.lat != null && input.lng != null ? formatUsng(input.lat, input.lng) : null;
-  const mgrs = input.lat != null && input.lng != null ? formatMgrs10(input.lat, input.lng) : null;
+  const hasFix =
+    input.lat != null &&
+    input.lng != null &&
+    Number.isFinite(input.lat) &&
+    Number.isFinite(input.lng);
+  const grid = hasFix ? formatUsng(input.lat!, input.lng!) : null;
+  const mgrs = hasFix ? formatMgrs10(input.lat!, input.lng!) : null;
   const loc = grid && mgrs ? `${grid} / ${mgrs}` : "UNKNOWN";
+  const source = input.positionSource ?? (input.stale ? "lastKnown" : "gps");
+  const sourceNote =
+    !hasFix
+      ? " — no live fix"
+      : source === "deadReckon"
+        ? " — DEAD RECKON, not live GPS"
+        : source === "lastKnown" || input.stale
+          ? " — LAST KNOWN, GPS not live"
+          : "";
   // Casualty counts, not party size: party size is preserved separately on line 8.
   const litter = Number.isFinite(input.litter) && (input.litter ?? 0) >= 0 ? Math.round(input.litter!) : 0;
   const amb = Number.isFinite(input.ambulatory) && (input.ambulatory ?? 0) >= 0
@@ -28,7 +45,7 @@ export function nineLineMedevac(input: {
 
   return formatReport([
     "9-LINE MEDEVAC / SAR",
-    `L1 LOCATION: ${reportField(loc)}`,
+    `L1 LOCATION: ${reportField(loc)}${sourceNote}`,
     "L2 FREQ/CALL: SMS/CELL — Hike app",
 `L3 PATIENTS BY PRECEDENCE: ${reportField(patients)}${prec} (${
       prec === "A" ? "Urgent" : prec === "B" ? "Urgent Surgical" : "Priority"

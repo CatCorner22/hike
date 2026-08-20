@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
 import {
+  isClockSuspectFix,
   isTrustedFix,
   isValidLatLng,
   sanitizeFixTimestamp,
@@ -110,6 +111,8 @@ export function useGps() {
           ? position.coords.altitude
           : undefined;
 
+      const recordedAt = sanitizeFixTimestamp(position.timestamp);
+      const clockSuspect = isClockSuspectFix();
       const fix: GpsFix = {
         lat,
         lng,
@@ -119,8 +122,8 @@ export function useGps() {
             : undefined,
         heading,
         altitude,
-        recordedAt: sanitizeFixTimestamp(position.timestamp),
-        stale: false,
+        recordedAt,
+        stale: clockSuspect,
       };
       lastFixRef.current = fix;
       const nowMs = Date.now();
@@ -130,9 +133,10 @@ export function useGps() {
       }
       setState({
         fix,
-        status: "live",
-        message:
-          (fix.accuracy ?? 0) > 25
+        status: clockSuspect ? "stale" : "live",
+        message: clockSuspect
+          ? "GPS clock on this reading is invalid. Position is shown but not trusted for alerts."
+          : (fix.accuracy ?? 0) > 25
             ? "GPS accuracy is poor. Use the trail line and off-route warning as a check, not a guarantee."
             : null,
       });

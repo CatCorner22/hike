@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { progressAlongTrail } from "@/lib/geo/navigation";
 import { buildRoutePack } from "@/lib/offline/route-pack";
 import { createRouteProgressCache, progressWithRouteCache } from "./progress-cache";
+import { travelDirectionAlong } from "@/lib/geo/navigation";
 
 // A 5.3 km west-east line, stored the way stitchRelationWays normalises OSM chains.
 const GEOMETRY: GeoJSON.LineString = {
@@ -75,5 +76,39 @@ describe("progressWithRouteCache — direction parity with progressAlongTrail", 
     // Uphill west->east: heading east climbs; heading west from the midpoint is descent.
     expect(progressWithRouteCache(cache, middle, "forward").remainingElevationMeters).toBeGreaterThan(200);
     expect(progressWithRouteCache(cache, middle, "backward").remainingElevationMeters).toBeCloseTo(0, 0);
+  });
+});
+
+describe("progressWithRouteCache — turnaround on an out-and-back", () => {
+  /**
+   * The navigate screen feeds travelDirectionAlong's answer into the cache fast path, so
+   * the out-and-back fix only reaches a hiker if it survives this route. Covering
+   * progressAlongTrail alone would leave the production path untested.
+   */
+  it("keeps remaining decreasing through the cache after the hiker turns around", () => {
+    const cache = createRouteProgressCache(pack());
+    const out = [-119.56, -119.55, -119.54, -119.53, -119.52, -119.51, -119.5].map(at);
+    const back = [-119.51, -119.52, -119.53, -119.54, -119.55].map(at);
+
+    // Walk out first, so the cache's lastSegment advances the way it does in the app.
+    const track = [...out];
+    for (const step of out) {
+      progressWithRouteCache(cache, step, travelDirectionAlong(GEOMETRY, track));
+    }
+
+    let previous = Infinity;
+    for (const step of back) {
+      track.push(step);
+      const direction = travelDirectionAlong(GEOMETRY, track);
+      const progress = progressWithRouteCache(cache, step, direction);
+      expect(progress.remainingMeters, `returning at ${step.lng}`).toBeLessThan(previous);
+      previous = progress.remainingMeters;
+    }
+  });
+
+  it("never reports forward once well into the return leg", () => {
+    const track = [-119.56, -119.55, -119.54, -119.53, -119.52, -119.51, -119.5].map(at);
+    for (const step of [-119.51, -119.52, -119.53, -119.54, -119.55].map(at)) track.push(step);
+    expect(travelDirectionAlong(GEOMETRY, track)).toBe("backward");
   });
 });

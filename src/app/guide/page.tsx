@@ -208,9 +208,16 @@ export default function GuidePage() {
           <div>
             <p className="font-medium text-foreground">What works without signal?</p>
             <p>
-              Navigation, your saved routes, breadcrumbs, the Safety panel, SOS, and
-              activity recording. Searching new trails, camping lookups, and trail research
-              need a connection.
+              Navigation, your saved routes, the Navigate screen&apos;s breadcrumb trail,
+              the Safety panel, and SOS. Searching new trails, camping lookups, and trail
+              research need a connection.
+            </p>
+            <p className="mt-1">
+              <strong>Activity recording is different:</strong> you have to press{" "}
+              <strong>Start recording</strong> while you still have signal. Once it has
+              started it keeps recording with no signal and uploads the track when you get
+              back in range. If you are already out of range, use Navigate — its
+              breadcrumbs are saved on the phone and need no connection at all.
             </p>
           </div>
           <div>

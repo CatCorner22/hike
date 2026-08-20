@@ -238,22 +238,42 @@ export function progressAlongTrail(
 /**
  * Establish which way along the stored line the hiker is moving, from their own track.
  *
- * Two snaps only — this runs on every GPS fix and `nearestPointOnLine` is not cheap on a
- * long route. Below `minAlongMetres` of along-line movement the answer is "unknown"
- * rather than a guess from GPS noise.
+ * Uses only the RECENT tail of the track — the last `windowMetres` of movement — never
+ * the whole session. Comparing the newest point against the session's first breadcrumb
+ * meant an out-and-back (the most common hike shape) read "forward" for the entire
+ * return leg: after the turnaround, Remaining counted to the far end and *increased*
+ * while the hiker walked home, and turnaroundWarning judged the wrong distance.
+ *
+ * Two snaps only — this runs on GPS cadence and `nearestPointOnLine` is not cheap on a
+ * long route. Below `minAlongMetres` of along-line movement inside the window (standing
+ * still, GPS jitter, or mid-turnaround) the answer is "unknown" rather than a guess.
  */
 export function travelDirectionAlong(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   track: LatLng[],
-  minAlongMetres = 40,
+  options: { minAlongMetres?: number; windowMetres?: number } = {},
 ): TravelDirection {
+  const minAlongMetres = options.minAlongMetres ?? 40;
+  const windowMetres = options.windowMetres ?? 150;
   if (!isValidGeometry(geometry)) return "unknown";
   const usable = track.filter(
     (p) => p && Number.isFinite(p.lat) && Number.isFinite(p.lng),
   );
   if (usable.length < 2) return "unknown";
 
-  const from = usable[0];
+  // Walk backwards from the newest point until the window is covered, measuring hops in
+  // metres (equirectangular is fine at these distances).
+  let windowStart = usable.length - 1;
+  let covered = 0;
+  while (windowStart > 0 && covered < windowMetres) {
+    const a = usable[windowStart - 1];
+    const b = usable[windowStart];
+    const mPerDegLng = 111_320 * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+    covered += Math.hypot((b.lat - a.lat) * 111_132, (b.lng - a.lng) * mPerDegLng);
+    windowStart -= 1;
+  }
+
+  const from = usable[windowStart];
   const to = usable[usable.length - 1];
   const alongFrom = progressAlongTrail(from, geometry).traveledMeters;
   const alongTo = progressAlongTrail(to, geometry).traveledMeters;

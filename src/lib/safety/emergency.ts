@@ -78,24 +78,26 @@ export function emergencyMessage(input: {
       }
     }
   } else {
-    lines.push("No usable GPS fix on this device — position unknown.");
+    lines.push("No GPS fix. No usable GPS fix is available on this device — position unknown.");
   }
   if (input.trailName) lines.push(`Route: ${reportField(input.trailName)}`);
   if (input.offTrailM != null && Number.isFinite(input.offTrailM) && input.offTrailM > 20) {
     lines.push(
-      input.stale
-        ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
-        : `Approx. ${Math.round(input.offTrailM)} m off marked route`,
+      source === "deadReckon"
+        ? `DEAD RECKON was ~${Math.round(input.offTrailM)} m off marked route`
+        : source === "lastKnown" || input.stale
+          ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
+          : `Approx. ${Math.round(input.offTrailM)} m off marked route`,
     );
   }
   const profile = input.profile;
   if (profile) {
     if (profile.name) lines.push(`Hiker: ${reportField(profile.name)}`);
-    if (profile.partySize) lines.push(`Party size: ${profile.partySize}`);
+    if (profile.partySize) lines.push(`Party size: ${reportField(profile.partySize)}`);
     if (profile.medical) lines.push(`Medical: ${reportField(profile.medical)}`);
     if (profile.bloodType) lines.push(`Blood type: ${reportField(profile.bloodType)}`);
     if (profile.iceName || profile.icePhone) {
-      lines.push(`ICE: ${reportField(profile.iceName)} ${reportField(profile.icePhone)}`.trim());
+      lines.push(`ICE: ${reportField(`${profile.iceName} ${profile.icePhone}`.trim())}`);
     }
   }
   if (input.partyNote) lines.push(reportField(input.partyNote));

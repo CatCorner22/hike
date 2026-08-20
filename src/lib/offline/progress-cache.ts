@@ -15,8 +15,13 @@ interface Segment {
   endMeters: number;
 }
 
+export function routePackFingerprint(pack: RoutePack): string {
+  return `${pack.id}:${pack.cachedAt}:${pack.lengthMeters}:${pack.cumulativeDistancesMeters.length}`;
+}
+
 export interface RouteProgressCache {
   packId: string;
+  fingerprint: string;
   totalMeters: number;
   elevationProfile: RoutePack["elevationProfile"];
   segments: Segment[];
@@ -70,7 +75,7 @@ export function createRouteProgressCache(pack: RoutePack): RouteProgressCache {
     }
     coordinateIndex += line.length;
   }
-  return { packId: pack.id, totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null, lastTraveledMeters: null };
+  return { packId: pack.id, fingerprint: routePackFingerprint(pack), totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null, lastTraveledMeters: null };
 }
 
 function wrappedLongitudeDelta(lng: number): number {

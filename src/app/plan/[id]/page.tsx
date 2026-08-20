@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
+import { PreDeparturePanel } from "@/components/offline/pre-departure-panel";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
@@ -110,9 +111,7 @@ export default function PlanDetailPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...plan, ...updates }),
     });
-    if (response.ok) {
-      setPlan(await response.json());
-    }
+    if (response.ok) setPlan(await response.json());
     setSaving(false);
   }
 
@@ -156,7 +155,6 @@ export default function PlanDetailPage() {
   }
 
   if (!plan) return <Skeleton className="h-64 w-full" />;
-
   const geometry = trail?.geometry || plan.customGeometry;
 
   return (
@@ -164,13 +162,8 @@ export default function PlanDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">Edit plan</h1>
         <div className="flex flex-wrap gap-2">
-          <NavigateLink
-            href={`/navigate/plan-${plan.id}`}
-            ready={packReady}
-          />
-          <Button variant="outline" onClick={importGpx}>
-            Import GPX
-          </Button>
+          <NavigateLink href={`/navigate/plan-${plan.id}`} ready={packReady} />
+          <Button variant="outline" onClick={importGpx}>Import GPX</Button>
           <PrepareOffline
             packId={`plan-${plan.id}`}
             aliases={[plan.id, plan.trailId].filter(Boolean) as string[]}
@@ -180,8 +173,7 @@ export default function PlanDetailPage() {
             elevationProfile={trail?.elevationProfile}
           />
           <Button variant="destructive" onClick={deletePlan}>
-            <Trash2 className="mr-2 h-4 w-4" />
-            Delete
+            <Trash2 className="mr-2 h-4 w-4" />Delete
           </Button>
         </div>
       </div>
@@ -189,12 +181,7 @@ export default function PlanDetailPage() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <Label htmlFor="name">Plan name</Label>
-          <Input
-            id="name"
-            value={plan.name}
-            onChange={(e) => setPlan({ ...plan, name: e.target.value })}
-            onBlur={() => save({ name: plan.name })}
-          />
+          <Input id="name" value={plan.name} onChange={(e) => setPlan({ ...plan, name: e.target.value })} onBlur={() => save({ name: plan.name })} />
         </div>
         <div>
           <Label htmlFor="date">Planned date</Label>
@@ -203,9 +190,7 @@ export default function PlanDetailPage() {
             type="date"
             value={plan.plannedDate?.slice(0, 10) || ""}
             onChange={(e) => {
-              const plannedDate = e.target.value
-                ? new Date(e.target.value).toISOString()
-                : null;
+              const plannedDate = e.target.value ? new Date(e.target.value).toISOString() : null;
               setPlan({ ...plan, plannedDate });
               save({ plannedDate });
             }}
@@ -215,44 +200,27 @@ export default function PlanDetailPage() {
 
       <div>
         <Label htmlFor="notes">Notes</Label>
-        <Textarea
-          id="notes"
-          value={plan.notes || ""}
-          onChange={(e) => setPlan({ ...plan, notes: e.target.value })}
-          onBlur={() => save({ notes: plan.notes })}
-          rows={4}
-        />
+        <Textarea id="notes" value={plan.notes || ""} onChange={(e) => setPlan({ ...plan, notes: e.target.value })} onBlur={() => save({ notes: plan.notes })} rows={4} />
       </div>
 
       {trail && (
-        <p className="text-sm text-muted-foreground">
-          Trail:{" "}
-          <Link href={`/trails/${plan.trailId}`} className="text-primary hover:underline">
-            {trail.name}
-          </Link>
-        </p>
+        <p className="text-sm text-muted-foreground">Trail: <Link href={`/trails/${plan.trailId}`} className="text-primary hover:underline">{trail.name}</Link></p>
       )}
 
       {geometry && (
-        <div className="h-64 overflow-hidden rounded-xl border">
-          <MapView
-            trailGeometry={geometry}
-            fitBounds={trail?.bbox}
-          />
-        </div>
+        <>
+          <div className="h-64 overflow-hidden rounded-xl border">
+            <MapView trailGeometry={geometry} fitBounds={trail?.bbox} />
+          </div>
+          <PreDeparturePanel planId={plan.id} plannedDate={plan.plannedDate} geometry={geometry} waypoints={plan.waypoints} />
+        </>
       )}
 
       <div className="space-y-3 rounded-xl border p-4">
         <h2 className="text-sm font-semibold">Camping stops</h2>
-        <p className="text-xs text-muted-foreground">
-          Search and attach campgrounds to this trip. Reservation links must be https.
-        </p>
+        <p className="text-xs text-muted-foreground">Search and attach campgrounds to this trip. Reservation links must be https.</p>
         <div className="flex gap-2">
-          <Input
-            value={campQuery}
-            onChange={(e) => setCampQuery(e.target.value)}
-            placeholder="Campground or park name"
-          />
+          <Input value={campQuery} onChange={(e) => setCampQuery(e.target.value)} placeholder="Campground or park name" />
           <Button
             variant="outline"
             disabled={campSearching || !campQuery.trim()}
@@ -267,8 +235,7 @@ export default function PlanDetailPage() {
               }
             }}
           >
-            <Search className="mr-2 h-4 w-4" />
-            Search
+            <Search className="mr-2 h-4 w-4" />Search
           </Button>
         </div>
         {(plan.campgroundIds ?? []).length > 0 && (
@@ -276,17 +243,7 @@ export default function PlanDetailPage() {
             {(plan.campgroundIds ?? []).map((id) => (
               <li key={id} className="flex items-center justify-between gap-2">
                 <span className="truncate font-mono text-xs">{id}</span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    void save({
-                      campgroundIds: (plan.campgroundIds ?? []).filter((c) => c !== id),
-                    })
-                  }
-                >
-                  Remove
-                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void save({ campgroundIds: (plan.campgroundIds ?? []).filter((c) => c !== id) })}>Remove</Button>
               </li>
             ))}
           </ul>
@@ -298,25 +255,13 @@ export default function PlanDetailPage() {
             <div key={hit.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-sm">
               <div>
                 <p className="font-medium">{hit.name}</p>
-                {reserve && (
-                  <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">
-                    Reserve
-                  </a>
-                )}
+                {reserve && <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">Reserve</a>}
               </div>
               <Button
                 variant="outline"
                 size="sm"
                 disabled={added}
-                onClick={() =>
-                  void save({
-                    campgroundIds: [...(plan.campgroundIds ?? []), hit.id],
-                    waypoints: [
-                      ...(plan.waypoints ?? []),
-                      { name: hit.name, lat: hit.latitude, lng: hit.longitude },
-                    ],
-                  })
-                }
+                onClick={() => void save({ campgroundIds: [...(plan.campgroundIds ?? []), hit.id], waypoints: [...(plan.waypoints ?? []), { name: hit.name, lat: hit.latitude, lng: hit.longitude }] })}
               >
                 {added ? "Added" : "Add stop"}
               </Button>
@@ -327,6 +272,7 @@ export default function PlanDetailPage() {
 
       <div className="space-y-3 rounded-xl border p-4">
         <h2 className="text-sm font-semibold">Plan waypoints</h2>
+        <p className="text-xs text-muted-foreground">Prefix a verified exit waypoint with “Bailout:” or “Exit:” to surface it in pre-departure decision support. This labels a candidate only; it does not create a route through unknown terrain.</p>
         <div className="grid gap-2 sm:grid-cols-3">
           <Input value={wpName} onChange={(e) => setWpName(e.target.value)} placeholder="Name" />
           <Input value={wpLat} onChange={(e) => setWpLat(e.target.value)} placeholder="Lat" />
@@ -339,12 +285,8 @@ export default function PlanDetailPage() {
             const lng = Number(wpLng);
             if (!wpName.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
             if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
-            void save({
-              waypoints: [...(plan.waypoints ?? []), { name: wpName.trim(), lat, lng }],
-            });
-            setWpName("");
-            setWpLat("");
-            setWpLng("");
+            void save({ waypoints: [...(plan.waypoints ?? []), { name: wpName.trim(), lat, lng }] });
+            setWpName(""); setWpLat(""); setWpLng("");
           }}
         >
           Add waypoint
@@ -353,20 +295,8 @@ export default function PlanDetailPage() {
           <ul className="space-y-1 text-sm">
             {(plan.waypoints ?? []).map((wp, i) => (
               <li key={`${wp.name}-${i}`} className="flex items-center justify-between">
-                <span>
-                  {wp.name} · {wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() =>
-                    void save({
-                      waypoints: (plan.waypoints ?? []).filter((_, idx) => idx !== i),
-                    })
-                  }
-                >
-                  Remove
-                </Button>
+                <span>{wp.name} · {wp.lat.toFixed(4)}, {wp.lng.toFixed(4)}</span>
+                <Button variant="ghost" size="sm" onClick={() => void save({ waypoints: (plan.waypoints ?? []).filter((_, idx) => idx !== i) })}>Remove</Button>
               </li>
             ))}
           </ul>
@@ -378,9 +308,7 @@ export default function PlanDetailPage() {
         <ActivityRecorder planId={plan.id} trailId={plan.trailId ?? undefined} />
       </div>
 
-      {saving && (
-        <p className="text-sm text-muted-foreground">Saving...</p>
-      )}
+      {saving && <p className="text-sm text-muted-foreground">Saving...</p>}
     </div>
   );
 }
