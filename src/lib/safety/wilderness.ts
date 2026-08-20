@@ -54,6 +54,9 @@ export function amsAssessment(input: {
   let level: AmsLevel = "none";
   if (input.symptoms.length > 0) {
     if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
+    // Fatigue alone at low elevation is not altitude illness. Calling it AMS would
+    // misdirect a hiker from other causes while giving a confident false diagnosis.
+    else if (alt < 2500 && input.symptoms.every((symptom) => symptom === "fatigue")) level = "none";
     else if (score >= 5) level = "moderate";
     else level = "mild";
   }

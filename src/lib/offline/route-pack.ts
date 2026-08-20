@@ -45,7 +45,15 @@ interface RoutePackDB extends DBSchema {
   aliases: { key: string; value: RoutePackAlias; indexes: { "by-canonical": string } };
   lastFix: {
     key: string;
-    value: { id: string; lat: number; lng: number; accuracy?: number; heading?: number; recordedAt: string };
+    value: {
+      id: string;
+      lat: number;
+      lng: number;
+      accuracy?: number;
+      heading?: number;
+      altitude?: number;
+      recordedAt: string;
+    };
   };
 }
 
@@ -356,13 +364,35 @@ export async function hasRoutePack(id: string): Promise<boolean> {
   return (await getRoutePackStatus(id)).status === "ready";
 }
 
-export async function saveLastFix(fix: { lat: number; lng: number; accuracy?: number; heading?: number; recordedAt?: number }) {
-  const db = await getDb();
-  if (!db) return;
+let lastFixWrite: Promise<void> = Promise.resolve();
+
+export async function saveLastFix(fix: {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  heading?: number;
+  altitude?: number;
+  recordedAt?: number;
+}) {
   const recordedAt = fix.recordedAt ?? Date.now();
   // Never persist a future or epoch fix as if it were a fresh position.
   if (!Number.isFinite(recordedAt) || recordedAt < Date.UTC(2020, 0, 1) || recordedAt > Date.now() + 5 * 60_000) return;
-  await db.put("lastFix", { ...fix, id: "current", recordedAt: new Date(recordedAt).toISOString() });
+  lastFixWrite = lastFixWrite
+    .catch(() => undefined)
+    .then(async () => {
+      const db = await getDb();
+      if (!db) return;
+      await db.put("lastFix", {
+        id: "current",
+        lat: fix.lat,
+        lng: fix.lng,
+        accuracy: fix.accuracy,
+        heading: fix.heading,
+        altitude: fix.altitude,
+        recordedAt: new Date(recordedAt).toISOString(),
+      });
+    });
+  return lastFixWrite;
 }
 
 export async function getLastFix() {

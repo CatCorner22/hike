@@ -26,7 +26,8 @@ export class MissingSessionSecretError extends Error {
   constructor() {
     super(
       "SESSION_SECRET is not set. Ownership cannot be verified, so the API refuses to " +
-        "read or write user data. Set SESSION_SECRET to a long random string.",
+        "read or write user data. Set SESSION_SECRET (or its legacy alias " +
+        "OWNER_TOKEN_SECRET) to a long random string.",
     );
     this.name = "MissingSessionSecretError";
   }
@@ -35,9 +36,13 @@ export class MissingSessionSecretError extends Error {
 /**
  * Fails closed in production. A missing secret must not silently degrade to "everyone
  * shares one identity" — that is the bug this module exists to remove.
+ *
+ * SESSION_SECRET is canonical. OWNER_TOKEN_SECRET is accepted as an alias because two
+ * parallel hardening efforts named the same secret differently, and a deployment
+ * configured with the other name must not suddenly lock every user out of their data.
  */
 function getSecret(): string {
-  const secret = process.env.SESSION_SECRET;
+  const secret = process.env.SESSION_SECRET || process.env.OWNER_TOKEN_SECRET;
   if (secret && secret.length > 0) return secret;
   if (process.env.NODE_ENV === "production") throw new MissingSessionSecretError();
   return DEV_SECRET;

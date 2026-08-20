@@ -26,6 +26,7 @@ import {
 } from "@/lib/safety/daylight";
 import { sunCompassHint, sunPosition } from "@/lib/safety/astro";
 import { polarisHint } from "@/lib/safety/tactics";
+import { offTrailLevel } from "@/lib/safety/alerts";
 import {
   formatZulu,
   intersection,
@@ -209,7 +210,17 @@ describe("time, clock-skew, and treatment timing", () => {
 describe("degenerate geometry and numeric guards", () => {
   it("has safe fallbacks for empty/stub geometry and short backtracks", () => {
     const empty: GeoJSON.MultiLineString = { type: "MultiLineString", coordinates: [[], [[0, 0]]] };
-    expect(progressAlongTrail({ lat: 0, lng: 0 }, empty)).toMatchObject({ traveledMeters: 0, offsetMeters: 0 });
+    // offsetMeters must NOT be 0 here: a stub geometry with no usable segment
+    // would then read as "you are exactly on the trail", and the off-trail alert
+    // is derived from this number. NaN plus valid: false makes consumers show an
+    // explicit unknown state instead.
+    const degenerate = progressAlongTrail({ lat: 0, lng: 0 }, empty);
+    expect(degenerate.valid).toBe(false);
+    expect(degenerate.traveledMeters).toBe(0);
+    expect(Number.isFinite(degenerate.offsetMeters)).toBe(false);
+    expect(Number.isFinite(degenerate.bearingToTrail)).toBe(false);
+    // And the alert layer must treat it as unknown, never as on-route.
+    expect(offTrailLevel(degenerate.offsetMeters)).toBe("unknown");
     expect(reverseTrackLine([])).toBeNull();
     expect(reverseTrackLine([{ lat: 0, lng: 0 }])).toBeNull();
     expect(backtrackProgress({ lat: 0, lng: 0 }, [])).toBeNull();

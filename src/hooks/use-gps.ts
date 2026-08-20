@@ -61,15 +61,16 @@ export function useGps() {
     }
 
     void getLastFix().then((stored) => {
-      if (cancelled || !stored || lastFixRef.current) return;
+      if (cancelled || deniedRef.current || !stored || lastFixRef.current) return;
       if (!isValidLatLng(stored.lat, stored.lng)) return;
       const recordedAt = sanitizeStoredFixTimestamp(new Date(stored.recordedAt).getTime());
       if (recordedAt == null) return;
       const fix: GpsFix = {
         lat: stored.lat,
         lng: stored.lng,
-        accuracy: stored.accuracy,
-        heading: stored.heading,
+        accuracy: Number.isFinite(stored.accuracy) ? stored.accuracy : undefined,
+        heading: Number.isFinite(stored.heading) ? stored.heading : undefined,
+        altitude: Number.isFinite(stored.altitude) ? stored.altitude : undefined,
         recordedAt,
         stale: true,
       };
@@ -140,19 +141,26 @@ export function useGps() {
       lastCallbackRef.current = Date.now();
       if (error.code === error.PERMISSION_DENIED) {
         deniedRef.current = true;
+        if (lastFixRef.current) {
+          // A hiker must not see the last coordinate as a current GPS position after permission is revoked.
+          lastFixRef.current = { ...lastFixRef.current, stale: true };
+        }
         deniedSinceRef.current = Date.now();
-        setState((prev) => ({
-          ...prev,
+        setState({
+          fix: lastFixRef.current,
           status: "denied",
           message:
             "Location permission is off. Enable it in the browser to see your position. The downloaded route remains on the map.",
-        }));
+        });
         return;
       }
+      if (lastFixRef.current) {
+        lastFixRef.current = { ...lastFixRef.current, stale: true };
+      }
       setState((prev) => ({
-        ...prev,
-        status: prev.fix ? "stale" : "acquiring",
-        message: prev.fix
+        fix: lastFixRef.current ?? prev.fix,
+        status: prev.fix || lastFixRef.current ? "stale" : "acquiring",
+        message: prev.fix || lastFixRef.current
           ? "GPS signal lost. Holding last known position."
           : "Still waiting for GPS. Move to open sky if you can.",
       }));

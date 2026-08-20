@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDistance, formatDuration } from "@/lib/geo";
+import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
 
 interface Activity {
   id: string;
@@ -64,7 +64,7 @@ export default function ActivitiesPage() {
                       <span>{formatDuration(activity.stats.durationSeconds)}</span>
                     )}
                     {activity.stats?.elevationGainMeters != null && (
-                      <span>+{Math.round(activity.stats.elevationGainMeters * 3.28)} ft</span>
+                      <span>+{formatElevation(activity.stats.elevationGainMeters)}</span>
                     )}
                   </div>
                 </CardContent>

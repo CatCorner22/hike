@@ -49,9 +49,7 @@ jobs:
         # required because the server intentionally fails closed without them.
         env:
           # Ownership is verified with SESSION_SECRET (src/lib/auth/owner.ts).
-          # OWNER_TOKEN_SECRET is kept for the local-store fallback path.
           SESSION_SECRET: ci-only-session-secret
-          OWNER_TOKEN_SECRET: ci-only-owner-token-secret
           ALLOW_LOCAL_STORE_IN_PRODUCTION: "true"
         run: |
           npx next start --port 3111 &

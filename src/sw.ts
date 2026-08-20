@@ -1,6 +1,6 @@
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
-import { CacheFirst, ExpirationPlugin, NetworkFirst, Serwist } from "serwist";
+import { CacheFirst, ExpirationPlugin, NetworkFirst, NetworkOnly, Serwist } from "serwist";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -96,6 +96,10 @@ const serwist = new Serwist({
         networkTimeoutSeconds: 3,
         plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 14 })],
       }),
+    },
+    {
+      matcher: ({ url }) => url.pathname.startsWith("/api/plans/"),
+      handler: new NetworkOnly(),
     },
     ...defaultCache,
   ],

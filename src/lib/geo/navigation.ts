@@ -32,14 +32,13 @@ export interface TrailProgress {
   valid: boolean;
 }
 
+/** First usable segment only — never flatten MultiLineString (that invents connectors). */
 export function toLineString(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): GeoJSON.LineString {
   if (geometry.type === "LineString") return geometry;
-  return {
-    type: "LineString",
-    coordinates: geometry.coordinates.flat(),
-  };
+  const first = geometry.coordinates.find((line) => line.length >= 2) ?? [];
+  return { type: "LineString", coordinates: first };
 }
 
 export function trailLengthMeters(
@@ -53,6 +52,31 @@ export function trailLengthMeters(
     }, 0);
   }
   return turf.length(turf.feature(geometry), { units: "meters" });
+}
+
+/**
+ * Distance still to walk, given how far along the stored line the hiker is and which way
+ * they are travelling. Walking against the stored direction, "total - traveled" counts
+ * *up* as you approach your destination — it read 0.00 km at the trailhead and 5.28 km at
+ * the far end, and fed turnaroundWarning, silencing the daylight warning at the start of
+ * a long walk. With no direction established yet, the nearer end is the honest answer.
+ *
+ * Every code path that turns traveled metres into a "remaining" figure must go through
+ * this — the fast progress cache re-derived it independently once and re-introduced the
+ * backwards readout.
+ */
+export function resolveRemaining(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+): { remainingMeters: number; resolvedDirection: TravelDirection } {
+  const toEnd = Math.max(totalMeters - traveledMeters, 0);
+  const toStart = Math.max(traveledMeters, 0);
+  const remainingMeters =
+    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
+  const resolvedDirection: TravelDirection =
+    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  return { remainingMeters, resolvedDirection };
 }
 
 function progressOnSegment(
@@ -76,16 +100,11 @@ function progressOnSegment(
     traveledOffsetMeters + segmentTraveled,
     totalMeters,
   );
-  const toEnd = Math.max(totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  // Walking against the stored direction, "total - traveled" counts *up* as you approach
-  // your destination: it read 0.00 km at the trailhead and 5.28 km at the far end. That
-  // also fed turnaroundWarning, so the daylight warning stayed silent at the start of a
-  // long walk. With no direction established yet, the nearer end is the honest answer.
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    totalMeters,
+    direction,
+  );
 
   return {
     nearest,
@@ -139,13 +158,10 @@ export function progressAlongTrail(
     }
 
     if (best) return best;
+    return emptyProgress(point, totalMeters);
   }
 
-  const coords =
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
-
+  const coords = geometry.coordinates;
   if (coords.length < 2) {
     return emptyProgress(point, totalMeters);
   }
@@ -183,13 +199,15 @@ export function travelDirectionAlong(
 function emptyProgress(point: LatLng, totalMeters: number, valid = true): TrailProgress {
   return {
     nearest: point,
-    offsetMeters: 0,
+    offsetMeters: Number.NaN,
     traveledMeters: 0,
     remainingMeters: Math.max(totalMeters, 0),
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
-    bearingToTrail: 0,
+    // No route position is known. A numeric bearing would tell a hiker to walk
+    // somewhere despite invalid data, so consumers must see this as unavailable.
+    bearingToTrail: Number.NaN,
     valid,
   };
 }

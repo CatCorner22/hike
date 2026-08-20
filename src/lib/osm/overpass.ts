@@ -167,6 +167,22 @@ function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): numbe
   return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+function wayPositions(way: OverpassElement): GeoJSON.Position[] {
+  const positions = (way.geometry || []).map((point) => [point.lon, point.lat] as GeoJSON.Position);
+  return positions.length >= 2 &&
+    positions.every(
+      (position) =>
+        Number.isFinite(position[0]) &&
+        Number.isFinite(position[1]) &&
+        position[0] >= -180 &&
+        position[0] <= 180 &&
+        position[1] >= -90 &&
+        position[1] <= 90,
+    )
+    ? positions
+    : [];
+}
+
 function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
   return endpointDistanceMeters(a, b) <= 25;
 }
@@ -256,9 +272,22 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
 }
 
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  const lines = elements
-    .filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
-    .map((way) => way.geometry!.map((point) => [point.lon, point.lat] as GeoJSON.Position));
+  const relation = elements.find((element) => element.type === "relation");
+  const waysById = new Map(
+    elements
+      .filter((element) => element.type === "way")
+      .map((way) => [way.id, way]),
+  );
+  const memberWays = relation?.members?.filter((member) => member.type === "way") ?? [];
+  const lines = memberWays.length > 0
+    ? memberWays.flatMap((member) => {
+      const way = waysById.get(member.ref);
+      if (!way) return [];
+      const positions = wayPositions(way);
+      if (positions.length < 2) return [];
+      return [member.role === "backward" ? [...positions].reverse() : positions];
+    })
+    : [...waysById.values()].map(wayPositions).filter((positions) => positions.length >= 2);
   if (!lines.length) return null;
   const chains = stitchRelationWays(lines);
   return chains.length === 1

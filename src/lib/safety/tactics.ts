@@ -41,7 +41,6 @@ export function watchMethodHeading(
   const mid = (hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)) % 360;
   const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
 
-
   if (hemisphere === "north") {
     return {
       toward: "S",
@@ -175,10 +174,11 @@ export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | 
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   const hemi = lat >= 0 ? "north" : "south";
-  // Solar time, not the device clock: see `solarHour`.
+// Solar time, not the device clock: see `solarHour`.
   const watch = watchMethodHeading(solarHour(date, lng), hemi);
   if (!watch) return null;
-  return `Watch method: ${watch.hint} Sun ephemeris ${Math.round(sun.azimuth)}° true — they should agree within ~20°.`;
+  // A true azimuth and a dial angle use different reference frames; claiming agreement can mislead a lost hiker.
+  return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
 }
 
 /** 9 beads × 100 m = 1 km. Returns how many km completed plus leftover beads. */

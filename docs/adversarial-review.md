@@ -494,6 +494,53 @@ green, `next build` succeeds.
 
 ---
 
+## Seventh pass — the activity recorder
+
+### R1. Flat walks reported ~1,300 m of climb
+
+The recorder summed every positive altitude delta between accepted GPS points. Phone GPS
+altitude jitters by metres per fix, and positive noise deltas accumulate: **measured with
+sigma = 5 m jitter, a perfectly flat 5 km walk (500 points) reported ~1,300 m of
+elevation gain.** That number went to the live "Elev gain" stat, into the stored
+activity, and into every pace judgement built on it.
+
+Fixed with the standard two-stage filter in `lib/geo/elevation-gain.ts`: exponential
+smoothing (alpha 0.25) then peak/valley hysteresis (8 m) — noise oscillating inside the
+band counts for nothing, real ascent is banked valley-to-peak, and an unfinished climb
+still counts at stop time. Property-tested against seeded noise: the flat walk now
+reports < 60 m where the naive sum reports > 800, while a genuine 600 m climb through the
+same noise still measures 540–680.
+
+### R2–R3
+
+- **R2** The unmount-time save had no `keepalive`, so closing the tab mid-hike killed the
+  PATCH and abandoned the activity with no end time and stale stats.
+- **R3** Starting a recording offline failed with a bare "Failed to start activity". The
+  error now says the honest thing: recording needs signal to start — use Navigate, which
+  records the track offline with GPX export.
+
+Also verified consistent this pass: the recorder's batch upload shape against the points
+API (union schema accepts both), and the AMS ascent-rate input (`gainLastHourM` is
+range-based, not delta-summed, so it was already noise-robust).
+
+### C1. CI could not boot the server: two names for one secret
+
+The `Offline navigation e2e` job failed with "server did not become ready": the workflow
+exported `OWNER_TOKEN_SECRET` while the merged code reads `SESSION_SECRET` — the two
+parallel hardening efforts named the same secret differently, and the cross-merge kept
+one side's code with the other side's workflow and docs. Every page render threw
+`MissingSessionSecretError`, so the readiness probe never saw a 200.
+
+`SESSION_SECRET` is now canonical everywhere; `OWNER_TOKEN_SECRET` is accepted as a
+legacy alias so a deployment configured with the other name does not lock every device
+out of its own data (regression-tested, including that fail-closed still holds with both
+names absent). The e2e probe also lost its `CHROMIUM_PATH` support in the same merge;
+restored, and the whole CI job re-run locally end to end — all scenarios pass including
+cold offline navigate.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

@@ -5,7 +5,7 @@ export function offTrailLevel(
   accuracyMeters?: number,
   options: { trustedFix?: boolean } = {},
 ): OffTrailLevel {
-  if (
+if (
     !Number.isFinite(offsetMeters) ||
     offsetMeters < 0 ||
     (accuracyMeters !== undefined && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0))
@@ -14,7 +14,7 @@ export function offTrailLevel(
   }
   if (options.trustedFix === false) return "unknown";
 
-  const accuracy = accuracyMeters ?? 0;
+  const accuracy = Number.isFinite(accuracyMeters) ? (accuracyMeters as number) : 0;
   const adjusted = Math.max(0, offsetMeters - accuracy * 0.5);
   if (adjusted > 80) return "critical";
   if (adjusted > 35) return "warn";

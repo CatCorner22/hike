@@ -46,20 +46,25 @@ export function stationaryMinutes(
   return Math.max(0, Math.round((now - oldest) / 60000));
 }
 
+function sampleTime(
+  p: { recordedAt?: number | string },
+  fallback: number,
+): number {
+  if (typeof p.recordedAt === "number" && Number.isFinite(p.recordedAt)) return p.recordedAt;
+  if (p.recordedAt) {
+    const t = Date.parse(String(p.recordedAt));
+    return Number.isFinite(t) ? t : fallback;
+  }
+  return fallback;
+}
+
 export function rapidAscentWarning(
   points: Array<TrackPoint & { altitude?: number; recordedAt?: number | string }>,
   now = Date.now(),
 ): string | null {
-  const recent = points.filter((p) => {
-    if (p.altitude == null) return false;
-    const t =
-      typeof p.recordedAt === "number"
-        ? p.recordedAt
-        : p.recordedAt
-          ? Date.parse(p.recordedAt)
-          : now;
-    return now - t <= 60 * 60 * 1000;
-  });
+  const recent = points
+    .filter((p) => p.altitude != null && now - sampleTime(p, now) <= 60 * 60 * 1000)
+    .sort((a, b) => sampleTime(a, now) - sampleTime(b, now));
   if (recent.length < 4) return null;
   const alts = recent.map((p) => p.altitude as number);
   const minAlt = Math.min(...alts);
@@ -75,16 +80,9 @@ export function gainLastHourM(
   points: Array<TrackPoint & { altitude?: number; recordedAt?: number | string }>,
   now = Date.now(),
 ): number {
-  const recent = points.filter((p) => {
-    if (p.altitude == null) return false;
-    const t =
-      typeof p.recordedAt === "number"
-        ? p.recordedAt
-        : p.recordedAt
-          ? Date.parse(p.recordedAt)
-          : now;
-    return now - t <= 60 * 60 * 1000;
-  });
+  const recent = points
+    .filter((p) => p.altitude != null && now - sampleTime(p, now) <= 60 * 60 * 1000)
+    .sort((a, b) => sampleTime(a, now) - sampleTime(b, now));
   if (recent.length < 2) return 0;
   const alts = recent.map((p) => p.altitude as number);
   return alts[alts.length - 1] - Math.min(...alts);

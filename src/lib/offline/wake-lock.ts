@@ -8,8 +8,8 @@
  * its own reasons (battery saver). Without listening for `release`, the flag stayed true
  * forever after the first successful acquire.
  */
-
 interface WakeLockSentinel {
+  released?: boolean;
   release: () => Promise<void>;
   addEventListener?: (type: "release", listener: () => void) => void;
   removeEventListener?: (type: "release", listener: () => void) => void;
@@ -21,6 +21,7 @@ export interface WakeLockHandle {
 
 let activeLock: WakeLockHandle | null = null;
 let lockHeld = false;
+let sentinel: WakeLockSentinel | null = null;
 const listeners = new Set<() => void>();
 
 function setHeld(next: boolean) {
@@ -51,7 +52,6 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
   // this is called twice without an intervening release.
   activeLock?.release();
 
-  let sentinel: WakeLockSentinel | null = null;
   let onSentinelRelease: (() => void) | null = null;
 
   const detachSentinel = () => {
@@ -65,9 +65,17 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
     detachSentinel();
     try {
       sentinel = await nav.wakeLock!.request("screen");
-      onSentinelRelease = () => setHeld(false);
+      if (sentinel.released) {
+        sentinel = null;
+        setHeld(false);
+        return;
+      }
+      onSentinelRelease = () => {
+        sentinel = null;
+        setHeld(false);
+      };
       sentinel.addEventListener?.("release", onSentinelRelease);
-      setHeld(sentinel != null);
+      setHeld(true);
     } catch {
       sentinel = null;
       setHeld(false);
@@ -100,7 +108,7 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
 }
 
 export function isWakeLockHeld(): boolean {
-  return lockHeld && activeLock != null;
+  return lockHeld && activeLock != null && sentinel?.released !== true;
 }
 
 export async function releaseWakeLock() {
@@ -113,5 +121,6 @@ export async function releaseWakeLock() {
 export function __resetWakeLockForTests() {
   activeLock = null;
   lockHeld = false;
+  sentinel = null;
   listeners.clear();
 }

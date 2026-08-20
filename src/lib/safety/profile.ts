@@ -253,9 +253,15 @@ export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
 }
 
 /**
- * Returns null for an unparseable time. An invalid stored value used to fall through
- * to `NaN <= 0 === false`, which silently disabled the overdue alarm and rendered
- * "Return in NaN min" — the alarm looked armed while doing nothing.
+ * An invalid stored value used to fall through to `NaN <= 0 === false`, which
+ * silently disabled the overdue alarm and rendered "Return in NaN min" — the
+ * alarm looked armed while doing nothing.
+ *
+ * `valid` exists because `overdue` alone cannot express "I do not know". A
+ * corrupt deadline must not read as overdue (a false SOS prompt) and must not
+ * read as safe either: callers that only render on `overdue` showed nothing at
+ * all, so a hiker who set a return time was silently unmonitored. Callers must
+ * surface `label` whenever `!valid`.
  */
 export function overdueStatus(returnAt: string, now = Date.now()) {
   const deadline = Date.parse(returnAt);
@@ -264,20 +270,23 @@ export function overdueStatus(returnAt: string, now = Date.now()) {
     // and an unparseable stored deadline must read as "unknown", never as
     // "overdue" (which would trigger a false alarm) and never as safe.
     return {
+      valid: false,
       overdue: false,
       remainingMin: null,
-      label: "Return time invalid — set a real local time.",
+      label: "Return time invalid — the overdue alarm is NOT armed. Set a real local time.",
     };
   }
   const remainingMin = Math.round((deadline - now) / 60000);
   if (remainingMin <= 0) {
     return {
+      valid: true,
       overdue: true,
       remainingMin,
       label: `OVERDUE by ${formatElapsed(Math.abs(remainingMin))} — check in or send SOS`,
     };
   }
   return {
+    valid: true,
     overdue: false,
     remainingMin,
     label: `Return in ${formatElapsed(remainingMin)}`,

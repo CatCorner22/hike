@@ -1,5 +1,6 @@
 import {
   remainingElevationGain,
+  resolveRemaining,
   type LatLng,
   type TrailProgress,
   type TravelDirection,
@@ -112,7 +113,17 @@ function validPoint(point: LatLng): boolean {
 }
 
 function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): TrailProgress {
-  return { nearest: point, offsetMeters: 0, traveledMeters: 0, remainingMeters: totalMeters, totalMeters, remainingDirection: "unknown", remainingElevationMeters: 0, bearingToTrail: 0, valid };
+  return {
+    nearest: point,
+    offsetMeters: 0,
+    traveledMeters: 0,
+    remainingMeters: totalMeters,
+    totalMeters,
+    remainingElevationMeters: 0,
+    remainingDirection: "unknown",
+    bearingToTrail: 0,
+    valid,
+  };
 }
 
 /**
@@ -156,30 +167,25 @@ export function progressWithRouteCache(
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
-  // Mirror progressAlongTrail's direction handling exactly. Walking against the
-  // stored direction, "total - traveled" counts UP as you approach your
-  // destination, which also silenced the turnaround/daylight warning at the
-  // start of a long walk. With no direction established, the nearer end is the
-  // honest answer.
-  const toEnd = Math.max(cache.totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
-
+  // Same direction resolution as progressAlongTrail — this cache once re-derived
+  // "total - traveled" on its own and quietly re-introduced the backwards readout.
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    cache.totalMeters,
+    direction,
+  );
   return {
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
     remainingMeters,
     totalMeters: cache.totalMeters,
-    remainingDirection: direction,
     remainingElevationMeters: remainingElevationGain(
       cache.elevationProfile,
       traveledMeters,
       resolvedDirection,
     ),
+    remainingDirection: direction,
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
   };
