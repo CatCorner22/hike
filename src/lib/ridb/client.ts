@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/lib/api/outbound";
 const RIDB_BASE = "https://ridb.recreation.gov/api/v1";
 
 function getApiKey() {
@@ -13,10 +14,15 @@ async function ridbFetch<T>(path: string, params: Record<string, string> = {}): 
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url.toString(), {
-    headers: { apikey: apiKey },
-    next: { revalidate: 86400 },
-  });
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url.toString(), {
+      headers: { apikey: apiKey },
+      next: { revalidate: 86400 },
+    }, 5_000);
+  } catch {
+    return null;
+  }
 
   if (!response.ok) return null;
   return response.json();

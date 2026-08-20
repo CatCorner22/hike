@@ -1,5 +1,6 @@
 import { naismithMinutes } from "@/lib/safety/pace";
 import { utmZone } from "@/lib/safety/usng";
+import { isLongitudeInInterval } from "@/lib/geo/antimeridian";
 
 /**
  * Approximate magnetic declination (degrees, east-positive) for hiking use.
@@ -46,9 +47,12 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
  * true north. Reaches ~3° at a zone edge, so it is not optional in a grid workflow.
  * Convention: grid azimuth = true azimuth − convergence.
  */
-export function gridConvergence(lat: number, lng: number): number {
+export function gridConvergence(lat: number, lng: number): number | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   const rad = Math.PI / 180;
-  const lon0 = (utmZone(lat, lng) - 1) * 6 - 180 + 3;
+  const zone = utmZone(lat, lng);
+  if (zone == null) return null;
+  const lon0 = (zone - 1) * 6 - 180 + 3;
   return (Math.atan(Math.tan((lng - lon0) * rad) * Math.sin(lat * rad)) * 180) / Math.PI;
 }
 
@@ -68,6 +72,7 @@ export function gmAngleCard(lat: number, lng: number): {
   const declination = magneticDeclination(lat, lng);
   if (declination == null) return null;
   const convergence = gridConvergence(lat, lng);
+  if (convergence == null) return null;
   const gmAngle = declination - convergence;
   const east = gmAngle >= 0;
   const abs = Math.abs(gmAngle).toFixed(1);
@@ -87,10 +92,11 @@ export function gmAngleCard(lat: number, lng: number): {
 }
 
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
+  if (!Number.isFinite(trueBearing)) return "—";
   // turf.bearing returns -180..180; a compass has no -122°.
   const heading = ((trueBearing % 360) + 360) % 360;
   const trueLabel = `${Math.round(heading) % 360}° true`;
-  if (lat == null || lng == null) return trueLabel;
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return trueLabel;
   const dec = magneticDeclination(lat, lng);
   if (dec == null) return trueLabel;
   return `${trueLabel} / ${Math.round(toMagneticBearing(heading, dec)) % 360}° magnetic`;
@@ -102,13 +108,12 @@ export function isFixNearRouteBbox(
   bbox: [number, number, number, number],
   padDeg = 0.08,
 ): boolean {
+  if (
+    !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180 ||
+    ![...bbox, padDeg].every(Number.isFinite) || padDeg < 0
+  ) return false;
   const [minLng, minLat, maxLng, maxLat] = bbox;
-  return (
-    lng >= minLng - padDeg &&
-    lng <= maxLng + padDeg &&
-    lat >= minLat - padDeg &&
-    lat <= maxLat + padDeg
-  );
+  return isLongitudeInInterval(lng, { minLng, maxLng }, padDeg) && lat >= minLat - padDeg && lat <= maxLat + padDeg;
 }
 
 /**

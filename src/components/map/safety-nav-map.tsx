@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
+import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 
 interface SafetyNavMapProps {
@@ -102,7 +103,18 @@ export function SafetyNavMap({
         nightMode === "red" ? "#140303" : nightMode === "nvg" ? "#03140a" : "#0b1220";
       ctx.fillRect(0, 0, width, height);
 
-      const { toPx, pxPerMetre } = createProjector(bbox, width, height, 28);
+      if (!bbox) {
+        ctx.fillStyle = "#e5e7eb";
+        ctx.font = "12px sans-serif";
+        ctx.fillText("Route data invalid", 12, topInsetPx + 20);
+        return;
+      }
+      const projector = createProjector(bbox, width, height, 28);
+      const { pxPerMetre } = projector;
+      // Use main's equal-scale meter projection, but unwrap each longitude first so
+      // a short route across ±180° cannot be rendered across the whole world.
+      const toPx = (lng: number, lat: number) =>
+        projector.toPx(unwrapLongitude(lng, { minLng: bbox[0], maxLng: bbox[2] }) ?? lng, lat);
       const userPx = user ? toPx(user.lng, user.lat) : { x: width / 2, y: height / 2 };
 
       const rotation =
@@ -119,6 +131,11 @@ export function SafetyNavMap({
       ctx.lineWidth = 1;
       if (showGrid && user) {
         const u = latLngToUtm(user.lat, user.lng);
+        if (!u) {
+          ctx.fillStyle = "#e5e7eb";
+          ctx.font = "12px sans-serif";
+          ctx.fillText("UTM grid unavailable at this latitude", 12, topInsetPx + 38);
+        } else {
         const step = 100;
         const reach = 500;
         const startE = Math.floor((u.easting - reach) / step) * step;
@@ -142,6 +159,7 @@ export function SafetyNavMap({
             else ctx.lineTo(p.x, p.y);
           }
           ctx.stroke();
+        }
         }
       } else {
         for (let i = 1; i < 8; i++) {

@@ -1,4 +1,6 @@
 import { toSouthWestNorthEast, type BboxLngLat } from "@/lib/geo/bbox";
+import { bboxFromGeometry } from "@/lib/geo";
+import { fetchWithTimeout } from "@/lib/api/outbound";
 
 export interface OverpassElement {
   type: "node" | "way" | "relation";
@@ -52,16 +54,19 @@ async function runOverpass(query: string): Promise<OverpassResponse> {
   if (cached) overpassCache.delete(query);
 
   let lastError: Error | null = null;
-  for (const url of OVERPASS_URLS) {
+  for (const [attempt, url] of OVERPASS_URLS.entries()) {
+    // One bounded retry on an independent mirror. The short backoff avoids a
+    // tight failure loop while retaining a firm ~5 s worst-case fetch budget.
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 100));
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
           "User-Agent": "HikeApp/1.0 (bespoke hiking planner)",
         },
         body: `data=${encodeURIComponent(query)}`,
-      });
+      }, 2_500);
       if (!response.ok) {
         lastError = new Error(`Overpass API error: ${response.status}`);
         continue;
@@ -154,10 +159,10 @@ export async function searchTrails(
 function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
   const earthRadius = 6_371_000;
   const toRadians = (value: number) => (value * Math.PI) / 180;
-  const dLat = toRadians(b[1] - a[1]);
-  const dLng = toRadians(b[0] - a[0]);
-  const latA = toRadians(a[1]);
-  const latB = toRadians(b[1]);
+  const dLat = toRadians(Number(b[1]) - Number(a[1]));
+  const dLng = toRadians(Number(b[0]) - Number(a[0]));
+  const latA = toRadians(Number(a[1]));
+  const latB = toRadians(Number(b[1]));
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
   return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
@@ -166,40 +171,85 @@ function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
   return endpointDistanceMeters(a, b) <= 25;
 }
 
-/** Greedily joins relation member ways at matching endpoints, reversing ways when needed. */
+// 0.0002° is roughly 22m at the equator. Neighbour lookup plus the exact
+// distance check handles latitude and tolerance boundaries without scanning all
+// unjoined ways.
+const ENDPOINT_CELL_DEGREES = 0.0002;
+function endpointCell(position: GeoJSON.Position): [number, number] {
+  return [Math.floor(Number(position[0]) / ENDPOINT_CELL_DEGREES), Math.floor(Number(position[1]) / ENDPOINT_CELL_DEGREES)];
+}
+function endpointCellKey(x: number, y: number): string { return `${x}:${y}`; }
+
+/** Near-linear relation stitching with a tolerance-aware endpoint index. */
 export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Position[][] {
-  const remaining = lines.filter((line) => line.length >= 2).map((line) => [...line]);
-  const chains: GeoJSON.Position[][] = [];
-  while (remaining.length > 0) {
-    let chain = remaining.shift()!;
-    let joined = true;
-    while (joined) {
-      joined = false;
-      for (let index = 0; index < remaining.length; index++) {
-        const candidate = remaining[index];
-        const first = chain[0];
-        const last = chain[chain.length - 1];
-        const candidateFirst = candidate[0];
-        const candidateLast = candidate[candidate.length - 1];
-        if (endpointsMatch(last, candidateFirst)) {
-          chain = [...chain, ...candidate.slice(1)];
-        } else if (endpointsMatch(last, candidateLast)) {
-          chain = [...chain, ...candidate.slice(0, -1).reverse()];
-        } else if (endpointsMatch(first, candidateLast)) {
-          chain = [...candidate.slice(0, -1), ...chain];
-        } else if (endpointsMatch(first, candidateFirst)) {
-          chain = [...candidate.slice(1).reverse(), ...chain];
-        } else {
-          continue;
+  const ways = lines.filter((line) => line.length >= 2).map((line) => [...line]);
+  const active = new Set(ways.map((_, index) => index));
+  const endpointIndex = new Map<string, Set<number>>();
+  const addEndpoint = (position: GeoJSON.Position, index: number) => {
+    const [x, y] = endpointCell(position);
+    const key = endpointCellKey(x, y);
+    const entries = endpointIndex.get(key) ?? new Set<number>();
+    entries.add(index);
+    endpointIndex.set(key, entries);
+  };
+  const removeWay = (index: number) => {
+    if (!active.delete(index)) return;
+    const way = ways[index];
+    for (const endpoint of [way[0], way[way.length - 1]]) {
+      const [x, y] = endpointCell(endpoint);
+      const entries = endpointIndex.get(endpointCellKey(x, y));
+      entries?.delete(index);
+      if (entries?.size === 0) endpointIndex.delete(endpointCellKey(x, y));
+    }
+  };
+  ways.forEach((way, index) => { addEndpoint(way[0], index); addEndpoint(way[way.length - 1], index); });
+  const findCandidate = (endpoint: GeoJSON.Position): number | null => {
+    const [x, y] = endpointCell(endpoint);
+    let found: number | null = null;
+    for (let dx = -1; dx <= 1; dx += 1) for (let dy = -1; dy <= 1; dy += 1) {
+      const entries = endpointIndex.get(endpointCellKey(x + dx, y + dy));
+      if (!entries) continue;
+      for (const index of entries) {
+        const way = ways[index];
+        if (endpointsMatch(endpoint, way[0]) || endpointsMatch(endpoint, way[way.length - 1])) {
+          if (found == null || index < found) found = index;
         }
-        remaining.splice(index, 1);
-        joined = true;
-        break;
       }
+    }
+    return found;
+  };
+
+  const chains: GeoJSON.Position[][] = [];
+  for (let seed = 0; seed < ways.length; seed += 1) {
+    if (!active.has(seed)) continue;
+    let chain = [...ways[seed]];
+    removeWay(seed);
+    for (;;) {
+      const tail = findCandidate(chain[chain.length - 1]);
+      if (tail != null) {
+        const candidate = ways[tail];
+        const last = chain[chain.length - 1];
+        chain = endpointsMatch(last, candidate[0])
+          ? [...chain, ...candidate.slice(1)]
+          : [...chain, ...candidate.slice(0, -1).reverse()];
+        removeWay(tail);
+        continue;
+      }
+      const head = findCandidate(chain[0]);
+      if (head != null) {
+        const candidate = ways[head];
+        const first = chain[0];
+        chain = endpointsMatch(first, candidate[candidate.length - 1])
+          ? [...candidate.slice(0, -1), ...chain]
+          : [...candidate.slice(1).reverse(), ...chain];
+        removeWay(head);
+        continue;
+      }
+      break;
     }
     const first = chain[0];
     const last = chain[chain.length - 1];
-    if (first[0] > last[0] || (first[0] === last[0] && first[1] > last[1])) chain = [...chain].reverse();
+    if (Number(first[0]) > Number(last[0]) || (first[0] === last[0] && Number(first[1]) > Number(last[1]))) chain.reverse();
     chains.push(chain);
   }
   return chains;
@@ -217,24 +267,10 @@ export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineS
 }
 
 function computeBbox(geometry: GeoJSON.LineString | GeoJSON.MultiLineString): [number, number, number, number] {
-  const coords =
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
-
-  let minLng = Infinity;
-  let minLat = Infinity;
-  let maxLng = -Infinity;
-  let maxLat = -Infinity;
-
-  for (const [lng, lat] of coords) {
-    minLng = Math.min(minLng, lng);
-    minLat = Math.min(minLat, lat);
-    maxLng = Math.max(maxLng, lng);
-    maxLat = Math.max(maxLat, lat);
-  }
-
-  return [minLng, minLat, maxLng, maxLat];
+  const bbox = bboxFromGeometry(geometry, 0);
+  // The geometry has passed OSM position validation; do not persist Infinity
+  // values if an upstream response nevertheless becomes malformed.
+  return bbox ?? [0, 0, 0, 0];
 }
 
 export async function getTrailDetail(

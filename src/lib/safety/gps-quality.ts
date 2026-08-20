@@ -7,6 +7,9 @@ export const TRUSTED_STALE_FIX_MS = 60 * 1000;
 /** Older last-known positions may still be shown, but never as current location. */
 export const DISPLAY_FIX_MS = 24 * 60 * 60 * 1000;
 
+let lastTimestampDiagnostic: "future-clamped" | "invalid-replaced" | null = null;
+export function getFixTimestampDiagnostic() { return lastTimestampDiagnostic; }
+
 export function isValidLatLng(lat: number, lng: number): boolean {
   return (
     Number.isFinite(lat) &&
@@ -37,9 +40,11 @@ export function sanitizeFixTimestamp(
   now = Date.now(),
 ): number {
   const t = normaliseEpoch(timestamp);
-  if (t == null) return now;
-  if (t > now + 120_000) return now;
-  if (now - t > DISPLAY_FIX_MS) return now;
+  if (t == null) { lastTimestampDiagnostic = "invalid-replaced"; return now; }
+  // Any future timestamp is untrustworthy; do not allow a grace period.
+  if (t > now) { lastTimestampDiagnostic = "future-clamped"; return now; }
+  if (now - t > DISPLAY_FIX_MS) { lastTimestampDiagnostic = "invalid-replaced"; return now; }
+  lastTimestampDiagnostic = null;
   return t;
 }
 
@@ -53,9 +58,7 @@ export function sanitizeStoredFixTimestamp(
   now = Date.now(),
 ): number | null {
   const t = normaliseEpoch(timestamp);
-  if (t == null) return null;
-  if (t > now + 120_000) return null;
-  if (now - t > DISPLAY_FIX_MS) return null;
+  if (t == null || t > now || now - t > DISPLAY_FIX_MS) return null;
   return t;
 }
 
@@ -69,6 +72,7 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
  * previously `stale` was accepted and then ignored, which read as a check but was not one.
  */
 export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
+  if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now) return false;
   const limit = stale ? TRUSTED_STALE_FIX_MS : TRUSTED_FIX_MS;
   return fixAgeMs(recordedAt, now) <= limit;
 }
@@ -78,6 +82,7 @@ export function isDisplayableFix(recordedAt: number, now = Date.now()): boolean 
 }
 
 export function formatFixAge(recordedAt: number, now = Date.now()): string {
+  if (!Number.isFinite(recordedAt) || !Number.isFinite(now)) return "time unavailable";
   const age = fixAgeMs(recordedAt, now);
   if (age < 15_000) return "just now";
   if (age < 60_000) return `${Math.round(age / 1000)}s ago`;

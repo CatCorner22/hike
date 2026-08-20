@@ -9,6 +9,7 @@ import { ridbFacilityToRecord, ridbPermitToRecord, searchFacilities, searchPermi
 import { fetchAllStateCampgrounds, stateCampgroundToRecord } from "@/lib/state-parks";
 import { searchBackcountryCamps } from "@/lib/osm/overpass";
 import { filterSeedCampgrounds } from "@/lib/camping/seed";
+import { rateLimit } from "@/lib/api/rate-limit";
 
 async function syncCampgrounds(query?: string, state?: string) {
   if (!hasDatabase()) return;
@@ -52,8 +53,18 @@ export async function GET(request: Request) {
   const bboxParam = searchParams.get("bbox");
   const bbox = parseBbox(bboxParam);
   const sync = searchParams.get("sync") === "true";
+  if (sync) {
+    const limited = rateLimit(request, "camping-sync", 4);
+    if (limited) return limited;
+  }
   if (bboxParam && !bbox) return NextResponse.json({ error: "Invalid bbox" }, { status: 400 });
   if (q && q.length > 128) return NextResponse.json({ error: "Query is too long" }, { status: 400 });
+  if (campingType && campingType !== "all" && !["developed_tent", "rv", "backcountry", "walk_in"].includes(campingType)) {
+    return NextResponse.json({ error: "Invalid camping type" }, { status: 400 });
+  }
+  if (source && source !== "all" && !["nps", "ridb", "state", "osm"].includes(source)) {
+    return NextResponse.json({ error: "Invalid source" }, { status: 400 });
+  }
 
   try {
     if (sync) await syncCampgrounds(q, state);

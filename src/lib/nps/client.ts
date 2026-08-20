@@ -1,3 +1,4 @@
+import { fetchWithTimeout } from "@/lib/api/outbound";
 const NPS_BASE = "https://developer.nps.gov/api/v1";
 
 function getApiKey() {
@@ -16,9 +17,14 @@ async function npsFetch<T>(path: string, params: Record<string, string> = {}): P
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url.toString(), {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(url.toString(), {
     next: { revalidate: 86400 },
-  });
+    }, 5_000);
+  } catch {
+    return null;
+  }
 
   if (!response.ok) return null;
   return response.json();

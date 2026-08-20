@@ -37,7 +37,9 @@ export interface BeaconSearchPhase {
 
 export interface AvalancheAssessment {
   severity: Severity;
-  goNoGo: "go" | "caution" | "no-go";
+  snowGoNoGo: "go" | "caution" | "no-go";
+  /** Compatibility field; snow screening never grants a global GO decision. */
+  goNoGo: "caution" | "no-go";
   reasons: string[];
   actions: string[];
 }
@@ -326,16 +328,17 @@ export function avalancheAssessment(input: {
   if (noGo) {
     actions.unshift("Turn around or select low-angle terrain outside avalanche paths and runout zones.");
     actions.push("Do not expose rescuers to a known hazardous slope to prove the assessment.");
-    return { severity, goNoGo: "no-go", reasons, actions };
+    return { severity, snowGoNoGo: "no-go", goNoGo: "no-go", reasons, actions };
   }
   if (reasons.length > 0) {
     actions.unshift("Use conservative route choices and avoid terrain traps; reassess continuously.");
     actions.push("Complete a transceiver partner check and carry a transceiver, probe, and shovel.");
-    return { severity, goNoGo: "caution", reasons, actions };
+    return { severity, snowGoNoGo: "caution", goNoGo: "caution", reasons, actions };
   }
   return {
     severity: "info",
-    goNoGo: "go",
+    snowGoNoGo: "go",
+    goNoGo: "caution",
     reasons: ["No risk factors were entered. This is not evidence that conditions are safe."],
     actions: [
       "Obtain the current local forecast and identify avalanche paths and runout zones.",

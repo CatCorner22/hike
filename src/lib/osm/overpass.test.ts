@@ -32,3 +32,12 @@ describe("relationToLineString", () => {
     });
   });
 });
+
+  it("stitches 5,000 disconnected ways without quadratic endpoint scans", () => {
+    const ways = Array.from({ length: 5_000 }, (_, id) => way(id, [[-120 + id * 0.01, 38], [-120 + id * 0.01 + 0.00001, 38]]));
+    const started = performance.now();
+    const result = relationToLineString(ways);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(result).toMatchObject({ type: "MultiLineString" });
+    expect(result?.type === "MultiLineString" ? result.coordinates : []).toHaveLength(5_000);
+  });

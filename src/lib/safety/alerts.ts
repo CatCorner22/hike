@@ -1,11 +1,18 @@
-export type OffTrailLevel = "ok" | "warn" | "critical";
+export type OffTrailLevel = "ok" | "warn" | "critical" | "unknown";
 
 export function offTrailLevel(
   offsetMeters: number,
   accuracyMeters?: number,
   options: { trustedFix?: boolean } = {},
 ): OffTrailLevel {
-  if (options.trustedFix === false) return "ok";
+  if (
+    !Number.isFinite(offsetMeters) ||
+    offsetMeters < 0 ||
+    (accuracyMeters !== undefined && (!Number.isFinite(accuracyMeters) || accuracyMeters < 0))
+  ) {
+    return "unknown";
+  }
+  if (options.trustedFix === false) return "unknown";
 
   const accuracy = accuracyMeters ?? 0;
   const adjusted = Math.max(0, offsetMeters - accuracy * 0.5);
@@ -20,6 +27,7 @@ const VIBRATION_PATTERNS: Record<OffTrailLevel, number[]> = {
   ok: [],
   warn: [120, 80, 120],
   critical: [200, 100, 200, 100, 400],
+  unknown: [80, 80, 80],
 };
 
 export function vibrateOffTrail(level: OffTrailLevel) {
