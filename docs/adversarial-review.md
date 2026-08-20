@@ -47,6 +47,90 @@ green (was 239 with 5 failing), `next build` succeeds, and `npm ci` installs.
 
 ---
 
+## Second pass — the safety decision aids
+
+The first pass covered navigation, time, GPS and the API. A second pass over the ~2,000
+lines of medical and hazard modules (`tccc`, `altitude`, `avalanche`, `thermal`, `water`,
+`wildlife`, `comms`, `load`) and the SOS/beacon path found 14 more, all now fixed with
+regression tests. They are recorded here in the same style.
+
+### N1. A corrupt stored return time crashes the navigate screen
+
+`toLocalInput` returned the string `"NaN-NaN-NaNTNaN:NaN"` for an unreadable stored
+value. That string is truthy, so it reached
+`overdueStatus(new Date(returnLocal).toISOString())` — and `.toISOString()` on an Invalid
+Date **throws `RangeError`**, inside an effect, taking the navigation screen down. In the
+field, offline, with no way back.
+
+Underneath it, `overdueStatus` parsed `NaN`, and `NaN <= 0` is false, so the overdue
+alarm reported `"Return in NaN min"` and **never fired** — an alarm that looked armed
+while doing nothing. `overdueStatus` now returns `null` for an unreadable time and every
+caller handles it; `toLocalInput` returns `""`; a new `localInputToIso` never throws.
+
+### N2. The SOS tone was silent on iOS
+
+`playSosTone` creates its `AudioContext` inside a `useEffect`, one tick after the button
+press. iOS and Chrome's autoplay policy start a context in that position **suspended**,
+and nothing ever called `resume()`. Pressing SOS to be heard produced no sound at all on
+a large share of phones. Both tone functions now resume the context before playing.
+
+### N3. `isDark` was regex-matched out of warning text
+
+`SafetyPanel` derived darkness with
+`/dark|sunset|headlamp|polar night/i` over whichever warning happened to rank first, then
+fed it to `sereAssessment` and `casevacDecision`. The navigate page has the real boolean
+and never passed it. This was already fragile; the F6 re-ranking above made
+"…finish with a headlamp" rank fourth, so it would now read as darkness at midday. Fixed
+by passing `isDark` as a prop.
+
+### N4. Hypothermia staging false-positived on a well person
+
+`moderate` included a bare `!shivering`, which describes every warm, comfortable person.
+`hypothermiaStage({ shivering: false, alteredMental: false, conscious: true })` returned
+**"moderate hypothermia"**, and the `"none"` stage was unreachable for any input at all.
+Stopped shivering now counts only with a new `coldExposed` flag, surfaced as a
+"Cold / wet / wind exposed" checkbox so the real clinical signal is still available.
+
+### N5. Avalanche severity fell as risk rose
+
+Every factor after the first used `severity === "info" ? x : severity`, so it could only
+raise severity *from* `info`. On a **considerable** day, entering one ALPTRUTh yes
+answer reported `caution` where entering none reported `warning` — adding a hazard made
+the assessment look safer. Replaced with a monotonic `raise()`; a property test now walks
+every danger level against every ALPTRUTh count.
+
+### N6. "Moderate altitude illness" with zero symptoms
+
+`amsAssessment` scored altitude and ascent rate into the same total as symptoms, so
+3,500 m after a 450 m/h climb scored 6 and reported **"Moderate altitude illness — do not
+go higher"** to a hiker reporting nothing wrong. Exposure and symptoms are now separate;
+an illness level requires at least one symptom, and the exposure advisory still fires.
+
+### N7. The 9-line reported the whole party as casualties
+
+Patient count defaulted to `profile.partySize`, litter to 0 and ambulatory to the
+remainder, so an uninjured group of four with one hurt member transmitted
+`L5 PATIENTS BY TYPE: 0L 4A`. Rescue resourcing is built from those numbers. Counts now
+come from the CASEVAC inputs the panel already collects; party size moved to L8 as
+context.
+
+### N8–N14
+
+| # | Finding |
+|---|---|
+| N8 | `avalancheTerrainRisk` dropped from `warning` to `caution` above 50°, rating a 55° slope less serious than the 35–45° band above which it sits. Slab frequency falls there; consequence does not. |
+| N9 | START triage had no respiratory-rate input, so a casualty breathing 40/min with a pulse who could follow commands was triaged **yellow**. RR > 30 is a red criterion in its own right; now an input and now red. |
+| N10 | `estimateWbgtC` transposed the ISO 7243 globe and air weights (`0.2·air + 0.1·globe`), under-reading WBGT in sun by 0.5 °C — enough to drop a heat category at a boundary. |
+| N11 | Pandolf has no upper bound outside its study conditions: 2.5 m/s through 35 cm of snow up a 35% grade returned ~23,000 W (~20,000 kcal/h), which `loadPlan` turned into **30.9 kg of food and a pack at 120% of body weight**, presented as a plan. Now refuses to report an extrapolation, and the UI says why. |
+| N12 | `chemicalDoseWaitMinutes` rejected sub-zero water, so near-freezing meltwater — the case that most needs extended contact time — got no guidance. |
+| N13 | A 9-point non-headache symptom load scored `severity: "info"`, burying it below a hydration nag. Correctly still "not AMS", now `caution`. |
+| N14 | `altitudeFromProfile` accepted a single sample and reported `crosses3000` from one reading. |
+
+Verification after this pass: `tsc --noEmit` clean, `eslint` clean, `vitest run` **310/310**
+green, `next build` succeeds.
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

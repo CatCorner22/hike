@@ -64,6 +64,22 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+/**
+ * iOS (and Chrome's autoplay policy) start an AudioContext suspended unless it is
+ * created inside the gesture handler. This one is created in an effect after the SOS
+ * button is pressed, so it must be resumed explicitly or the beacon is silent — the
+ * one failure mode a locator tone cannot have.
+ */
+async function ensureRunning(ctx: AudioContext): Promise<boolean> {
+  if (ctx.state === "running") return true;
+  try {
+    await ctx.resume();
+  } catch {
+    return false;
+  }
+  return (ctx.state as AudioContextState) === "running";
+}
+
 async function beep(
   ctx: AudioContext,
   opts: { freq: number; durationMs: number; type?: OscillatorType; gain?: number; signal?: AbortSignal },
@@ -100,6 +116,7 @@ export async function playSosTone(
   const times = repeat === "loop" ? Number.POSITIVE_INFINITY : Math.max(1, repeat);
 
   try {
+    await ensureRunning(ctx);
     for (let r = 0; r < times; r++) {
       if (signal?.aborted) break;
       for (let c = 0; c < SOS_CHARACTERS.length && !signal?.aborted; c++) {
@@ -127,6 +144,7 @@ export async function playWhistleBlasts(count = 3, signal?: AbortSignal): Promis
   if (!AudioCtx) return;
   const ctx = new AudioCtx();
   try {
+    await ensureRunning(ctx);
     for (let i = 0; i < count; i++) {
       if (signal?.aborted) break;
       await beep(ctx, { freq: 1250, durationMs: 900, type: "sine", gain: 0.2, signal });

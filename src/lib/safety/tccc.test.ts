@@ -164,3 +164,22 @@ describe("casualty documentation and START triage", () => {
     ).toMatchObject({ category: "yellow", label: "Delayed" });
   });
 });
+
+describe("START triage — respiratory rate", () => {
+  // Regression: START makes a respiratory rate over 30 an immediate (red) criterion in
+  // its own right. There was no input for it, so a casualty breathing 40/min with a
+  // radial pulse who could follow commands was triaged yellow (delayed).
+  it("categorizes a respiratory rate over 30 as immediate", () => {
+    const base = { walking: false, breathing: true, radialPulse: true, obeysCommands: true };
+    expect(triageCategory({ ...base, respiratoryRate: 40 }).category).toBe("red");
+    expect(triageCategory({ ...base, respiratoryRate: 31 }).category).toBe("red");
+    expect(triageCategory({ ...base, respiratoryRate: 30 }).category).toBe("yellow");
+    expect(triageCategory({ ...base, respiratoryRate: 18 }).category).toBe("yellow");
+    expect(triageCategory(base).category).toBe("yellow");
+  });
+
+  it("keeps walking wounded green and apnoeic casualties black regardless of rate", () => {
+    expect(triageCategory({ walking: true, breathing: true, radialPulse: true, obeysCommands: true, respiratoryRate: 40 }).category).toBe("green");
+    expect(triageCategory({ walking: false, breathing: false, radialPulse: false, obeysCommands: false, respiratoryRate: 0 }).category).toBe("black");
+  });
+});

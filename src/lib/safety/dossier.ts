@@ -56,7 +56,7 @@ export function buildSafetyDossier(input: {
     const status = overdueStatus(input.returnAt);
     lines.push("--- PLANNED RETURN ---");
     lines.push(`Return by: ${input.returnAt}`);
-    lines.push(status.label);
+    lines.push(status ? status.label : "Return time unreadable — re-enter it before relying on the overdue alarm.");
     lines.push("");
   }
 

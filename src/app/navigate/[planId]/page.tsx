@@ -601,7 +601,7 @@ export default function NavigatePage() {
         return;
       }
       const status = overdueStatus(alarm.returnAt);
-      setOverdueBanner(status.overdue ? status.label : null);
+      setOverdueBanner(status?.overdue ? status.label : null);
     }
     void tick();
     const id = window.setInterval(() => void tick(), 30000);
@@ -750,6 +750,7 @@ export default function NavigatePage() {
                 bearingToTrail={trusted ? progress?.bearingToTrail : undefined}
                 bearingToStart={bearingToStart}
                 daylightWarning={skyWarning}
+                isDark={Boolean(daylight?.isDark)}
                 altitudeM={gps.fix?.altitude}
                 stale={!gpsTrusted && Boolean(gps.fix)}
                 recordedAt={gps.fix?.recordedAt}

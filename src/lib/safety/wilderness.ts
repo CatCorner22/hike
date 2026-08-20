@@ -33,22 +33,30 @@ export function amsAssessment(input: {
 }): AmsResult {
   const alt = input.altitudeM ?? 0;
   const gain = input.gainLastHourM ?? 0;
-  let score = 0;
 
-  if (alt >= 2500) score += 1;
-  if (alt >= 3000) score += 1;
-  if (alt >= 3500) score += 1;
-  if (gain >= 300) score += 1;
-  if (gain >= 450) score += 2;
+  // Altitude and ascent rate are *exposure*, not illness. Scoring them into the same
+  // total meant a well hiker with zero symptoms at 3500 m after a fast climb was told
+  // they had "Moderate altitude illness" — a false alarm that teaches people to ignore
+  // the warning bar.
+  let exposure = 0;
+  if (alt >= 2500) exposure += 1;
+  if (alt >= 3000) exposure += 1;
+  if (alt >= 3500) exposure += 1;
+  if (gain >= 300) exposure += 1;
+  if (gain >= 450) exposure += 2;
 
+  let symptomScore = 0;
   for (const s of input.symptoms) {
-    score += SYMPTOM_WEIGHT[s] ?? 0;
+    symptomScore += SYMPTOM_WEIGHT[s] ?? 0;
   }
+  const score = exposure + symptomScore;
 
   let level: AmsLevel = "none";
-  if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-  else if (score >= 5) level = "moderate";
-  else if (score >= 2 || input.symptoms.length > 0) level = "mild";
+  if (input.symptoms.length > 0) {
+    if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
+    else if (score >= 5) level = "moderate";
+    else level = "mild";
+  }
 
   const actions: string[] = [];
   let warning: string | null = null;

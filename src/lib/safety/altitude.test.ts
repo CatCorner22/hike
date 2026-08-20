@@ -13,7 +13,21 @@ import {
 describe("Lake Louise AMS score", () => {
   it("requires headache as well as a total score of three", () => {
     const noHeadache = lakeLouiseScore({ headache: 0, giSymptoms: 1, fatigue: 1, dizziness: 1 });
-    expect(noHeadache).toMatchObject({ total: 3, hasAms: false, severity: "info" });
+    expect(noHeadache).toMatchObject({ total: 3, hasAms: false });
+    expect(noHeadache!.label).toMatch(/Does not meet AMS/);
+  });
+
+  // A heavy non-headache symptom load is correctly "not AMS" by the 2018 criteria, but
+  // reporting it as "info" ranked it below a hydration nag in the warning stack.
+  it("still flags a significant non-headache symptom load", () => {
+    expect(lakeLouiseScore({ headache: 0, giSymptoms: 3, fatigue: 3, dizziness: 3 })).toMatchObject({
+      hasAms: false,
+      severity: "caution",
+    });
+    expect(lakeLouiseScore({ headache: 0, giSymptoms: 1, fatigue: 0, dizziness: 0 })).toMatchObject({
+      hasAms: false,
+      severity: "info",
+    });
   });
 
   it("reports all three AMS severity bands", () => {
@@ -90,5 +104,26 @@ describe("altitude reference calculations", () => {
   it("only produces a staged plan above 3000 m", () => {
     expect(acclimatizationPlan(3000)).toEqual([]);
     expect(acclimatizationPlan(4000)).toHaveLength(5);
+  });
+});
+
+describe("altitudeFromProfile — input validity", () => {
+  // Regression: a single sample was accepted as a profile and reported
+  // `crosses3000: true` from one reading, with no distance to integrate.
+  it("rejects a single sample", () => {
+    expect(altitudeFromProfile([{ distanceMeters: 0, elevation: 3200 }])).toBeNull();
+    expect(altitudeFromProfile([])).toBeNull();
+  });
+
+  it("measures exposure across a real profile", () => {
+    const summary = altitudeFromProfile([
+      { distanceMeters: 0, elevation: 2000 },
+      { distanceMeters: 1000, elevation: 3000 },
+      { distanceMeters: 2000, elevation: 2400 },
+    ])!;
+    expect(summary.maxElevationM).toBe(3000);
+    expect(summary.totalGainM).toBe(1000);
+    expect(summary.crosses3000).toBe(true);
+    expect(summary.metersAbove2500).toBeGreaterThan(0);
   });
 });

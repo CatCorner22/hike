@@ -4,6 +4,7 @@ import {
   calorieRequirement,
   loadPlan,
   packWeightAdvice,
+  pandolfKcalPerHour,
   pandolfWatts,
   waterRequirementLiters,
 } from "./load";
@@ -55,5 +56,48 @@ describe("load planning", () => {
     const plan = loadPlan({ bodyMassKg: 70, baseWeightKg: 8, hours: 4, distanceM: 12_000, speedMs: 1, gradePct: 5, terrain: "dirt-road", workRate: "moderate", wbgtC: 29 });
     expect(plan).not.toBeNull();
     expect(plan!.totalPackKg).toBeGreaterThan(plan!.baseWeightKg);
+  });
+});
+
+describe("pandolfWatts — physiological plausibility", () => {
+  /**
+   * Regression: Pandolf grows without bound outside its study conditions. 2.5 m/s in
+   * 35 cm of snow up a 35% grade returned ~23,000 W (~20,000 kcal/h), which loadPlan
+   * turned into 30 kg of food and a pack at 120% of body weight, presented as a plan.
+   */
+  it("refuses to report an extrapolation as an estimate", () => {
+    expect(
+      pandolfWatts({ bodyMassKg: 95, loadKg: 45, speedMs: 2.5, gradePct: 35, terrain: "snow-35cm" }),
+    ).toBeNull();
+    expect(
+      loadPlan({
+        bodyMassKg: 70, baseWeightKg: 45, hours: 8, distanceM: 20000,
+        speedMs: 2.5, gradePct: 35, terrain: "snow-35cm", workRate: "hard",
+      }),
+    ).toBeNull();
+  });
+
+  it("never returns a negative or implausible figure anywhere in its accepted domain", () => {
+    for (const bodyMassKg of [50, 70, 95]) {
+      for (const loadKg of [0, 10, 25, 45]) {
+        for (const speedMs of [0.5, 1.0, 1.4, 2.0, 2.5]) {
+          for (const gradePct of [-35, -20, -10, 0, 10, 20, 35]) {
+            for (const terrain of ["paved", "light-brush", "heavy-brush", "snow-35cm"] as const) {
+              const watts = pandolfWatts({ bodyMassKg, loadKg, speedMs, gradePct, terrain });
+              if (watts == null) continue;
+              expect(watts, `${bodyMassKg}kg ${loadKg}kg ${speedMs}m/s ${gradePct}% ${terrain}`).toBeGreaterThan(0);
+              expect(watts).toBeLessThanOrEqual(1400);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("still answers for ordinary hiking", () => {
+    const kcal = pandolfKcalPerHour({ bodyMassKg: 70, loadKg: 12, speedMs: 1.1, gradePct: 10, terrain: "light-brush" });
+    expect(kcal).not.toBeNull();
+    expect(kcal!).toBeGreaterThan(200);
+    expect(kcal!).toBeLessThan(1200);
   });
 });
