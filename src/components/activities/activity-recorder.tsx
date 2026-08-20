@@ -153,6 +153,27 @@ export function ActivityRecorder({
 
   useEffect(() => () => stopWatch(), [stopWatch]);
 
+  /**
+   * Surfaces a queue write that could not be stored.
+   *
+   * A QuotaExceededError while queueing a GPS point used to be swallowed, so the
+   * recorder kept showing a healthy recording while fixes were being dropped --
+   * the hiker believed their track was being saved when it was not. This is
+   * sticky on purpose: a transient banner is no use to someone who is walking.
+   */
+  const [queueProblem, setQueueProblem] = useState<string | null>(null);
+  useEffect(() => {
+    const onQueueError = (event: Event) => {
+      const detail = (event as CustomEvent<{ message?: string }>).detail;
+      setQueueProblem(
+        detail?.message ??
+          "This device is out of storage, so some GPS points were not saved. Free space or stop and sync when you have signal.",
+      );
+    };
+    window.addEventListener("hike-points-queue-error", onQueueError);
+    return () => window.removeEventListener("hike-points-queue-error", onQueueError);
+  }, []);
+
   useEffect(() => {
     if (status !== "recording") return;
     const tick = window.setInterval(() => {
@@ -263,6 +284,14 @@ export function ActivityRecorder({
           </p>
         )}
         {error && <p className="text-sm text-destructive">{error}</p>}
+        {queueProblem && (
+          <p
+            role="alert"
+            className="rounded-md border border-destructive bg-destructive/10 p-2 text-sm font-medium text-destructive"
+          >
+            {queueProblem}
+          </p>
+        )}
         {pointSync.pending > 0 && (
           <p className="text-sm text-muted-foreground">
             {pointSync.syncing

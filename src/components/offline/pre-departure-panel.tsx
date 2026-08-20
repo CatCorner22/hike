@@ -37,9 +37,10 @@ function explicitBailouts(
   const cumulative = cumulativeDistancesForGeometry(geometry);
   return waypoints
     .filter((waypoint) => /^(bailout|exit):/i.test(waypoint.name.trim()))
-    .map((waypoint, index) => {
+    .flatMap<BailoutCandidate>((waypoint, index) => {
       const snapped = nearestPointOnTrail(waypoint, geometry);
-      return {
+      if (!snapped) return [];
+      return [{
         id: `waypoint-bailout-${index}`,
         name: waypoint.name.replace(/^(bailout|exit):\s*/i, "") || waypoint.name,
         kind: "custom" as const,
@@ -47,7 +48,7 @@ function explicitBailouts(
         lng: waypoint.lng,
         routeDistanceMeters: cumulative[Math.min(snapped.index, Math.max(0, cumulative.length - 1))] ?? 0,
         note: "User-marked exit candidate. Verify the actual mapped path from the planned route before relying on it.",
-      };
+      }];
     });
 }
 

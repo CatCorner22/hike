@@ -1,4 +1,5 @@
 import * as turf from "@turf/turf";
+import { isValidCoordinate } from "@/lib/geo/coords";
 import { magneticDeclination, toMagneticBearing } from "@/lib/safety/declination";
 
 /** NATO mils: 6400 mils in a circle. */
@@ -29,7 +30,8 @@ export interface RangeAzimuth {
 export function rangeAzimuth(
   from: { lat: number; lng: number },
   to: { lat: number; lng: number },
-): RangeAzimuth {
+): RangeAzimuth | null {
+  if (!isValidCoordinate(from) || !isValidCoordinate(to)) return null;
   const meters = turf.distance(
     turf.point([from.lng, from.lat]),
     turf.point([to.lng, to.lat]),
@@ -61,14 +63,23 @@ export function deadReckon(
   start: { lat: number; lng: number },
   headingTrue: number,
   distanceM: number,
-): { lat: number; lng: number } {
+): { lat: number; lng: number } | null {
+  if (
+    !isValidCoordinate(start) ||
+    !Number.isFinite(headingTrue) ||
+    Math.abs(headingTrue) > 360 ||
+    !Number.isFinite(distanceM) ||
+    distanceM < 0 ||
+    distanceM > 40_075_017
+  ) return null;
   const dest = turf.destination(
     turf.point([start.lng, start.lat]),
     distanceM,
     headingTrue,
     { units: "meters" },
   );
-  return { lat: dest.geometry.coordinates[1], lng: dest.geometry.coordinates[0] };
+  const point = { lat: dest.geometry.coordinates[1], lng: dest.geometry.coordinates[0] };
+  return isValidCoordinate(point) ? point : null;
 }
 
 export type PaceTerrain = "flat" | "up" | "down" | "sand" | "snow" | "night" | "brush";
@@ -185,7 +196,9 @@ export function resection3(
   const lat = hits.reduce((s, p) => s + p.lat, 0) / hits.length;
   let spreadM = 0;
   for (const h of hits) {
-    spreadM = Math.max(spreadM, rangeAzimuth({ lat, lng }, h).meters);
+    const range = rangeAzimuth({ lat, lng }, h);
+    if (!range) return null;
+    spreadM = Math.max(spreadM, range.meters);
   }
   const cut12 = smallestAngle(obs[0].bearingTo, obs[1].bearingTo);
   const cut23 = smallestAngle(obs[1].bearingTo, obs[2].bearingTo);
@@ -276,7 +289,11 @@ export function deadReckonUncertaintyM(input: {
 }
 
 export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
-  if (![tsd.distanceM, tsd.speedKph, tsd.minutes].every((value) => Number.isFinite(value) && value >= 0)) return "—";
+  if (
+    !Number.isFinite(tsd.distanceM) || tsd.distanceM < 0 || tsd.distanceM > 40_075_017 ||
+    !Number.isFinite(tsd.speedKph) || tsd.speedKph < 0 || tsd.speedKph > 300 ||
+    !Number.isFinite(tsd.minutes) || tsd.minutes < 0 || tsd.minutes > 366 * 24 * 60
+  ) return "—";
   return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;
 }
 
@@ -290,11 +307,15 @@ export function deliberateOffset(
   headingTrue: number;
   catchTurn: "left" | "right";
   label: string;
-} {
+} | null {
   const ra = rangeAzimuth(from, to);
+  if (!ra || !Number.isFinite(offsetM) || offsetM < 0 || offsetM > 40_075_017) return null;
   const perp = (ra.trueDeg + (side === "right" ? 90 : 270)) % 360;
-  const aim = deadReckon(to, perp, Math.max(0, offsetM));
-  const headingTrue = rangeAzimuth(from, aim).trueDeg;
+  const aim = deadReckon(to, perp, offsetM);
+  if (!aim) return null;
+  const returnRange = rangeAzimuth(from, aim);
+  if (!returnRange) return null;
+  const headingTrue = returnRange.trueDeg;
   const catchTurn = side === "right" ? "left" : "right";
   return {
     aim,
@@ -314,7 +335,14 @@ export function obstacleBox(
   resume: { lat: number; lng: number };
   corners: Array<{ lat: number; lng: number }>;
   legs: Array<{ heading: number; meters: number }>;
-} {
+} | null {
+  if (
+    !isValidCoordinate(start) ||
+    !Number.isFinite(headingTrue) ||
+    Math.abs(headingTrue) > 360 ||
+    !Number.isFinite(widthM) || widthM < 0 || widthM > 40_075_017 ||
+    !Number.isFinite(depthM) || depthM < 0 || depthM > 40_075_017
+  ) return null;
   const right = side === "right";
   const legs = [
     { heading: (headingTrue + (right ? 90 : 270)) % 360, meters: widthM },
@@ -325,7 +353,9 @@ export function obstacleBox(
   const corners: Array<{ lat: number; lng: number }> = [];
   let here = start;
   for (const leg of legs.slice(0, 3)) {
-    here = deadReckon(here, leg.heading, leg.meters);
+    const next = deadReckon(here, leg.heading, leg.meters);
+    if (!next) return null;
+    here = next;
     corners.push(here);
   }
   return { resume: here, corners, legs };
@@ -349,8 +379,9 @@ function monthCode(month: number) {
   ];
 }
 
-export function formatRangeAzimuth(ra: RangeAzimuth): string {
+export function formatRangeAzimuth(ra: RangeAzimuth | null): string {
   if (
+    !ra ||
     !Number.isFinite(ra.meters) || !Number.isFinite(ra.trueDeg) ||
     !Number.isFinite(ra.mils) || !Number.isFinite(ra.backTrueDeg) ||
     (ra.magneticDeg != null && !Number.isFinite(ra.magneticDeg))

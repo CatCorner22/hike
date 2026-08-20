@@ -55,72 +55,76 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
  */
 export function gridConvergence(lat: number, lng: number): number | null {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
-  const rad = Math.PI / 180;
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   const zone = utmZone(lat, lng);
   if (zone == null) return null;
+  const rad = Math.PI / 180;
   const lon0 = (zone - 1) * 6 - 180 + 3;
   return (Math.atan(Math.tan((lng - lon0) * rad) * Math.sin(lat * rad)) * 180) / Math.PI;
 }
 
 /**
- * G-M card: grid → magnetic includes UTM convergence (true − grid).
- * The app plots on UTM/USNG, so converting from declination alone is wrong by up to ~3°.
+ * G-M card. The grid-magnetic angle is declination *minus* grid convergence — the app
+ * plots on UTM/USNG, so converting straight from declination is wrong by up to ~3°.
+ */
+/**
+ * G-M card. The grid-magnetic angle is declination minus grid convergence -- the
+ * app plots on UTM/USNG, so converting straight from declination is wrong by up
+ * to ~3 degrees.
+ *
+ * Always returns a card. It previously returned null outside the declination
+ * model's coverage (Hawaii, most of the world), and both call sites render
+ * nothing on null -- so the hiker saw no G-M line at all and had no way to know
+ * the magnetic correction was unknown. Silence there invites applying a compass
+ * bearing uncorrected, or assuming zero declination. An explicit "unavailable"
+ * is the honest answer.
  */
 export function gmAngleCard(lat: number, lng: number): {
-  declination: number;
-  convergence: number;
-  gmAngle: number;
-  east: boolean;
+  declination: number | null;
+  convergence: number | null;
+  gmAngle: number | null;
+  east: boolean | null;
   gridToMagnetic: string;
   magneticToGrid: string;
   lars: string;
-} | null {
+} {
+  const lars =
+    "LARS: Left Add, Right Subtract — when the G-M arrow is left/right of grid north.";
   const declination = magneticDeclination(lat, lng);
-  if (declination == null) {
-    return {
-      declination: Number.NaN,
-      convergence: Number.NaN,
-      gmAngle: Number.NaN,
-      east: true,
-      gridToMagnetic: "Magnetic unavailable here — use true / grid only.",
-      magneticToGrid: "Magnetic unavailable — do not convert compass bearings.",
-      lars: "No G-M model outside the North America grid. Treat compass as unconverted.",
-    };
-  }
   const convergence = gridConvergence(lat, lng);
-  if (convergence == null) {
+  if (declination == null || convergence == null) {
+    const missing =
+      declination == null
+        ? "Magnetic declination is unavailable here (outside the built-in model)"
+        : "Grid convergence is unavailable here (outside UTM limits)";
     return {
       declination,
-      convergence: Number.NaN,
-      gmAngle: Number.NaN,
-      east: true,
-      gridToMagnetic: "Magnetic unavailable here — use true / grid only.",
-      magneticToGrid: "Magnetic unavailable — do not convert compass bearings.",
-      lars: "No G-M model outside the North America grid. Treat compass as unconverted.",
+      convergence,
+      gmAngle: null,
+      east: null,
+      gridToMagnetic: `${missing} — do not convert grid to magnetic from memory. Use a current chart or a GPS bearing.`,
+      magneticToGrid: `${missing} — magnetic-to-grid conversion unavailable.`,
+      lars,
     };
   }
   const gmAngle = declination - convergence;
   const east = gmAngle >= 0;
   const abs = Math.abs(gmAngle).toFixed(1);
+  const conv = `${convergence >= 0 ? "+" : ""}${convergence.toFixed(1)}°`;
   return {
     declination,
     convergence,
     gmAngle,
     east,
     gridToMagnetic: east
-      ? `Grid → mag: subtract ${abs}° (decl ${declination.toFixed(1)}° · conv ${convergence.toFixed(1)}°)`
-      : `Grid → mag: add ${abs}° (decl ${declination.toFixed(1)}° · conv ${convergence.toFixed(1)}°)`,
-    magneticToGrid: east
-      ? `Mag → grid: add ${abs}°`
-      : `Mag → grid: subtract ${abs}°`,
-    lars: "LARS: Left Add, Right Subtract — when the G-M arrow is left/right of grid north.",
+      ? `Grid → mag: subtract ${abs}° (east is least) (conv ${conv})`
+      : `Grid → mag: add ${abs}° (west is best) (conv ${conv})`,
+    magneticToGrid: east ? `Mag → grid: add ${abs}°` : `Mag → grid: subtract ${abs}°`,
+    lars,
   };
 }
 
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
-  if (!Number.isFinite(trueBearing)) return "—";
+  if (!Number.isFinite(trueBearing) || Math.abs(trueBearing) > 360) return "—";
   // turf.bearing returns -180..180; a compass has no -122°.
   const heading = ((trueBearing % 360) + 360) % 360;
   const trueLabel = `${Math.round(heading) % 360}° true`;

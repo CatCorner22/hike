@@ -77,7 +77,9 @@ export function buddySeparationWarning(
   if (rallies.length === 0) return null;
   let best: { meters: number; kind: string } | null = null;
   for (const wp of rallies) {
-    const meters = rangeAzimuth(here, wp).meters;
+    const range = rangeAzimuth(here, wp);
+    if (!range) continue;
+    const meters = range.meters;
     if (!best || meters < best.meters) best = { meters, kind: wp.kind.toUpperCase() };
   }
   if (!best || best.meters <= maxM) return null;

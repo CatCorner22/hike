@@ -18,8 +18,23 @@ interface HikeDB extends DBSchema {
 
 const OFFLINE_DB_VERSION = 2;
 const SYNCED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Keep recording small enough that a maximum-size offline route can still be saved. */
+export const MAX_PENDING_POINT_COUNT = 2_000;
+export const ROUTE_PACK_STORAGE_RESERVE_BYTES = 16 * 1024 * 1024;
+const ESTIMATED_PENDING_POINT_BYTES = 512;
 let dbPromise: Promise<IDBPDatabase<HikeDB>> | null = null;
 let flushPromise: Promise<FlushResult> | null = null;
+let pointWriteQueue: Promise<void> = Promise.resolve();
+
+export class OfflinePointQueueFullError extends Error {
+  readonly diagnostic?: string;
+
+  constructor(message: string, cause?: unknown) {
+    super(message);
+    this.name = "OfflinePointQueueFullError";
+    this.diagnostic = cause instanceof Error ? cause.message : undefined;
+  }
+}
 
 export function getOfflineDb() {
   if (typeof indexedDB === "undefined") return null;
@@ -61,16 +76,75 @@ function notifyQueueChanged() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("hike-points-queued"));
 }
 
+function notifyQueueProblem(error: OfflinePointQueueFullError) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("hike-points-queue-error", { detail: error }));
+  }
+}
+
+function queueFull(message: string, cause?: unknown): OfflinePointQueueFullError {
+  const error = new OfflinePointQueueFullError(message, cause);
+  notifyQueueProblem(error);
+  return error;
+}
+
+async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>) {
+  const pending = await db.countFromIndex("pendingPoints", "by-synced", 0);
+  if (pending >= MAX_PENDING_POINT_COUNT) {
+    throw queueFull(
+      "GPS point was not saved because offline recording storage is full. Stop recording or reconnect and sync points before continuing.",
+    );
+  }
+
+  if (typeof navigator === "undefined" || !navigator.storage?.estimate) return;
+  try {
+    const estimate = await navigator.storage.estimate();
+    if (
+      Number.isFinite(estimate.usage) &&
+      Number.isFinite(estimate.quota) &&
+      estimate.quota! - estimate.usage! <
+        ROUTE_PACK_STORAGE_RESERVE_BYTES + ESTIMATED_PENDING_POINT_BYTES
+    ) {
+      throw queueFull(
+        "GPS point was not saved because offline storage must be reserved for route maps. Reconnect and sync recordings before continuing.",
+      );
+    }
+  } catch (error) {
+    if (error instanceof OfflinePointQueueFullError) throw error;
+    // Storage estimates are advisory and can be unavailable. The fixed point
+    // ceiling still prevents a long recording from consuming route-pack space.
+  }
+}
+
 export async function queueActivityPoint(point: {
   activityId: string; lat: number; lng: number; elevation?: number; recordedAt: Date;
 }) {
-  const db = await getOfflineDb();
-  if (!db) return;
-  await db.put("pendingPoints", {
-    id: crypto.randomUUID(), activityId: point.activityId, lat: point.lat, lng: point.lng,
-    elevation: point.elevation, recordedAt: point.recordedAt.toISOString(), synced: 0,
+  const write = pointWriteQueue.then(async () => {
+    const db = await getOfflineDb();
+    if (!db) {
+      throw queueFull(
+        "GPS point was not saved because offline storage is unavailable. Reconnect before relying on this recording.",
+      );
+    }
+    await assertQueueCanAcceptPoint(db);
+    try {
+      await db.put("pendingPoints", {
+        id: crypto.randomUUID(), activityId: point.activityId, lat: point.lat, lng: point.lng,
+        elevation: point.elevation, recordedAt: point.recordedAt.toISOString(), synced: 0,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "QuotaExceededError") {
+        throw queueFull(
+          "GPS point was not saved because offline storage is full. Stop recording or reconnect and sync points before continuing.",
+          error,
+        );
+      }
+      throw error;
+    }
+    notifyQueueChanged();
   });
-  notifyQueueChanged();
+  pointWriteQueue = write.catch(() => undefined);
+  return write;
 }
 
 export async function getPendingPoints(activityId: string) {
@@ -221,6 +295,7 @@ export async function __resetOfflineDbForTests() {
   const current = dbPromise;
   dbPromise = null;
   flushPromise = null;
+  pointWriteQueue = Promise.resolve();
   if (current) (await current).close();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase("hike-offline");

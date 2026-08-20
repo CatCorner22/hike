@@ -1,4 +1,5 @@
 import * as turf from "@turf/turf";
+import { isValidCoordinate } from "@/lib/geo/coords";
 import { progressAlongTrail, type TrailProgress } from "@/lib/geo/navigation";
 
 export interface TrackPoint {
@@ -25,13 +26,15 @@ export function stationaryMinutes(
   now = Date.now(),
   radiusM = 25,
 ): number {
-  if (points.length < 2) return 0;
+  if (points.length < 2 || !Number.isFinite(now) || !Number.isFinite(radiusM) || radiusM < 0) return 0;
   const last = points[points.length - 1];
+  if (!isValidCoordinate(last)) return 0;
   const origin = turf.point([last.lng, last.lat]);
   let oldest = now;
 
   for (let i = points.length - 1; i >= 0; i--) {
     const p = points[i];
+    if (!isValidCoordinate(p)) break;
     const dist = turf.distance(origin, turf.point([p.lng, p.lat]), { units: "meters" });
     if (dist > radiusM) break;
     const t =

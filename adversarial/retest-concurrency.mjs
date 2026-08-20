@@ -26,6 +26,9 @@ const activity = activityRes.body;
 const pointResponses = await Promise.all([...Array(50)].map((_,i)=>call('/api/activities/'+activity.id+'/points','POST',{lat:10+i/1000,lng:20,elevation:1,recordedAt:'2026-08-20T10:00:00Z'})));
 const pointFinal = await call('/api/activities/'+activity.id+'/points');
 const plans=[]; for(let i=0;i<50;i++) plans.push((await call('/api/plans','POST',{name:'p'+i})).body);
-const patchResponses = await Promise.all(plans.map((p,i)=>call('/api/plans/'+p.id,'PATCH',{notes:'n'+i})));
+// Plan PATCH now requires the caller's `updatedAt` revision so two stale
+// full-snapshot writes cannot silently overwrite each other. Send it, as the
+// real UI does (it PATCHes the whole loaded plan object).
+const patchResponses = await Promise.all(plans.map((p,i)=>call('/api/plans/'+p.id,'PATCH',{...p,notes:'n'+i})));
 const all = await call('/api/plans'); const notes = new Map(all.body.plans.map(p=>[p.id,p.notes]));
 console.log(JSON.stringify({pointHttp200:pointResponses.filter(r=>r.status===200).length,pointPersisted:pointFinal.body.points?.length,patchHttp200:patchResponses.filter(r=>r.status===200).length,patchRetained:plans.filter((p,i)=>notes.get(p.id)==='n'+i).length,plansVisible:all.body.plans.length},null,2));

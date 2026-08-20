@@ -170,18 +170,14 @@ export function lostPersonQuery(input: {
   ]);
 }
 
-export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?: number): string | null {
+export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   const hemi = lat >= 0 ? "north" : "south";
-  // Solar time, not the device clock: see `solarHour`. An explicit hour is accepted
-  // for field checks; the dial angle is still not the same quantity as sun azimuth.
-  const hour =
-    localHour != null && Number.isFinite(localHour)
-      ? ((localHour % 24) + 24) % 24 + date.getMinutes() / 60 + date.getSeconds() / 3600
-      : solarHour(date, lng);
-  const watch = watchMethodHeading(hour, hemi);
+// Solar time, not the device clock: see `solarHour`.
+  const watch = watchMethodHeading(solarHour(date, lng), hemi);
   if (!watch) return null;
+  // A true azimuth and a dial angle use different reference frames; claiming agreement can mislead a lost hiker.
   return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
 }
 

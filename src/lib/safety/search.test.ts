@@ -16,7 +16,7 @@ describe("search patterns", () => {
   });
 
   it("returns a line string from a center", () => {
-    const line = expandingSquareLine({ lat: 37, lng: -119 }, 50, 1);
+    const line = expandingSquareLine({ lat: 37, lng: -119 }, 50, 1)!;
     expect(line.coordinates.length).toBeGreaterThan(2);
   });
 

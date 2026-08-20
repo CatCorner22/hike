@@ -93,9 +93,12 @@ describe("gmAngleCard", () => {
   // convergence — up to ~3° at a zone edge, in a workflow that plots on USNG.
   it("folds grid convergence into the G-M angle", () => {
     const card = gmAngleCard(37.7, -119.6);
-    expect(card).not.toBeNull();
-    expect(card!.gmAngle).toBeCloseTo(card!.declination - card!.convergence, 6);
-    expect(card!.convergence).not.toBe(0);
+    // Inside the model's coverage every component is known, so a null here is
+    // itself the failure.
+    expect(card.declination).not.toBeNull();
+    expect(card.convergence).not.toBeNull();
+    expect(card.gmAngle).toBeCloseTo(card.declination! - card.convergence!, 6);
+    expect(card.convergence).not.toBe(0);
   });
 
   it("has no convergence on a zone central meridian", () => {

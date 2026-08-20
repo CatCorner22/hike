@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
@@ -8,7 +8,10 @@ import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
-import { OfflineReadiness } from "@/components/offline/offline-readiness";
+import {
+  OfflineReadiness,
+  formatOfflineRouteStorageError,
+} from "@/components/offline/offline-readiness";
 
 interface PrepareOfflineProps {
   packId: string;
@@ -35,8 +38,45 @@ export function PrepareOffline({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const refreshReady = useCallback(async () => {
+    try {
+      const exists = await hasRoutePack(packId);
+      setReady(exists);
+      return exists;
+    } catch {
+      // An unreadable IndexedDB is not a saved route. Saying "Update" here
+      // could send a hiker away from signal believing a missing map is usable.
+      setReady(false);
+      return false;
+    }
+  }, [packId]);
+
   useEffect(() => {
-    void hasRoutePack(packId).then(setReady);
+    let cancelled = false;
+    let refreshNumber = 0;
+    const refresh = async () => {
+      const currentRefresh = ++refreshNumber;
+      try {
+        const exists = await hasRoutePack(packId);
+        if (!cancelled && currentRefresh === refreshNumber) setReady(exists);
+      } catch {
+        if (!cancelled && currentRefresh === refreshNumber) setReady(false);
+      }
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+
+    void refresh();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [packId]);
 
   async function prepare() {
@@ -68,7 +108,9 @@ export function PrepareOffline({
         weather: weather ?? undefined,
       });
       await persistRoutePack(pack);
-      setReady(true);
+      if (!await refreshReady()) {
+        throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
+      }
       const [persistent, shell] = await Promise.all([
         persistentStorageRequest,
         warmNavigateShell(packId),
@@ -94,9 +136,7 @@ export function PrepareOffline({
       setReady(false);
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "Could not save the route pack on this device.",
+        formatOfflineRouteStorageError(error).message,
       );
     } finally {
       setSaving(false);

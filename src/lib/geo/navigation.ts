@@ -1,6 +1,7 @@
 import * as turf from "@turf/turf";
 import { bboxFromGeometry, formatDistance } from "@/lib/geo";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
+import { isValidCoordinate } from "@/lib/geo/coords";
 
 export interface LatLng {
   lat: number;
@@ -290,6 +291,8 @@ function emptyProgress(point: LatLng, totalMeters: number, valid = true): TrailP
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
+    // No route position is known. A numeric bearing would tell a hiker to walk
+    // somewhere despite invalid data, so consumers must see this as unavailable.
     bearingToTrail: Number.NaN,
     valid,
   };
@@ -362,10 +365,17 @@ export function compassLabel(heading: number): string | null {
 }
 
 export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
-  if (accuracyMeters == null) return "Unknown accuracy";
-  if (accuracyMeters <= 8) return `GPS ±${Math.round(accuracyMeters)} m (good)`;
-  if (accuracyMeters <= 20) return `GPS ±${Math.round(accuracyMeters)} m (fair)`;
-  return `GPS ±${Math.round(accuracyMeters)} m (poor — canyon/trees)`;
+  if (
+    accuracyMeters == null ||
+    !Number.isFinite(accuracyMeters) ||
+    accuracyMeters < 0 ||
+    accuracyMeters > 10_000
+  ) return "GPS accuracy unknown";
+  const rounded = Math.round(accuracyMeters);
+  const meters = rounded === 0 ? 0 : rounded;
+  if (accuracyMeters <= 8) return `GPS ±${meters} m (good)`;
+  if (accuracyMeters <= 20) return `GPS ±${meters} m (fair)`;
+  return `GPS ±${meters} m (poor — canyon/trees)`;
 }
 
 export function formatRemaining(meters: number): string {
@@ -411,10 +421,7 @@ function isFinitePosition(pos: unknown): pos is GeoJSON.Position {
 }
 
 function isValidLatLng(point: unknown): point is LatLng {
-  if (!point || typeof point !== "object") return false;
-  const candidate = point as LatLng;
-  return Number.isFinite(candidate.lat) && Number.isFinite(candidate.lng) &&
-    candidate.lat >= -90 && candidate.lat <= 90 && candidate.lng >= -180 && candidate.lng <= 180;
+  return isValidCoordinate(point);
 }
 
 export function isValidGeometry(

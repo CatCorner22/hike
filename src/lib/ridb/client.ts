@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from "@/lib/api/outbound";
+import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
 const RIDB_BASE = "https://ridb.recreation.gov/api/v1";
 
 function getApiKey() {
@@ -25,7 +25,7 @@ async function ridbFetch<T>(path: string, params: Record<string, string> = {}): 
   }
 
   if (!response.ok) return null;
-  return response.json();
+  return readJsonCapped(response);
 }
 
 export interface RidbFacility {

@@ -13,6 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 interface ReadinessState {
   packStatus: RoutePackStatus;
+  packCheckFailed: boolean;
   shellCached: boolean;
   persistent: boolean;
   usage?: number;
@@ -21,9 +22,42 @@ interface ReadinessState {
 
 const EMPTY_READINESS: ReadinessState = {
   packStatus: "missing",
+  packCheckFailed: false,
   shellCached: false,
   persistent: false,
 };
+
+/**
+ * Browser errors expose implementation details such as IDB versions and
+ * transaction names. The recovery action is what a hiker needs; diagnostics
+ * remain available to callers without being presented as the primary message.
+ */
+export function formatOfflineRouteStorageError(error: unknown): {
+  message: string;
+  diagnostic?: string;
+} {
+  const diagnostic = error instanceof Error ? error.message : undefined;
+  if (
+    (error instanceof DOMException &&
+      (error.name === "VersionError" || error.name === "NotFoundError")) ||
+    /requested version|failed to execute ['"]transaction['"]|object store/i.test(diagnostic ?? "")
+  ) {
+    return {
+      message: "This device has a newer, incompatible, or damaged saved-route database. Reconnect and re-download this route before relying on this device.",
+      diagnostic,
+    };
+  }
+  if (error instanceof DOMException && error.name === "QuotaExceededError") {
+    return {
+      message: "Offline storage is full. Reconnect, sync or remove recordings, then re-download this route before relying on this device.",
+      diagnostic,
+    };
+  }
+  return {
+    message: diagnostic ?? "Could not save the route pack on this device.",
+    diagnostic,
+  };
+}
 
 function formatBytes(value?: number): string {
   if (value === undefined) return "Unavailable";
@@ -67,28 +101,45 @@ export function OfflineReadiness({ packId }: { packId: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let refreshNumber = 0;
     const refresh = async () => {
-      const [pack, shellCached, persistent, estimate] = await Promise.all([
+      const currentRefresh = ++refreshNumber;
+      const [packResult, shellResult, persistentResult, estimateResult] = await Promise.allSettled([
         getRoutePackStatus(packId),
         isNavigateShellCached(packId),
         isStoragePersistent(),
         storageEstimate(),
       ]);
-      if (!cancelled) {
+      // Do not let a slower pre-eviction read overwrite a later failed check.
+      if (!cancelled && currentRefresh === refreshNumber) {
+        const pack = packResult.status === "fulfilled"
+          ? packResult.value
+          : { status: "missing" as const };
         setReadiness({
           packStatus: pack.status,
-          shellCached,
-          persistent,
-          usage: estimate?.usage,
-          quota: estimate?.quota,
+          packCheckFailed: packResult.status === "rejected",
+          shellCached: shellResult.status === "fulfilled" ? shellResult.value : false,
+          persistent: persistentResult.status === "fulfilled" ? persistentResult.value : false,
+          usage: estimateResult.status === "fulfilled" ? estimateResult.value?.usage : undefined,
+          quota: estimateResult.status === "fulfilled" ? estimateResult.value?.quota : undefined,
         });
       }
     };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+
     void refresh();
     window.addEventListener("hike:offline-readiness-changed", refresh);
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       cancelled = true;
       window.removeEventListener("hike:offline-readiness-changed", refresh);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [packId]);
 
@@ -109,14 +160,16 @@ export function OfflineReadiness({ packId }: { packId: string }) {
         <ul className="space-y-2">
           <CheckRow
             icon={<Route className="mt-0.5 h-4 w-4" />}
-            title="Route pack saved"
+            title={packReady ? "Route pack saved" : "Route pack missing — re-download before relying on this device"}
             ok={packReady}
             detail={
               packReady
                 ? "Route geometry and safety data are saved on this device."
                 : state.packStatus === "stale"
                   ? "This pack is older than the current safety-data format. Refresh it while online."
-                  : "Navigation cannot start without a saved, current route pack."
+                  : state.packCheckFailed
+                    ? "Offline route storage could not be checked. Treat this route as missing; reconnect and re-download it before relying on this device."
+                    : "Navigation cannot start without a saved, current route pack. Reconnect and re-download before relying on this device."
             }
           />
           <CheckRow

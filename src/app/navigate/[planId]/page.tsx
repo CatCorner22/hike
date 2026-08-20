@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
 import { ReadinessGate } from "@/components/offline/readiness-gate";
+import { formatOfflineRouteStorageError } from "@/components/offline/offline-readiness";
 import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
@@ -131,14 +132,23 @@ export default function NavigatePage() {
   const [deniedHeadingText, setDeniedHeadingText] = useState("");
   const [deniedNeedHeading, setDeniedNeedHeading] = useState(false);
   const [navUnlocked, setNavUnlocked] = useState(false);
+  // Items the hiker chose to skip on the pre-hike checklist, kept so navigation
+  // can keep showing them. Skipping must not silently drop the safety net.
+  const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
   const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
   const [deniedError, setDeniedError] = useState<string | null>(null);
   const [refreshingPack, setRefreshingPack] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
+  const [liveAnnouncement, setLiveAnnouncement] = useState<{
+    key: string;
+    tone: "critical" | "warn";
+    text: string;
+  } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
+  const announcedSafetyStatesRef = useRef<Set<string>>(new Set());
   const progressCacheRef = useRef<RouteProgressCache | null>(null);
   const pendingPointsRef = useRef<
     Array<{
@@ -165,6 +175,15 @@ export default function NavigatePage() {
     };
   }, []);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("navigate-night-red-document", "navigate-night-nvg-document");
+    if (nightMode !== "off") root.classList.add(`navigate-night-${nightMode}-document`);
+    return () => {
+      root.classList.remove("navigate-night-red-document", "navigate-night-nvg-document");
+    };
+  }, [nightMode]);
+
   // The header overlay grows and shrinks as warning banners appear, so measure
   // it and let the map inset its orientation labels below it.
   useEffect(() => {
@@ -183,7 +202,11 @@ export default function NavigatePage() {
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loadState.status]);
+    // navUnlocked matters: the header does not mount while the readiness
+    // checklist is showing, so with only loadState.status the ref was still null
+    // when the effect ran and the header was never measured. headerHeight stayed
+    // 0, silently disabling both the map label inset and the banner offset.
+  }, [loadState.status, navUnlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -226,6 +249,7 @@ export default function NavigatePage() {
     const meters =
       deniedPaces > 0 ? distanceFromPaces(deniedPaces, deniedPaceLen) : 0;
     const point = deadReckon(deniedAnchor, deniedAnchor.heading, meters);
+    if (!point) return null;
     return { ...point, heading: deniedAnchor.heading, meters };
   }, [gpsDenied, deniedAnchor, deniedPaces, deniedPaceLen]);
 
@@ -413,12 +437,15 @@ export default function NavigatePage() {
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 
+  const readyPackId = loadState.status === "ready" ? loadState.pack.id : null;
+  const readyPackName = loadState.status === "ready" ? loadState.pack.name : null;
+
   useEffect(() => {
-    if (loadState.status !== "ready") return;
+    if (loadState.status !== "ready" || !readyPackId || !readyPackName) return;
     let cancelled = false;
 
     sessionIdRef.current = null;
-    void startNavSession(navId, loadState.pack.name).then((id) => {
+    void startNavSession(navId, readyPackName).then((id) => {
       if (cancelled) return;
       sessionIdRef.current = id;
       const queued = pendingPointsRef.current;
@@ -432,7 +459,7 @@ export default function NavigatePage() {
       cancelled = true;
       sessionIdRef.current = null;
     };
-  }, [loadState.status === "ready" ? loadState.pack.id : "", navId]);
+  }, [loadState.status, navId, readyPackId, readyPackName]);
 
   useEffect(() => {
     if (!gps.fix || loadState.status !== "ready" || !gpsTrusted) return;
@@ -639,6 +666,15 @@ export default function NavigatePage() {
     hudBanners.push({ key: "checkin", tone: "critical", text: checkinOverdue });
   }
   if (fallWarning) hudBanners.push({ key: "fall", tone: "critical", text: fallWarning });
+  // Persistent and not dismissible: the hiker skipped these, so the honest thing
+  // is to keep saying which parts of the safety net are not set up.
+  if (readinessSkipped.length > 0) {
+    hudBanners.push({
+      key: "readiness",
+      tone: "warn",
+      text: `Not set up: ${readinessSkipped.join(", ")}. Nobody is expecting you back at a known time.`,
+    });
+  }
   if (exposureWarning) hudBanners.push({ key: "exposure", tone: "warn", text: exposureWarning });
   if (amsWarn) hudBanners.push({ key: "ams", tone: "warn", text: amsWarn });
   for (const [key, text] of [
@@ -668,6 +704,47 @@ export default function NavigatePage() {
       text: "Tap back again to leave navigation. The route pack stays on this device.",
     });
   }
+
+  const announcementBanners = hudBanners.filter(
+    (banner) => banner.tone === "critical" || banner.tone === "warn",
+  );
+
+  useEffect(() => {
+    const activeStates = new Set(
+      announcementBanners.map((banner) => `${banner.tone}:${banner.key}`),
+    );
+    const stillAnnounced = new Set(
+      [...announcedSafetyStatesRef.current].filter((state) => activeStates.has(state)),
+    );
+    const newlyActive = announcementBanners.filter(
+      (banner) => !stillAnnounced.has(`${banner.tone}:${banner.key}`),
+    );
+
+    // GPS can update several times while a person remains off trail. Announce
+    // the transition into a warning, not the coordinate updates that follow it.
+    // A second critical state (for example, a fall after an off-trail warning)
+    // is still newly active and gets its own meaningful announcement.
+    const critical = newlyActive.filter((banner) => banner.tone === "critical");
+    const warn = newlyActive.filter((banner) => banner.tone === "warn");
+    const next = critical.length ? critical : warn;
+    if (!next.length) {
+      announcedSafetyStatesRef.current = stillAnnounced;
+      return;
+    }
+
+    const tone = critical.length ? "critical" : "warn";
+    announcedSafetyStatesRef.current = new Set([
+      ...stillAnnounced,
+      ...next.map((banner) => `${banner.tone}:${banner.key}`),
+    ]);
+    setLiveAnnouncement({
+      key: next.map((banner) => `${banner.tone}:${banner.key}`).join("|"),
+      tone,
+      text: `${tone === "critical" ? "Critical safety alert." : "Safety warning."} ${next
+        .map((banner) => banner.text)
+        .join(" ")}`,
+    });
+  }, [announcementBanners]);
 
   const crumbs = useMemo(
     () => reverseTrackLine(trackPoints),
@@ -729,7 +806,19 @@ export default function NavigatePage() {
 
   if (loadState.status === "ready" && !navUnlocked) {
     return (
-      <ReadinessGate packReady onReady={unlockIfReady} />
+      <ReadinessGate
+        packReady
+        onReady={unlockIfReady}
+        onProceedAnyway={() => {
+          void (async () => {
+            const [profile, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
+            setReadinessSkipped(
+              hikeReadiness({ packReady: true, profile, returnAt: alarm?.returnAt ?? null })
+                .missing,
+            );
+          })().finally(() => setNavUnlocked(true));
+        }}
+      />
     );
   }
 
@@ -747,7 +836,25 @@ export default function NavigatePage() {
             <AlertTriangle className="size-5 shrink-0 text-destructive" />
             <div>
               <p className="font-medium text-destructive">Cannot navigate offline</p>
-              <p className="mt-1 text-sm text-muted-foreground">{loadState.message}</p>
+              {/*
+                Raw IndexedDB text ("The requested version (4) is less than the
+                existing version (99)") used to be the primary message. That tells
+                a hiker about to lose signal nothing they can act on. Show the
+                recovery instruction first and keep the technical detail secondary.
+              */}
+              {(() => {
+                const mapped = formatOfflineRouteStorageError(new Error(loadState.message));
+                return (
+                  <>
+                    <p className="mt-1 text-sm text-foreground">{mapped.message}</p>
+                    {mapped.diagnostic && mapped.diagnostic !== mapped.message && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Details: {mapped.diagnostic}
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
               <Button className="mt-4" variant="outline" onClick={() => void loadPack()}>
                 Retry
               </Button>
@@ -797,15 +904,15 @@ export default function NavigatePage() {
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex flex-col bg-background ${
+      className={`navigate-shell fixed inset-0 z-50 flex flex-col bg-background ${
         nightMode === "red"
-          ? "[&_*]:!border-red-900 [&]:bg-[#140303]"
+          ? "navigate-night-red"
           : nightMode === "nvg"
-            ? "[&]:bg-[#03140a]"
+            ? "navigate-night-nvg"
             : ""
       }`}
     >
-      <div className="relative min-h-0 flex-1">
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         {beaconOn && <SosBeacon onClose={() => setBeaconOn(false)} />}
         <SafetyNavMap
           geometry={pack.geometry}
@@ -834,12 +941,13 @@ export default function NavigatePage() {
 
         <div
           ref={headerRef}
-          className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8"
+          className="navigate-header pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8"
         >
           <div className="pointer-events-auto flex items-start justify-between gap-2">
             <Button
               variant="secondary"
               size="icon-sm"
+              className="min-h-11 min-w-11"
               aria-label={exitArmed ? "Tap again to exit navigation" : "Exit navigation"}
               onClick={() => {
                 if (!exitArmed) {
@@ -919,7 +1027,7 @@ export default function NavigatePage() {
                 string you read aloud to a rescuer. This scrim guarantees a
                 known background behind the text at any map darkness or theme.
               */}
-              <div className="max-w-[58%] rounded-lg bg-background/90 px-2 py-1 text-right backdrop-blur-sm">
+              <div className="navigate-route-card max-w-[58%] rounded-lg bg-background/90 px-2 py-1 text-right backdrop-blur-sm">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {source === "cache" ? "Offline pack" : "Saved to device"}
@@ -940,7 +1048,7 @@ export default function NavigatePage() {
                   {refreshingPack ? "Refreshing route…" : "Refresh route"}
                 </button>
                 {navFix && (
-                  <p className="font-mono text-[10px] text-muted-foreground">
+                  <p className="navigate-grid-readout font-mono text-sm font-semibold tabular-nums text-foreground">
                     {formatUsng(navFix.lat, navFix.lng)}
                     {gpsDenied
                       ? ` · DR ±${drErrorM ?? 25} m`
@@ -951,7 +1059,7 @@ export default function NavigatePage() {
                   </p>
                 )}
                 {gm && (
-                  <p className="text-[10px] text-muted-foreground">{gm.gridToMagnetic}</p>
+                  <p className="navigate-grid-support text-xs text-muted-foreground">{gm.gridToMagnetic}</p>
                 )}
               </div>
             </div>
@@ -959,13 +1067,20 @@ export default function NavigatePage() {
         </div>
 
         {hudBanners.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-3 top-16 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto">
+          <div
+            // Offset by the measured header rather than a fixed top-16. The header
+            // card carries the USNG grid reference -- the line you read aloud to a
+            // rescuer -- and a banner sat on top of it.
+            className="navigate-hud pointer-events-none absolute inset-x-3 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto"
+            style={{ top: (headerHeight || 64) + 8 }}
+            aria-live="off"
+          >
             {hudBanners.map((banner) => (
               <div
                 key={banner.key}
                 className={`rounded-lg border px-3 py-2 text-xs font-medium ${
                   banner.tone === "critical"
-                    ? "border-destructive bg-destructive/90 text-white"
+                    ? "border-destructive bg-destructive text-destructive-foreground"
                     : banner.tone === "info"
                       ? "border-border bg-background/95 text-foreground"
                       : "border-amber-500/60 bg-amber-500/90 text-black"
@@ -974,6 +1089,17 @@ export default function NavigatePage() {
                 {banner.text}
               </div>
             ))}
+          </div>
+        )}
+        {liveAnnouncement && (
+          <div
+            key={liveAnnouncement.key}
+            className="sr-only"
+            role={liveAnnouncement.tone === "critical" ? "alert" : "status"}
+            aria-live={liveAnnouncement.tone === "critical" ? "assertive" : "polite"}
+            aria-atomic="true"
+          >
+            {liveAnnouncement.text}
           </div>
         )}
       </div>
@@ -991,7 +1117,13 @@ export default function NavigatePage() {
                 : "Waiting for GPS…"}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            {(deniedNeedHeading || (gpsTrusted && gps.fix?.heading == null && !gpsDenied)) && (
+            {/*
+              Only when dead reckoning actually needs a heading. The previous
+              condition also fired whenever a trusted fix lacked a heading --
+              true for any stationary device -- so an unlabelled empty field sat
+              in the primary safety bar during normal navigation.
+            */}
+            {(deniedNeedHeading || gpsDenied) && (
               <input
                 aria-label="Dead-reckon heading degrees true"
                 className="h-8 w-16 rounded-md border bg-background px-2 text-xs"
@@ -1151,11 +1283,15 @@ function Stat({
     <div
       className={`rounded-lg border p-2 ${alert ? "border-destructive bg-destructive/10" : "border-border"}`}
     >
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+      <div
+        className={`flex items-center gap-1 text-[10px] uppercase tracking-wide ${
+          alert ? "text-safety-critical" : "text-muted-foreground"
+        }`}
+      >
         <Icon className="size-3" />
         {label}
       </div>
-      <p className={`text-sm font-semibold tabular-nums ${alert ? "text-destructive" : ""}`}>
+      <p className={`text-sm font-semibold tabular-nums ${alert ? "text-safety-critical" : ""}`}>
         {value}
       </p>
     </div>

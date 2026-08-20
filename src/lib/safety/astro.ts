@@ -43,6 +43,9 @@ export function sunPosition(
   lat: number,
   lng: number,
 ): { azimuth: number; elevation: number } | null {
+  if (!(date instanceof Date) || !Number.isFinite(date.getTime()) || !isValidCoordinate({ lat, lng })) {
+    return null;
+  }
   const rad = Math.PI / 180;
   const d =
     (Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours(), date.getUTCMinutes()) -
@@ -74,7 +77,9 @@ export function shadowStickHeading(sunAzimuth: number): { shadowToward: number; 
 
 export function sunCompassHint(date: Date, lat: number, lng: number): string | null {
   const pos = sunPosition(date, lat, lng);
-  if (!pos || pos.elevation < 5) return "Sun too low or below horizon — use moon, stars, or compass.";
+  if (!pos) return "Sun position unavailable — use a compass.";
+  if (pos.elevation < 5) return "Sun too low or below horizon — use moon, stars, or compass.";
   const stick = shadowStickHeading(pos.azimuth);
   return `Sun ~${Math.round(pos.azimuth)}° true (elev ${Math.round(pos.elevation)}°). Shadow points ~${Math.round(stick.shadowToward)}° — check your compass against that.`;
 }
+import { isValidCoordinate } from "@/lib/geo/coords";

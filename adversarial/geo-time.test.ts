@@ -26,6 +26,7 @@ import {
 } from "@/lib/safety/daylight";
 import { sunCompassHint, sunPosition } from "@/lib/safety/astro";
 import { polarisHint } from "@/lib/safety/tactics";
+import { offTrailLevel } from "@/lib/safety/alerts";
 import {
   formatZulu,
   intersection,
@@ -64,7 +65,7 @@ describe("antimeridian controls", () => {
     expect(trailLengthMeters(DATELINE_LINE)).toBeGreaterThan(22_000);
     expect(trailLengthMeters(DATELINE_LINE)).toBeLessThan(23_000);
     expect(bearingBetween({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 })).toBeCloseTo(90, 5);
-    const ra = rangeAzimuth({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 });
+    const ra = rangeAzimuth({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 })!;
     expect(ra.meters).toBeGreaterThan(22_000);
     expect(ra.meters).toBeLessThan(23_000);
     expect(ra.trueDeg).toBeCloseTo(90, 5);
@@ -128,7 +129,7 @@ describe("UTM/USNG validity boundaries", () => {
     ]) {
       const parsed = parseUsng(formatMgrs10(origin.lat, origin.lng)!, origin);
       expect(parsed).not.toBeNull();
-      expect(rangeAzimuth(origin, parsed!).meters).toBeLessThan(25);
+      expect(rangeAzimuth(origin, parsed!)!.meters).toBeLessThan(25);
     }
   });
 
@@ -209,9 +210,17 @@ describe("time, clock-skew, and treatment timing", () => {
 describe("degenerate geometry and numeric guards", () => {
   it("has safe fallbacks for empty/stub geometry and short backtracks", () => {
     const empty: GeoJSON.MultiLineString = { type: "MultiLineString", coordinates: [[], [[0, 0]]] };
-    const emptyProgress = progressAlongTrail({ lat: 0, lng: 0 }, empty);
-    expect(emptyProgress.traveledMeters).toBe(0);
-    expect(Number.isFinite(emptyProgress.offsetMeters)).toBe(false);
+    // offsetMeters must NOT be 0 here: a stub geometry with no usable segment
+    // would then read as "you are exactly on the trail", and the off-trail alert
+    // is derived from this number. NaN plus valid: false makes consumers show an
+    // explicit unknown state instead.
+    const degenerate = progressAlongTrail({ lat: 0, lng: 0 }, empty);
+    expect(degenerate.valid).toBe(false);
+    expect(degenerate.traveledMeters).toBe(0);
+    expect(Number.isFinite(degenerate.offsetMeters)).toBe(false);
+    expect(Number.isFinite(degenerate.bearingToTrail)).toBe(false);
+    // And the alert layer must treat it as unknown, never as on-route.
+    expect(offTrailLevel(degenerate.offsetMeters)).toBe("unknown");
     expect(reverseTrackLine([])).toBeNull();
     expect(reverseTrackLine([{ lat: 0, lng: 0 }])).toBeNull();
     expect(backtrackProgress({ lat: 0, lng: 0 }, [])).toBeNull();

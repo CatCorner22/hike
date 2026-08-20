@@ -31,7 +31,7 @@ describe("land nav math", () => {
   });
 
   it("dead-reckons about 1 km due north", () => {
-    const dest = deadReckon({ lat: 37.0, lng: -119.0 }, 0, 1000);
+    const dest = deadReckon({ lat: 37.0, lng: -119.0 }, 0, 1000)!;
     expect(dest.lat).toBeGreaterThan(37.008);
     expect(dest.lng).toBeCloseTo(-119.0, 3);
   });
@@ -41,7 +41,7 @@ describe("land nav math", () => {
   });
 
   it("gives range and azimuth between two points", () => {
-    const ra = rangeAzimuth({ lat: 37.0, lng: -119.0 }, { lat: 37.01, lng: -119.0 });
+    const ra = rangeAzimuth({ lat: 37.0, lng: -119.0 }, { lat: 37.01, lng: -119.0 })!;
     expect(ra.meters).toBeGreaterThan(1000);
     expect(ra.trueDeg === 0 || ra.trueDeg > 350).toBe(true);
   });
@@ -70,7 +70,7 @@ describe("land nav math", () => {
   it("aims off a destination with a deliberate offset", () => {
     const from = { lat: 37.0, lng: -119.0 };
     const to = { lat: 37.01, lng: -119.0 };
-    const off = deliberateOffset(from, to, 100, "right");
+    const off = deliberateOffset(from, to, 100, "right")!;
     expect(off.catchTurn).toBe("left");
     expect(off.aim.lng).toBeGreaterThan(to.lng);
     expect(off.headingTrue).toBeGreaterThan(0);
@@ -79,8 +79,8 @@ describe("land nav math", () => {
 
   it("boxes around an obstacle and resumes on the original line", () => {
     const start = { lat: 37.0, lng: -119.0 };
-    const box = obstacleBox(start, 0, 50, 100, "right");
-    const back = rangeAzimuth(start, box.resume);
+    const box = obstacleBox(start, 0, 50, 100, "right")!;
+    const back = rangeAzimuth(start, box.resume)!;
     expect(back.meters).toBeGreaterThan(90);
     expect(back.meters).toBeLessThan(120);
     expect(back.trueDeg === 0 || back.trueDeg > 350).toBe(true);
@@ -138,7 +138,7 @@ describe("MGRS parse / phonetic", () => {
     const grid = formatMgrs10(origin.lat, origin.lng)!;
     const parsed = parseUsng(grid, origin);
     expect(parsed).not.toBeNull();
-    const ra = rangeAzimuth(origin, parsed!);
+    const ra = rangeAzimuth(origin, parsed!)!;
     expect(ra.meters).toBeLessThan(25);
   });
 

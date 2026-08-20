@@ -36,7 +36,7 @@ describe("navigation canvas projection", () => {
   it("renders a true bearing at the same angle on screen", () => {
     for (const lat of [25, 37.7, 45, 50, 61, -33]) {
       const user = { lat, lng: -119.6 };
-      const projector = createProjector(followWindow(user), WIDTH, HEIGHT, PADDING);
+      const projector = createProjector(followWindow(user)!, WIDTH, HEIGHT, PADDING);
       for (const [northM, eastM, expected] of [
         [100, 100, 45],
         [100, 0, 0],
@@ -58,7 +58,7 @@ describe("navigation canvas projection", () => {
   it("renders a square of ground as a square on screen", () => {
     for (const lat of [25, 37.7, 61]) {
       const user = { lat, lng: -119.6 };
-      const projector = createProjector(followWindow(user), WIDTH, HEIGHT, PADDING);
+      const projector = createProjector(followWindow(user)!, WIDTH, HEIGHT, PADDING);
       const origin = projector.toPx(user.lng, user.lat);
       const east = projector.toPx(offset(lat, user.lng, 0, 100).lng, user.lat);
       const north = projector.toPx(user.lng, offset(lat, user.lng, 100, 0).lat);
@@ -70,7 +70,7 @@ describe("navigation canvas projection", () => {
 
   it("reports one pixels-per-metre scale that matches what it draws", () => {
     const user = { lat: 37.7, lng: -119.6 };
-    const projector = createProjector(followWindow(user), WIDTH, HEIGHT, PADDING);
+    const projector = createProjector(followWindow(user)!, WIDTH, HEIGHT, PADDING);
     const origin = projector.toPx(user.lng, user.lat);
     const north = projector.toPx(user.lng, offset(37.7, user.lng, 250, 0).lat);
     expect((origin.y - north.y) / 250).toBeCloseTo(projector.pxPerMetre, 6);
@@ -78,7 +78,7 @@ describe("navigation canvas projection", () => {
 
   it("keeps everything inside the canvas", () => {
     const user = { lat: 37.7, lng: -119.6 };
-    const bbox = followWindow(user);
+    const bbox = followWindow(user)!;
     const projector = createProjector(bbox, WIDTH, HEIGHT, PADDING);
     for (const [lng, lat] of [
       [bbox[0], bbox[1]],
@@ -105,7 +105,7 @@ describe("followWindow", () => {
     const user = { lat: 37.7, lng: -119.6 };
     for (const distanceM of [50, 150, 400, 1200, 5000]) {
       const nearest = offset(user.lat, user.lng, distanceM * 0.6, distanceM * 0.8);
-      const bbox = followWindow(user, [nearest]);
+      const bbox = followWindow(user, [nearest])!;
       const projector = createProjector(bbox, WIDTH, HEIGHT, PADDING);
       const point = projector.toPx(nearest.lng, nearest.lat);
       expect(point.x, `${distanceM} m`).toBeGreaterThan(0);
@@ -117,13 +117,13 @@ describe("followWindow", () => {
 
   it("does not zoom in tighter than the minimum radius when everything is close", () => {
     const user = { lat: 37.7, lng: -119.6 };
-    const bbox = followWindow(user, [offset(user.lat, user.lng, 5, 5)]);
+    const bbox = followWindow(user, [offset(user.lat, user.lng, 5, 5)])!;
     expect(bbox[3] - bbox[1]).toBeCloseTo(0.006, 6);
   });
 
   it("ignores missing or non-finite points", () => {
     const user = { lat: 37.7, lng: -119.6 };
-    const bbox = followWindow(user, [null, undefined, { lat: Number.NaN, lng: 0 }]);
+    const bbox = followWindow(user, [null, undefined, { lat: Number.NaN, lng: 0 }])!;
     expect(bbox.every(Number.isFinite)).toBe(true);
     expect(bbox[3] - bbox[1]).toBeCloseTo(0.006, 6);
   });
@@ -146,7 +146,7 @@ describe("UTM grid overlay", () => {
       // Every fixture here is well inside it, so a null means a real regression.
       expect(utm).not.toBeNull();
       if (!utm) continue;
-      const projector = createProjector(followWindow({ lat, lng }), 390, 700, 28);
+      const projector = createProjector(followWindow({ lat, lng })!, 390, 700, 28);
 
       const originE = Math.floor(utm.easting / 100) * 100;
       const originN = Math.floor(utm.northing / 100) * 100;

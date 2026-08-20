@@ -2,12 +2,31 @@ import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
 import { formatReport, reportField } from "@/lib/safety/report-field";
+import { isValidCoordinate } from "@/lib/geo/coords";
+
+/**
+ * A coordinate is only usable in an emergency message if it is finite and on the
+ * globe. `lat != null` used to be the whole check, so a NaN latitude produced
+ * "NaN°S, 105.00000°W" and a maps link containing NaN -- a rescuer would be
+ * given a position that does not exist.
+ */
+function usableCoord(lat: unknown, lng: unknown): { lat: number; lng: number } | null {
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  return isValidCoordinate({ lat, lng }) ? { lat, lng } : null;
+}
 
 export function formatCoords(lat: number, lng: number, accuracyM?: number): string {
-  const latDir = lat >= 0 ? "N" : "S";
-  const lngDir = lng >= 0 ? "E" : "W";
-  const base = `${Math.abs(lat).toFixed(5)}°${latDir}, ${Math.abs(lng).toFixed(5)}°${lngDir}`;
-  if (accuracyM != null) return `${base} (±${Math.round(accuracyM)} m)`;
+  const point = usableCoord(lat, lng);
+  if (!point) return "position unavailable";
+  const latDir = point.lat >= 0 ? "N" : "S";
+  const lngDir = point.lng >= 0 ? "E" : "W";
+  const base = `${Math.abs(point.lat).toFixed(5)}°${latDir}, ${Math.abs(point.lng).toFixed(5)}°${lngDir}`;
+  // An unknown accuracy must not render as "±NaN m", which reads as a measured
+  // value to anyone receiving the message.
+  if (accuracyM != null && Number.isFinite(accuracyM) && accuracyM >= 0 && accuracyM <= 10_000) {
+    const rounded = Math.round(accuracyM);
+    return `${base} (±${rounded === 0 ? 0 : rounded} m)`;
+  }
   return base;
 }
 
@@ -27,36 +46,39 @@ export function emergencyMessage(input: {
 }): string {
   const source: PositionSource =
     input.positionSource ?? (input.stale ? "lastKnown" : "gps");
-  const lat = input.lat;
-  const lng = input.lng;
-  const hasFix =
-    typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng);
   const lines = ["SOS / EMERGENCY LOCATION"];
-  if (hasFix) {
+  const fix = usableCoord(input.lat, input.lng);
+  if (fix) {
     if (source === "deadReckon") {
       lines.push("DEAD RECKON POSITION — GPS denied; pace/heading estimate");
     } else if (source === "lastKnown" || input.stale) {
       lines.push("LAST KNOWN POSITION — GPS not live");
     }
-    lines.push(formatCoords(lat, lng, input.accuracyM));
-    lines.push(`DDM: ${formatDdm(lat, lng)}`);
-    const usng = formatUsng(lat, lng);
-    const mgrs = formatMgrs10(lat, lng);
-    const utm = formatUtm(lat, lng);
+    lines.push(formatCoords(fix.lat, fix.lng, input.accuracyM));
+    lines.push(`DDM: ${formatDdm(fix.lat, fix.lng)}`);
+    const usng = formatUsng(fix.lat, fix.lng);
+    const mgrs = formatMgrs10(fix.lat, fix.lng);
+    const utm = formatUtm(fix.lat, fix.lng);
     if (!usng || !mgrs || !utm) {
       lines.push("UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.");
     } else {
       lines.push(`USNG 8-digit: ${usng}`);
       lines.push(`MGRS 10-digit: ${mgrs}`);
-      lines.push(`PHONETIC: ${phonetic(formatUsng(lat, lng, 5)!)}`);
+      lines.push(`PHONETIC: ${phonetic(formatUsng(fix.lat, fix.lng, 5)!)}`);
       lines.push(`UTM: ${utm}`);
     }
-    lines.push(`https://maps.google.com/?q=${lat},${lng}`);
-    if (input.recordedAt) {
-      lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()} (${formatZulu(new Date(input.recordedAt))})`);
+    lines.push(`https://maps.google.com/?q=${fix.lat},${fix.lng}`);
+    // A non-finite or out-of-range timestamp made Date#toISOString throw, so the
+    // hiker got NO emergency text at all -- the one moment the app must still
+    // produce something.
+    if (input.recordedAt != null && Number.isFinite(input.recordedAt)) {
+      const when = new Date(input.recordedAt);
+      if (Number.isFinite(when.getTime())) {
+        lines.push(`Fix time: ${when.toISOString()} (${formatZulu(when)})`);
+      }
     }
   } else {
-    lines.push("No GPS fix available on this device.");
+    lines.push("No GPS fix. No usable GPS fix is available on this device — position unknown.");
   }
   if (input.trailName) lines.push(`Route: ${reportField(input.trailName)}`);
   if (input.offTrailM != null && Number.isFinite(input.offTrailM) && input.offTrailM > 20) {
@@ -79,7 +101,7 @@ export function emergencyMessage(input: {
     }
   }
   if (input.partyNote) lines.push(reportField(input.partyNote));
-  if (hasFix) {
+  if (fix) {
     if (source === "deadReckon") {
       lines.push("Sent from Hike app — dead-reckon estimate, not a live GPS fix.");
     } else if (source === "lastKnown" || input.stale) {
@@ -88,7 +110,7 @@ export function emergencyMessage(input: {
       lines.push("Sent from Hike app (offline-capable GPS).");
     }
   } else {
-    lines.push("Sent from Hike app — no GPS fix on this device.");
+    lines.push("Sent from Hike app — no usable GPS fix on this device.");
   }
   return formatReport(lines);
 }

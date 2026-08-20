@@ -395,6 +395,9 @@ export async function saveLastFix(fix: {
   altitude?: number;
   recordedAt?: number;
 }) {
+  const recordedAt = fix.recordedAt ?? Date.now();
+  // Never persist a future or epoch fix as if it were a fresh position.
+  if (!Number.isFinite(recordedAt) || recordedAt < Date.UTC(2020, 0, 1) || recordedAt > Date.now() + 5 * 60_000) return;
   lastFixWrite = lastFixWrite
     .catch(() => undefined)
     .then(async () => {

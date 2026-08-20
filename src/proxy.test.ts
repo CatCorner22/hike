@@ -89,3 +89,53 @@ describe("proxy owner minting", () => {
     vi.unstubAllEnvs();
   });
 });
+
+/**
+ * A response that establishes a session must never be stored by a shared cache.
+ * Next labelled the minting document response `s-maxage=31536000`, so a CDN
+ * could replay one hiker's owner cookie to every later visitor and hand them
+ * that hiker's plans and recorded tracks.
+ */
+describe("session responses are not shareable", () => {
+  it("marks a cookie-minting document response private and no-store", async () => {
+    vi.stubEnv("SESSION_SECRET", SECRET);
+    const response = await proxy(request("/plan", { accept: "text/html", "sec-fetch-dest": "document" }));
+    expect(response.headers.get("set-cookie")).toContain("hike_owner=");
+    const cacheControl = response.headers.get("cache-control") ?? "";
+    expect(cacheControl).toMatch(/no-store/);
+    expect(cacheControl).toMatch(/private/);
+    expect(cacheControl).not.toMatch(/s-maxage/);
+  });
+
+  it("keeps owner-scoped pages out of shared caches even with a session", async () => {
+    vi.stubEnv("SESSION_SECRET", SECRET);
+    const token = await signOwnerToken("owner-1", SECRET);
+    for (const path of ["/plan", "/plan/abc", "/activities", "/navigate/plan-abc"]) {
+      const response = await proxy(
+        request(path, {
+          accept: "text/html",
+          "sec-fetch-dest": "document",
+          cookie: `${OWNER_COOKIE}=${token}`,
+        }),
+      );
+      const cacheControl = response.headers.get("cache-control") ?? "";
+      expect(cacheControl, `${path} was shareable`).toMatch(/private/);
+      expect(cacheControl, `${path} was shareable`).toMatch(/no-store/);
+      expect(response.headers.get("vary")?.toLowerCase()).toContain("cookie");
+    }
+  });
+
+  it("leaves public pages cacheable", async () => {
+    vi.stubEnv("SESSION_SECRET", SECRET);
+    const token = await signOwnerToken("owner-1", SECRET);
+    const response = await proxy(
+      request("/guide", {
+        accept: "text/html",
+        "sec-fetch-dest": "document",
+        cookie: `${OWNER_COOKIE}=${token}`,
+      }),
+    );
+    // No private/no-store forced here: the guide is the same for everyone.
+    expect(response.headers.get("cache-control") ?? "").not.toMatch(/no-store/);
+  });
+});

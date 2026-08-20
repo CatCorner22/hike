@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities } from "@/lib/db/schema";
@@ -26,9 +26,19 @@ export async function GET(request: Request) {
         orderBy: [desc(activities.startedAt)],
         limit: 50,
       });
-      return NextResponse.json({ activities: rows });
+      const openActivities = await db.query.activities.findMany({
+        where: and(eq(activities.ownerId, owner.ownerId), isNull(activities.endedAt)),
+        orderBy: [desc(activities.startedAt)],
+      });
+      return NextResponse.json({ activities: rows, openActivities });
     }
-    return NextResponse.json({ activities: await listActivities(owner.ownerId) });
+    const activityHistory = await listActivities(owner.ownerId);
+    return NextResponse.json({
+      activities: activityHistory,
+      // Kept separate from the bounded history so an older abandoned recording remains
+      // visible to a recovering client instead of silently leaving a server activity open.
+      openActivities: activityHistory.filter((activity) => activity.endedAt === null),
+    });
   } catch (error) {
     return errorResponse(error, "Failed to list activities");
   }

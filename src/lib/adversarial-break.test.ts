@@ -109,6 +109,9 @@ describe("adversarial-break: trail geometry", () => {
 describe("adversarial-break: land-nav honesty", () => {
   it("uses the same half-angle for the southern watch method (15:00 → ~45°)", () => {
     const south = watchMethodHeading(15, "south");
+    // watchMethodHeading is nullable now: it refuses a non-finite or
+    // out-of-range hour rather than returning a confident heading. 15:00 is
+    // valid, so a null here is itself a failure.
     expect(south).not.toBeNull();
     expect(south!.toward).toBe("N");
     expect(south!.clockAzimuthFrom12).toBeCloseTo(45, 0);
@@ -116,7 +119,10 @@ describe("adversarial-break: land-nav honesty", () => {
   });
 
   it("does not claim the sun azimuth agrees with a watch-dial angle", () => {
-    const note = sunVsWatchCheck(new Date("2026-06-21T22:00:00Z"), 37.7, -119.6, 15);
+    // The hour argument was removed: the solar hour is derived from longitude
+    // inside the function, because a device clock carries DST and zone error
+    // worth up to 15 degrees of heading.
+    const note = sunVsWatchCheck(new Date("2026-06-21T22:00:00Z"), 37.7, -119.6);
     if (note) {
       expect(note).not.toMatch(/agree|within 20/i);
       expect(note).toMatch(/do not compare/i);
@@ -157,9 +163,12 @@ describe("adversarial-break: land-nav honesty", () => {
   });
 
   it("does not call a north aspect leeward", () => {
+    // aspectDeg is no longer an input: a route elevation profile cannot
+    // establish slope aspect, so accepting it invited an authoritative
+    // leeward/windward claim that the data could not support. The assertion
+    // below still holds -- and now holds by construction.
     const note = avalancheTerrainWarning({
       slopePct: 35,
-      aspectDeg: 0,
       month: 1,
       snowOnGround: true,
     });
@@ -167,7 +176,14 @@ describe("adversarial-break: land-nav honesty", () => {
   });
 
   it("fails closed on invalid return and check-in times", () => {
-    expect(overdueStatus("not-a-date").overdue).toBe(true);
+    // An unparseable deadline fails closed as overdue: callers that render only
+    // on `overdue` would otherwise show nothing, leaving a hiker unmonitored
+    // while believing the alarm was armed. `valid` records why.
+    const invalid = overdueStatus("not-a-date");
+    expect(invalid.overdue).toBe(true);
+    expect(invalid.valid).toBe(false);
+    expect(invalid.remainingMin).toBeNull();
+    expect(invalid.label).toMatch(/invalid/i);
     expect(checkinStatus("bogus", { enabled: true, intervalMin: 60 })?.overdue).toBe(true);
   });
 
@@ -201,7 +217,7 @@ describe("adversarial-break: land-nav honesty", () => {
 
   it("does not invent DR distance without paces", () => {
     const start = { lat: 37, lng: -119 };
-    const dest = deadReckon(start, 0, distanceFromPaces(0, 65));
+    const dest = deadReckon(start, 0, distanceFromPaces(0, 65))!;
     expect(dest.lat).toBeCloseTo(37, 6);
     expect(dest.lng).toBeCloseTo(-119, 6);
     expect(deadReckonUncertaintyM({ distanceM: 0, lastAccuracyM: 10 })).toBeCloseTo(10);
