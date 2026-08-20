@@ -14,8 +14,19 @@ describe("route hazard sampling", () => {
     expect(points.at(-1)?.distanceMeters).toBeGreaterThan(0);
   });
 
-  it("rejects invalid sampling intervals", () => {
-    expect(() => sampleRouteByDistance(route, 0)).toThrow(/positive/);
+  it("falls back to the default interval instead of throwing", () => {
+    // CHANGED DELIBERATELY. This test previously asserted that an invalid
+    // interval throws. sampleRouteByDistance runs inside the pre-departure
+    // panel's render, and the app has no error boundary, so that throw took the
+    // whole plan page down -- including the offline-readiness controls next to
+    // it. Sampling density is not a safety claim, so the safe failure here is to
+    // fall back to the default interval and keep the panel on screen. The code
+    // was changed and this assertion inverted; the alternative (keeping the
+    // throw) would trade a cosmetic detail for the loss of the safety UI.
+    for (const interval of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => sampleRouteByDistance(route, interval)).not.toThrow();
+    }
+    expect(sampleRouteByDistance(route, 0)).toEqual(sampleRouteByDistance(route, 5000));
   });
 
   it("summarizes the highest hazard without AI interpretation", () => {

@@ -126,10 +126,42 @@ export function PreDeparturePanel({ planId, plannedDate, geometry, waypoints = [
             </div>
           </div>
           {daylight ? (
-            <Alert variant={daylight.severity === "critical" ? "destructive" : "default"}>
-              {daylight.severity === "critical" ? <ShieldAlert /> : daylight.severity === "watch" ? <AlertTriangle /> : <CheckCircle2 />}
-              <AlertTitle>{daylight.severity === "critical" ? "Daylight risk" : daylight.severity === "watch" ? "Limited margin" : "Daylight margin available"}</AlertTitle>
-              <AlertDescription>{daylight.message} Estimated finish: {daylight.eta.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.</AlertDescription>
+            <Alert
+              variant={
+                daylight.severity === "critical" || daylight.severity === "unknown"
+                  ? "destructive"
+                  : "default"
+              }
+            >
+              {/*
+                "unknown" must never render as the green checkmark. Falling through
+                to the default branch showed "Daylight margin available" for a
+                calculation that could not be done at all.
+              */}
+              {daylight.severity === "critical" ? (
+                <ShieldAlert />
+              ) : daylight.severity === "unknown" ? (
+                <AlertTriangle />
+              ) : daylight.severity === "watch" ? (
+                <AlertTriangle />
+              ) : (
+                <CheckCircle2 />
+              )}
+              <AlertTitle>
+                {daylight.severity === "critical"
+                  ? "Daylight risk"
+                  : daylight.severity === "unknown"
+                    ? "Daylight margin unknown"
+                    : daylight.severity === "watch"
+                      ? "Limited margin"
+                      : "Daylight margin available"}
+              </AlertTitle>
+              <AlertDescription>
+                {daylight.message}
+                {daylight.severity !== "unknown" &&
+                  Number.isFinite(daylight.eta.getTime()) &&
+                  ` Estimated finish: ${daylight.eta.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`}
+              </AlertDescription>
             </Alert>
           ) : (
             <p className="text-sm text-muted-foreground">Enter a departure time and valid pace to calculate daylight margin.</p>
