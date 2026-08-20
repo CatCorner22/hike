@@ -101,7 +101,7 @@ import {
 import {
   commsWindowReminder,
   fiveLineHeloBrief,
-  litterEvacTime,
+  litterEvacAdvice,
   lzAssessmentChecklist,
   saluteReport,
 } from "@/lib/safety/sar-advanced";
@@ -1465,11 +1465,20 @@ export function SafetyPanel({
               <input type="checkbox" checked={canWalk} onChange={(e) => setCanWalk(e.target.checked)} />
               Injured person can walk
             </label>
-            {remainingMeters != null && remainingMeters > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {litterEvacTime(remainingMeters, profile.partySize)}
-              </p>
-            )}
+            {remainingMeters != null && remainingMeters > 0 && (() => {
+              const litter = litterEvacAdvice(remainingMeters, profile.partySize);
+              return (
+                <p
+                  className={
+                    litter.feasible
+                      ? "text-xs text-muted-foreground"
+                      : "rounded border border-destructive/50 bg-destructive/10 p-2 text-xs font-medium text-destructive"
+                  }
+                >
+                  {litter.message}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-2 gap-2">
               <Input value={lpqSeen} placeholder="Last seen" onChange={(e) => setLpqSeen(e.target.value)} />
               <Input value={lpqClothes} placeholder="Clothing" onChange={(e) => setLpqClothes(e.target.value)} />

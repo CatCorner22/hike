@@ -449,6 +449,51 @@ green, `next build` succeeds.
 
 ---
 
+## Sixth pass — the SAR decision aids
+
+### S1. It told a solo hiker they could litter-carry a casualty
+
+`litterEvacTime` picked a rate straight off party size with no floor:
+
+```
+party 1, 3000 m  ->  "Litter carry ~3.7 h"
+party 2, 3000 m  ->  "Litter carry ~2.3 h"
+```
+
+Neither is possible. A hand-carried litter takes **six people to lift at all**, and about
+twice that to rotate over any distance. Party size is also not the carrier count — the
+casualty cannot carry, and someone has to stay on their airway.
+
+The failure mode is not a wrong number on a screen. A party of two reading "~2.3 h" may
+try to move a casualty rather than shelter and send for help. With too few carriers they
+drop them, or exhaust themselves into a second patient, which is exactly what wilderness
+medicine teaches against.
+
+The rate table was also flat above four carriers, so a party of eight was quoted the same
+speed as a party of four — no credit for the one thing that actually makes a carry viable.
+
+**Fix.** `litterEvacAdvice` computes carriers as `partySize - 2` and refuses to produce a
+time below six of them, returning the honest instruction instead:
+
+```
+party 4, 8000 m  ->  "2 available carriers — a litter carry needs at least 6 to lift and
+                      about twice that to rotate. Do not attempt to move them: shelter in
+                      place, insulate from the ground, and send for help. Dropping a
+                      casualty or exhausting a carrier makes a second patient."
+```
+
+The panel renders that case as a destructive-styled warning rather than a grey planning
+note. Above six carriers the rates are conservative and improve with rotation — and the
+realistic figure changes decisions: a party of eight covering 8 km is **~9.9 h**, not the
+4.1 h the old table claimed. One is an overnight; the other sounds like a walk-out before
+dark.
+
+Verification after this pass: `tsc --noEmit` clean, `eslint` clean, `vitest run` 373/373
+green, `next build` succeeds.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
