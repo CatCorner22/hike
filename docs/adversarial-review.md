@@ -59,6 +59,78 @@ green (was 239 with 5 failing), `next build` succeeds warning-free, and `npm ci`
 
 ---
 
+## Third pass — the offline path, end to end
+
+The ownership work in the second pass added a request-time auth layer to an offline-first
+app, and nothing had verified that the offline promise still held afterwards. Running
+`e2e/offline-navigation.mjs` against a production build showed it did not:
+
+```
+[FAIL] A1 navigate online          — "Plan not found on server."
+[FAIL] A2 navigate offline          — "Plan not found on server."
+[FAIL] B2 route packs in IndexedDB  — count=0
+[FAIL] B3 cold offline navigate     — "This navigation screen was not saved…"
+[FAIL] B4 app requested durable storage — persist() calls=0
+```
+
+### T1. The proxy minted a session for every request, not just navigations
+
+`src/proxy.ts` minted a signed cookie on any request that lacked one — including API
+calls. Three consequences:
+
+1. An anonymous `POST /api/plans` silently received a **brand-new owner and created a
+   row**, instead of the `401` the handlers document.
+2. The `401` branch was therefore unreachable in production, so the behaviour described
+   in the code comments and the README was not the behaviour that shipped.
+3. A crawler could mint owners and rows without limit.
+
+Verified before and after against a production build:
+
+```
+before:  POST /api/plans (no cookie) -> 200, ownerId=1b7054a7-…
+after:   POST /api/plans (no cookie) -> 401
+         GET  /plan      (document)  -> 200 + Set-Cookie: hike_owner=…
+```
+
+Minting is now restricted to document navigations (`sec-fetch-dest: document`, falling
+back to an `Accept: text/html` negotiation for clients without Fetch Metadata). A browser
+receives its cookie from the document response, so every subsequent fetch from the page
+already carries one. `src/proxy.test.ts` pins all of it, including that a forged cookie is
+replaced rather than trusted.
+
+**What this was not:** the first suspicion was a race — several cookie-less requests in a
+cold first visit each minting a different owner, with the last `Set-Cookie` winning and
+orphaning anything written in between. Measured in a real browser, one cold visit to
+`/plan` minted exactly **one** owner, the browser settled on it, and a plan created
+immediately afterwards survived a reload. No fix was made for a problem that does not
+exist.
+
+### T2. The offline probe could not run, and could not have caught T1
+
+Two defects in the harness itself, which is why the regression above reached a merged
+branch:
+
+- `chromium.launch()` was hardcoded, so the probe was unrunnable anywhere Chromium is
+  supplied out of band — including this environment. It now honours `CHROMIUM_PATH`.
+- `createPlan()` used a cookie-less `fetch`, so after owner scoping the plan belonged to
+  a different owner than the browser. A plan owned by someone else is indistinguishable
+  from a plan that does not exist — correct behaviour, and it silently invalidated every
+  assertion downstream. The probe now establishes the session in the browser and reuses
+  that exact cookie.
+
+After both fixes, all five scenarios pass against a production build — including **B3,
+the real backcountry case**: route prepared at the trailhead, navigate screen never
+opened online, then opened with the network cut.
+
+```
+[PASS] A1 navigate online          [PASS] A2 navigate offline after warm visit
+[PASS] B1 prepare offline          [PASS] B2 route packs in IndexedDB — count=1
+[PASS] B3 cold offline navigate    [PASS] B4 app requested durable storage
+[PASS] B5 UI is honest about eviction risk
+```
+
+---
+
 ## Second pass — the safety decision aids
 
 The first pass covered navigation, time, GPS and the API. A second pass over the ~2,000
