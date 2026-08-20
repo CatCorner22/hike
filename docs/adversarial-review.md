@@ -1012,6 +1012,84 @@ caught.
 
 ---
 
+## Twelfth pass — merging round 3, and what CI is telling us
+
+### M1. Dead reckoning died at the antimeridian
+
+Surfaced by merging `main` (PR #34), which made `deadReckon` validate the point it
+returns. `turf.destination` walks straight past ±180 rather than wrapping, so a leg
+crossing the antimeridian comes back as `180.019` and the on-globe validator discarded
+it:
+
+| from | bearing | distance | turf returns | `deadReckon` returned |
+|---|---|---|---|---|
+| 37.7, 179.98 | 20° | 10 km | lng 180.019 | **null** |
+| 51.9, 179.90 | 90° | 20 km | lng 180.192 | **null** |
+| −16.5, −179.95 | 270° | 15 km | lng −180.091 | **null** |
+
+Every dead-reckoning step across the seam returned null — in the western Aleutians,
+Fiji and the Chathams — and dead reckoning exists precisely for when there is no GPS to
+fall back on. `utmToLatLng` already normalizes exactly this case, with a comment saying
+not to let a valid fix disappear; `deadReckon` now does the same.
+
+### Merge resolutions
+
+Four conflicts, all resolved toward the union rather than either side: main's separate
+"sun position unavailable" case and `isValidCoordinate` guard **plus** this branch's
+upper elevation gate; main's stricter `deliberateOffset` guard (which refuses a negative
+offset outright) **plus** this branch's zero-offset branch, since zero still reaches the
+body and is not an aim-off; main's nullable `rangeAzimuth` threaded through the spread
+and uncertainty loops; main's larger grid readout **plus** this branch's no-grid
+fallback.
+
+### B3 is red on `main`, and it is not this branch's
+
+`main` at `3fde385` fails **B3 cold offline navigate**: the service worker serves
+`/offline` instead of the cached shell, even though B1 proves the shell is in Cache
+Storage. Its verify job (typecheck, lint, tests, build) passes; only the e2e is red.
+
+Investigated rather than waved off, because this is the app's central promise:
+
+- Reproduced? **No.** 5/5 local runs pass on the merged branch.
+- Is the mechanism real, or was the probe passing for a bad reason? **Real.** Killing the
+  production server outright between B2 and B3 — a genuinely dead network, not a
+  Playwright flag — still passes B3 from the cached shell.
+- Where does the `/offline` text come from? `navigateShellHandler`'s own catch calls
+  `serwist.matchPrecache("/offline")`. So on CI the cache lookup missed *and* the fetch
+  failed. No client-side route pushes `/offline`, so it is the worker.
+
+So the failure is real on the runner and not caused by this branch's changes. Rather than
+push a speculative fix, the probe now reports the worker-side state whenever B3 fails —
+controller and registration state, cache names, the shell cache keys, and for the exact
+URL the status, content type, marker header, byte count and whether it satisfies the
+predicate `sw.ts` actually gates on. The next failure will name the cause instead of
+being read backwards from a screenshot of text. The block was exercised by forcing it to
+run, not just written.
+
+### A green B3 now has to have earned it
+
+Chasing the above turned up a real weakness in the harness. B3 judged the cold open
+without ever confirming the network was actually cut, so if offline enforcement ever
+stops reaching service-worker fetches, B3 goes green having tested nothing — a pass on
+the app's most important promise, proving nothing. It now checks: `/api/` is
+`NetworkOnly` in the worker, so any response at all after `setOffline` means the worker
+still has a network, and B3's result is marked `PASS*` with a warning rather than
+reported as evidence.
+
+(One of my own intermediate readings here was wrong and is worth recording: an experiment
+appeared to show the worker bypassing `setOffline`, but the patch had landed on scenario
+A's call site, not scenario B's. Offline **is** enforced — confirmed by the new check
+reporting a genuinely cut network.)
+
+### Hygiene noted, not acted on
+
+`public/sw.js` is listed in `.gitignore` yet tracked, so every build dirties the tree and
+any `git add -A` commits build churn. Left alone deliberately: removing a tracked
+artifact could break a deployment path I cannot verify from here.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
