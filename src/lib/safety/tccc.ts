@@ -331,12 +331,14 @@ export function casualtyCard(input: CasualtyCardInput): string {
   ].join("\n");
 }
 
-/** START triage: walking wounded are green; no breathing is black after airway positioning; absent radial pulse or inability to obey commands is red; remaining casualties are yellow. */
+/** START triage: walking wounded are green; no breathing is black after airway positioning; a respiratory rate over 30, an absent radial pulse, or inability to obey commands is red; remaining casualties are yellow. */
 export function triageCategory(input: {
   walking: boolean;
   breathing: boolean;
   radialPulse: boolean;
   obeysCommands: boolean;
+  /** Breaths per minute. START makes >30 an immediate (red) criterion in its own right. */
+  respiratoryRate?: number;
 }): TriageResult {
   if (input.walking) {
     return {
@@ -352,13 +354,19 @@ export function triageCategory(input: {
       reasoning: "No breathing after opening and positioning the airway is categorized black in START; continue care only when resources allow.",
     };
   }
-  if (!input.radialPulse || !input.obeysCommands) {
+  const fastBreathing =
+    input.respiratoryRate != null &&
+    Number.isFinite(input.respiratoryRate) &&
+    input.respiratoryRate > 30;
+  if (fastBreathing || !input.radialPulse || !input.obeysCommands) {
     return {
       category: "red",
       label: "Immediate",
-      reasoning: !input.radialPulse
-        ? "A breathing casualty without a radial pulse is categorized red in START."
-        : "A breathing casualty who cannot obey simple commands is categorized red in START.",
+      reasoning: fastBreathing
+        ? `A respiratory rate of ${Math.round(input.respiratoryRate!)} breaths/min is over 30, which is categorized red in START.`
+        : !input.radialPulse
+          ? "A breathing casualty without a radial pulse is categorized red in START."
+          : "A breathing casualty who cannot obey simple commands is categorized red in START.",
     };
   }
   return {

@@ -48,6 +48,13 @@ function roundOne(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+const SEVERITY_RANK: Record<Severity, number> = { info: 0, caution: 1, warning: 2, critical: 3 };
+
+/** Severity may only ever be raised by a new risk factor, never lowered. */
+function raise(current: Severity, next: Severity): Severity {
+  return SEVERITY_RANK[next] > SEVERITY_RANK[current] ? next : current;
+}
+
 function isAvalancheDanger(value: unknown): value is AvalancheDanger {
   return typeof value === "string" && DANGER_LEVELS.includes(value as AvalancheDanger);
 }
@@ -149,9 +156,11 @@ export function avalancheTerrainRisk(angleDeg: number): AvalancheTerrainRisk | n
       message: "Very steep avalanche terrain. Slabs can still release; exposure and consequences remain high.",
     };
   }
+  // Slab frequency falls above 50 deg, but consequence does not — this must not read as
+  // less severe than the 35-45 deg band it sits above.
   return {
-    severity: "caution",
-    message: "Above 50°, loose-snow sluffs are more common than slabs, but they can sweep you into terrain traps or over cliffs.",
+    severity: "warning",
+    message: "Above 50°, loose-snow sluffs are more common than slabs, but a fall or sluff here can sweep you into terrain traps or over cliffs.",
   };
 }
 
@@ -279,38 +288,38 @@ export function avalancheAssessment(input: {
 
   if (input.alptruthYesCount >= 3) {
     noGo = true;
-    severity = "warning";
+    severity = raise(severity, "warning");
     reasons.push(`${input.alptruthYesCount} ALPTRUTh yes answers meet the 3-or-more turn-around rule of thumb.`);
   } else if (input.alptruthYesCount > 0) {
-    severity = "caution";
+    severity = raise(severity, "caution");
     reasons.push(`${input.alptruthYesCount} ALPTRUTh risk factor${input.alptruthYesCount === 1 ? "" : "s"} entered.`);
   }
 
   if (input.danger === "extreme" || input.danger === "high") {
     noGo = true;
-    severity = "critical";
+    severity = raise(severity, "critical");
     reasons.push(`Local danger entered as ${input.danger}: avoid avalanche terrain and runout zones.`);
   } else if (input.danger === "considerable") {
-    severity = severity === "info" ? "warning" : severity;
+    severity = raise(severity, "warning");
     reasons.push("Local danger entered as considerable: human-triggered avalanches are likely.");
   } else if (input.danger === "moderate") {
-    severity = severity === "info" ? "caution" : severity;
+    severity = raise(severity, "caution");
     reasons.push("Local danger entered as moderate: evaluate specific terrain features carefully.");
   }
 
   if (input.maxSlopeAngleDeg !== undefined) {
     const terrain = avalancheTerrainRisk(input.maxSlopeAngleDeg);
     if (terrain && terrain.severity !== "info") {
-      severity = severity === "info" ? terrain.severity : severity;
+      severity = raise(severity, terrain.severity);
       reasons.push(terrain.message);
     }
   }
   if ((input.recentSnowCm ?? 0) >= 30) {
-    severity = severity === "info" ? "warning" : severity;
+    severity = raise(severity, "warning");
     reasons.push(`${roundOne(input.recentSnowCm!)} cm of recent snow entered: added loading deserves conservative terrain choices.`);
   }
   if (input.rapidWarming) {
-    severity = severity === "info" ? "caution" : severity;
+    severity = raise(severity, "caution");
     reasons.push("Rapid warming entered: thaw instability can rise quickly.");
   }
 

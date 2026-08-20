@@ -1,3 +1,6 @@
+import { naismithMinutes } from "@/lib/safety/pace";
+import { utmZone } from "@/lib/safety/usng";
+
 /**
  * Approximate magnetic declination (degrees, east-positive) for hiking use.
  * Coarse WMM-2025-style grid covering North America; not for surveying.
@@ -38,9 +41,25 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
   return ((magneticBearing + declination) % 360 + 360) % 360;
 }
 
-/** G-M card: east declination means magnetic is east of true/grid. */
+/**
+ * UTM grid convergence (degrees, east-positive): the angle between grid north and
+ * true north. Reaches ~3° at a zone edge, so it is not optional in a grid workflow.
+ * Convention: grid azimuth = true azimuth − convergence.
+ */
+export function gridConvergence(lat: number, lng: number): number {
+  const rad = Math.PI / 180;
+  const lon0 = (utmZone(lat, lng) - 1) * 6 - 180 + 3;
+  return (Math.atan(Math.tan((lng - lon0) * rad) * Math.sin(lat * rad)) * 180) / Math.PI;
+}
+
+/**
+ * G-M card. The grid-magnetic angle is declination *minus* grid convergence — the app
+ * plots on UTM/USNG, so converting straight from declination is wrong by up to ~3°.
+ */
 export function gmAngleCard(lat: number, lng: number): {
   declination: number;
+  convergence: number;
+  gmAngle: number;
   east: boolean;
   gridToMagnetic: string;
   magneticToGrid: string;
@@ -48,10 +67,14 @@ export function gmAngleCard(lat: number, lng: number): {
 } | null {
   const declination = magneticDeclination(lat, lng);
   if (declination == null) return null;
-  const east = declination >= 0;
-  const abs = Math.abs(declination).toFixed(1);
+  const convergence = gridConvergence(lat, lng);
+  const gmAngle = declination - convergence;
+  const east = gmAngle >= 0;
+  const abs = Math.abs(gmAngle).toFixed(1);
   return {
     declination,
+    convergence,
+    gmAngle,
     east,
     gridToMagnetic: east
       ? `Grid → mag: subtract ${abs}° (east is least)`
@@ -64,11 +87,13 @@ export function gmAngleCard(lat: number, lng: number): {
 }
 
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
-  const trueLabel = `${Math.round(trueBearing)}° true`;
+  // turf.bearing returns -180..180; a compass has no -122°.
+  const heading = ((trueBearing % 360) + 360) % 360;
+  const trueLabel = `${Math.round(heading) % 360}° true`;
   if (lat == null || lng == null) return trueLabel;
   const dec = magneticDeclination(lat, lng);
   if (dec == null) return trueLabel;
-  return `${trueLabel} / ${Math.round(toMagneticBearing(trueBearing, dec))}° magnetic`;
+  return `${trueLabel} / ${Math.round(toMagneticBearing(heading, dec)) % 360}° magnetic`;
 }
 
 export function isFixNearRouteBbox(
@@ -86,18 +111,31 @@ export function isFixNearRouteBbox(
   );
 }
 
-const WALK_MPS = 5000 / 3600;
-
+/**
+ * Fires when the remaining route cannot be finished before sunset.
+ *
+ * Uses `naismithMinutes` — the same estimator the navigate screen prints — so the
+ * warning cannot disagree with the ETA shown beside it. The previous flat 5 km/h with
+ * no climb allowance and a 10-minute grace under-estimated in three directions at once,
+ * all of them unsafe.
+ */
 export function turnaroundWarning(
   remainingMeters: number,
+  remainingGainMeters: number,
   minutesUntilSunset: number,
   isDark: boolean,
 ): string | null {
   if (isDark || remainingMeters <= 0) return null;
-  if (minutesUntilSunset <= 0) return null;
-  const minutesNeeded = remainingMeters / WALK_MPS / 60;
-  if (minutesNeeded > minutesUntilSunset + 10) {
-    return `At an easy pace this route still needs ~${Math.round(minutesNeeded)} min; sunset is in ${minutesUntilSunset} min. Turn around or finish with a headlamp.`;
+  const minutesNeeded = naismithMinutes(remainingMeters, Math.max(0, remainingGainMeters));
+  if (minutesNeeded <= 0) return null;
+
+  if (minutesUntilSunset <= 0) {
+    return `The sun is already down and this route still needs ~${minutesNeeded} min. Turn around or finish with a headlamp.`;
+  }
+  if (minutesNeeded > minutesUntilSunset) {
+    const climb =
+      remainingGainMeters >= 25 ? ` (${Math.round(remainingGainMeters)} m of climb left)` : "";
+    return `This route still needs ~${minutesNeeded} min${climb}; sunset is in ${minutesUntilSunset} min. Turn around or finish with a headlamp.`;
   }
   return null;
 }

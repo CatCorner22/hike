@@ -59,3 +59,25 @@ describe("hydration planning", () => {
     expect(hydrationPlan({ hours: Number.NaN, tempC: 20, workRate: "easy" })).toBeNull();
   });
 });
+
+describe("chemicalDoseWaitMinutes — cold water", () => {
+  // Regression: sub-zero was rejected outright, so near-freezing meltwater — the case
+  // that most needs the extended contact time — produced no guidance at all.
+  it("answers for near-freezing meltwater", () => {
+    expect(chemicalDoseWaitMinutes({ method: "chlorine-dioxide", waterTempC: -1, cloudy: false })).toBe(360);
+    expect(chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 0, cloudy: false })).toBe(45);
+  });
+
+  it("extends contact time as water gets colder or cloudier", () => {
+    const warm = chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 20, cloudy: false })!;
+    const cold = chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 2, cloudy: false })!;
+    const coldCloudy = chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 2, cloudy: true })!;
+    expect(cold).toBeGreaterThan(warm);
+    expect(coldCloudy).toBeGreaterThan(cold);
+  });
+
+  it("still rejects impossible temperatures", () => {
+    expect(chemicalDoseWaitMinutes({ method: "iodine", waterTempC: -40, cloudy: false })).toBeNull();
+    expect(chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 80, cloudy: false })).toBeNull();
+  });
+});

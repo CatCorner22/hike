@@ -106,7 +106,9 @@ export function estimateWbgtC(input: { tempC: number; rhPct: number; inSun: bool
     0.00391838 * Math.pow(rhPct, 1.5) * Math.atan(0.023101 * rhPct) -
     4.686035;
   const globeC = tempC + (inSun ? 5 : 0);
-  return round1(0.7 * wetBulbC + (inSun ? 0.2 * tempC + 0.1 * globeC : 0.3 * tempC));
+  // ISO 7243 outdoor form is 0.7*Tnwb + 0.2*Tg + 0.1*Ta; the globe and air weights were
+  // transposed, which under-read WBGT in sun and could drop a heat category.
+  return round1(0.7 * wetBulbC + (inSun ? 0.2 * globeC + 0.1 * tempC : 0.3 * tempC));
 }
 
 /** Environment and Climate Change Canada wind-chill frostbite bands; exposed-skin estimate only. */
@@ -129,13 +131,19 @@ export function frostbiteWarning(tempC: number, windKph: number): string | null 
 }
 
 /** Swiss hypothermia staging (ICAR MedCom): clinical signs guide staging when a reliable core temperature is unavailable. */
+/**
+ * Cessation of shivering is a real sign of progression, but only in someone who is
+ * actually cold — on its own it describes every warm, comfortable person. Pass
+ * `coldExposed` when the patient is cold/wet/wind-exposed for it to count.
+ */
 export function hypothermiaStage(input: {
   coreTempC?: number;
   shivering: boolean;
   alteredMental: boolean;
   conscious: boolean;
+  coldExposed?: boolean;
 }): HypothermiaAssessment | null {
-  const { coreTempC, shivering, alteredMental, conscious } = input;
+  const { coreTempC, shivering, alteredMental, conscious, coldExposed = false } = input;
   if (
     (coreTempC != null && (!Number.isFinite(coreTempC) || coreTempC < 20 || coreTempC > 45)) ||
     typeof shivering !== "boolean" ||
@@ -145,8 +153,16 @@ export function hypothermiaStage(input: {
     return null;
   }
   const severe = !conscious || (coreTempC != null && coreTempC < 28);
-  const moderate = !severe && (alteredMental || !shivering || (coreTempC != null && coreTempC < 32));
-  const mild = !severe && !moderate && (shivering || (coreTempC != null && coreTempC < 35));
+  // `!shivering` counts only for a cold-exposed patient. Without that guard every
+  // comfortable, non-shivering person was staged "moderate hypothermia", and the
+  // "none" branch below was unreachable.
+  const shiveringStopped = coldExposed && !shivering;
+  const moderate =
+    !severe && (alteredMental || shiveringStopped || (coreTempC != null && coreTempC < 32));
+  const mild =
+    !severe &&
+    !moderate &&
+    ((coldExposed && shivering) || (coreTempC != null && coreTempC < 35));
   if (severe) {
     return {
       stage: "severe",

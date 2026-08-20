@@ -70,3 +70,56 @@ describe("avalanche decision aids", () => {
     });
   });
 });
+
+describe("avalancheAssessment — severity monotonicity", () => {
+  const RANK: Record<string, number> = { info: 0, caution: 1, warning: 2, critical: 3 };
+
+  /**
+   * Regression: every factor after the first used `severity === "info" ? x : severity`,
+   * so it could only ever raise severity *from* info. Entering one ALPTRUTh yes on a
+   * "considerable" day therefore reported "caution" where entering none reported
+   * "warning" — adding a risk factor made the assessment look safer.
+   */
+  it("never lowers severity when a risk factor is added", () => {
+    for (const danger of ["moderate", "considerable", "high", "extreme"] as const) {
+      let previous = 0;
+      for (const alptruthYesCount of [0, 1, 2, 3, 4]) {
+        const result = avalancheAssessment({ danger, alptruthYesCount })!;
+        expect(RANK[result.severity], `${danger} / ${alptruthYesCount} yes`).toBeGreaterThanOrEqual(previous);
+        previous = RANK[result.severity];
+      }
+    }
+  });
+
+  it("compounds factors instead of masking them", () => {
+    const loaded = avalancheAssessment({
+      alptruthYesCount: 1,
+      maxSlopeAngleDeg: 38,
+      recentSnowCm: 60,
+      rapidWarming: true,
+    })!;
+    expect(RANK[loaded.severity]).toBeGreaterThanOrEqual(RANK.warning);
+  });
+
+  it("keeps every added factor at least as severe as the plain danger rating", () => {
+    const plain = avalancheAssessment({ danger: "considerable", alptruthYesCount: 0 })!;
+    for (const extra of [{ recentSnowCm: 40 }, { rapidWarming: true }, { maxSlopeAngleDeg: 38 }]) {
+      const withExtra = avalancheAssessment({ danger: "considerable", alptruthYesCount: 1, ...extra })!;
+      expect(RANK[withExtra.severity]).toBeGreaterThanOrEqual(RANK[plain.severity]);
+    }
+  });
+});
+
+describe("avalancheTerrainRisk — steep terrain", () => {
+  // Regression: above 50 deg the severity dropped back to "caution", rating a 55 deg
+  // slope as less serious than the 35-45 deg band it sits above.
+  it("never rates steeper terrain as less severe", () => {
+    const RANK: Record<string, number> = { info: 0, caution: 1, warning: 2, critical: 3 };
+    let previous = 0;
+    for (let angle = 0; angle <= 90; angle += 2) {
+      const risk = avalancheTerrainRisk(angle)!;
+      expect(RANK[risk.severity], `${angle} deg`).toBeGreaterThanOrEqual(previous);
+      previous = RANK[risk.severity];
+    }
+  });
+});

@@ -3,8 +3,12 @@ export type BboxLngLat = [number, number, number, number];
 
 export function parseBbox(param: string | null): BboxLngLat | null {
   if (!param) return null;
-  const parts = param.split(",").map((value) => Number(value.trim()));
-  if (parts.length !== 4 || !parts.every(Number.isFinite)) return null;
+  // Number("") and Number(" ") are both 0, so a missing coordinate would otherwise
+  // parse as a valid 0 and silently move the search box to the Gulf of Guinea.
+  const fields = param.split(",").map((value) => value.trim());
+  if (fields.length !== 4 || fields.some((value) => value === "")) return null;
+  const parts = fields.map(Number);
+  if (!parts.every(Number.isFinite)) return null;
 
   const [minLng, minLat, maxLng, maxLat] = parts;
   if (

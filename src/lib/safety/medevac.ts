@@ -16,9 +16,11 @@ export function nineLineMedevac(input: {
     input.lat != null && input.lng != null
       ? `${formatUsng(input.lat, input.lng)} / ${formatMgrs10(input.lat, input.lng)}`
       : "UNKNOWN";
-  const patients = (input.profile?.partySize ?? 1);
-  const litter = input.litter ?? 0;
-  const amb = input.ambulatory ?? Math.max(patients - litter, 0);
+  // Casualty counts, not party size. Defaulting to partySize reported an uninjured
+  // group of four as four patients, which is how rescue resources get misallocated.
+  const litter = Math.max(0, Math.round(input.litter ?? 0));
+  const amb = Math.max(0, Math.round(input.ambulatory ?? (litter > 0 ? 0 : 1)));
+  const patients = Math.max(1, litter + amb);
   const prec = input.precedence ?? "B";
 
   return [
@@ -30,7 +32,7 @@ export function nineLineMedevac(input: {
     `L5 PATIENTS BY TYPE: ${litter}L ${amb}A`,
     "L6 SECURITY: N — civilian wilderness",
     `L7 MARKING: ${input.marking ?? "Phone strobe / voice"}`,
-    `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${input.profile.name})` : ""}`,
+    `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${input.profile.name})` : ""}${input.profile?.partySize ? ` — party of ${input.profile.partySize}` : ""}`,
     `L9 TERRAIN/LZ: ${input.terrain ?? input.trailName ?? "Trail / unknown LZ"}`,
     input.profile?.medical ? `MEDICAL: ${input.profile.medical}` : "",
   ]

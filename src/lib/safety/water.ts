@@ -101,7 +101,9 @@ export function chemicalDoseWaitMinutes(input: {
   waterTempC: number;
   cloudy: boolean;
 }): number | null {
-  if (!Number.isFinite(input.waterTempC) || input.waterTempC < 0 || input.waterTempC > 50) return null;
+  // Meltwater sits at or just below 0 C, which is precisely when the extended contact
+  // time matters most; rejecting it left the coldest water with no guidance at all.
+  if (!Number.isFinite(input.waterTempC) || input.waterTempC < -5 || input.waterTempC > 50) return null;
   const base = input.method === "chlorine-dioxide" ? 240 : 30;
   const coldMultiplier = input.waterTempC < 10 ? 1.5 : 1;
   const cloudyMultiplier = input.cloudy ? 1.5 : 1;

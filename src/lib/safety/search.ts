@@ -8,7 +8,7 @@ export interface SearchLeg {
 
 /**
  * Expanding-square search from a last-known point (SAR standard pattern).
- * Leg length doubles every two sides: L, L, 2L, 2L, 3L, 3L…
+ * Leg length grows by one leg every two sides: L, L, 2L, 2L, 3L, 3L…
  */
 export function expandingSquareLegs(legM: number, rings = 3): SearchLeg[] {
   const legs: SearchLeg[] = [];

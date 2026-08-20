@@ -6,9 +6,15 @@ import {
   addActivityPoint,
   createActivity,
   createPlan,
+  deletePlan,
+  getPlan,
   listActivityPoints,
   listPlans,
+  updatePlan,
 } from "./local";
+
+const OWNER = "owner-a";
+const OTHER = "owner-b";
 
 let directory: string;
 let storeFile: string;
@@ -29,17 +35,17 @@ describe("local store durability", () => {
     const count = 40;
     await Promise.all(
       Array.from({ length: count }, (_, index) =>
-        createPlan({ name: `Plan ${index}` }),
+        createPlan({ ownerId: OWNER, name: `Plan ${index}` }),
       ),
     );
 
-    const plans = await listPlans();
+    const plans = await listPlans(OWNER);
     expect(plans).toHaveLength(count);
     expect(new Set(plans.map((plan) => plan.name)).size).toBe(count);
   });
 
   it("does not lose rapidly recorded activity points", async () => {
-    const activity = await createActivity({ startedAt: new Date().toISOString() });
+    const activity = await createActivity({ ownerId: OWNER, startedAt: new Date().toISOString() });
     const count = 50;
     await Promise.all(
       Array.from({ length: count }, (_, index) =>
@@ -59,7 +65,44 @@ describe("local store durability", () => {
   it("surfaces corruption instead of overwriting the store as empty", async () => {
     await writeFile(storeFile, '{"plans": [');
 
-    await expect(createPlan({ name: "Must not overwrite" })).rejects.toThrow();
+    await expect(createPlan({ ownerId: OWNER, name: "Must not overwrite" })).rejects.toThrow();
     expect(await readFile(storeFile, "utf8")).toBe('{"plans": [');
+  });
+});
+
+describe("local store owner scoping", () => {
+  it("never returns another owner's plans", async () => {
+    const mine = await createPlan({ ownerId: OWNER, name: "Mine" });
+    await createPlan({ ownerId: OTHER, name: "Theirs" });
+
+    expect((await listPlans(OWNER)).map((p) => p.name)).toEqual(["Mine"]);
+    expect((await listPlans(OTHER)).map((p) => p.name)).toEqual(["Theirs"]);
+    expect(await getPlan(mine.id, OTHER)).toBeNull();
+    expect(await getPlan(mine.id, OWNER)).not.toBeNull();
+  });
+
+  it("refuses to update or delete across owners", async () => {
+    const mine = await createPlan({ ownerId: OWNER, name: "Mine" });
+
+    expect(await updatePlan(mine.id, OTHER, { name: "Hijacked" })).toBeNull();
+    expect((await getPlan(mine.id, OWNER))!.name).toBe("Mine");
+
+    expect(await deletePlan(mine.id, OTHER)).toBe(false);
+    expect(await getPlan(mine.id, OWNER)).not.toBeNull();
+
+    expect(await deletePlan(mine.id, OWNER)).toBe(true);
+    expect(await getPlan(mine.id, OWNER)).toBeNull();
+  });
+
+  it("hides rows that predate owner scoping", async () => {
+    const legacy = await createPlan({ ownerId: OWNER, name: "Legacy" });
+    const raw = JSON.parse(await readFile(storeFile, "utf8"));
+    raw.plans = raw.plans.map((p: { id: string }) =>
+      p.id === legacy.id ? { ...p, ownerId: null } : p,
+    );
+    await writeFile(storeFile, JSON.stringify(raw));
+
+    expect(await listPlans(OWNER)).toHaveLength(0);
+    expect(await getPlan(legacy.id, OWNER)).toBeNull();
   });
 });

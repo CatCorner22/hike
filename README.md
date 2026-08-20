@@ -41,6 +41,7 @@ cp .env.example .env.local
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes* | Neon Postgres connection string |
+| `SESSION_SECRET` | Yes, in production | Signs the owner cookie that scopes plans and activities. Without it the API refuses user data rather than sharing it |
 | `NPS_API_KEY` | For NPS camping/research | [developer.nps.gov](https://developer.nps.gov/) |
 | `RIDB_API_KEY` | For federal camping | [ridb.recreation.gov/profile](https://ridb.recreation.gov/profile) |
 | `OPENAI_API_KEY` | For AI research | OpenAI or compatible provider |
@@ -98,6 +99,31 @@ npm start
 - Set `TAVILY_API_KEY` for web search consolidation
 - Without these keys, research falls back to OSM tag data
 
+## Who can see your data
+
+Plans and activities are scoped to an owner. Every API route resolves the caller from an
+HttpOnly, HMAC-signed `hike_owner` cookie and constrains its queries to that owner, so
+one deployment can carry several people's data without any of them seeing the others'
+routes, notes, or GPS traces. A row belonging to someone else answers `404`, not `403` —
+a `403` would confirm the id exists.
+
+Two things to be clear about:
+
+- **This is not a login.** Identity is one browser on one device. Clearing cookies or
+  switching browsers produces a new owner, and the previous rows become unreachable
+  through the API. Downloaded route packs live in IndexedDB and keep working regardless,
+  so this cannot strand you mid-trip — but it is not multi-device sync. Swapping in a
+  real identity provider means changing `resolveOwnerId` in `src/lib/auth/owner.ts` and
+  nothing else.
+- **Set `SESSION_SECRET` before deploying, and then leave it alone.** In production a
+  missing secret makes the user-data routes return `503` instead of silently degrading to
+  one shared identity. Rotating it invalidates every existing cookie, which gives every
+  user a new owner id and makes their stored plans and activities unreachable — treat it
+  as permanent, or plan a re-claim (see the migration file) alongside the rotation.
+
+Rows created before owner scoping have no owner and are hidden. `drizzle/0002_owner_scoping.sql`
+explains how to claim them.
+
 ## Offline navigation (life-safety)
 
 Navigation is designed to keep working after cell service drops. Do this **before** you leave coverage:
@@ -108,7 +134,7 @@ Navigation is designed to keep working after cell service drops. Do this **befor
 4. Open **Navigate**. The screen uses a self-contained trail map that does **not** need map tiles or the network.
 5. Keep the phone charged. The navigate screen requests a wake lock so it stays visible.
 
-If you open Navigate with no pack and no network, you will see a clear error: download the route first. GPS loss does not close the map — the last fix is held and marked stale. Off-trail warnings use a 50 m threshold and show the bearing back to the route.
+If you open Navigate with no pack and no network, you will see a clear error: download the route first. GPS loss does not close the map — the last fix is held and marked stale. Off-trail warnings start at 35 m from the route and escalate at 80 m, after allowing for half the reported GPS accuracy; they show the bearing back to the route.
 
 This is a navigation aid, not a substitute for a paper map, compass, or official park guidance.
 

@@ -58,7 +58,9 @@ function isLakeLouiseSymptom(value: number): value is 0 | 1 | 2 | 3 {
 }
 
 function validProfile(profile: Array<{ distanceMeters: number; elevation: number }>): boolean {
-  if (!Array.isArray(profile) || profile.length === 0) return false;
+  // A single sample is not a profile: it has no distance to integrate and produced a
+  // summary claiming the route "crosses 3000 m" from one reading.
+  if (!Array.isArray(profile) || profile.length < 2) return false;
   return profile.every(
     (point, index) =>
       Number.isFinite(point.distanceMeters) &&
@@ -87,15 +89,26 @@ export function lakeLouiseScore(input: LakeLouiseInput): LakeLouiseResult | null
   const hasAms = input.headache >= 1 && total >= 3;
 
   if (!hasAms) {
+    // The 2018 criteria need a headache, so this is correctly "not AMS" — but a heavy
+    // non-headache symptom load at altitude still deserves attention, and reporting it
+    // as "info" buried it at the bottom of the warning stack.
+    const notable = total >= 3;
     return {
       total,
       hasAms,
-      severity: "info",
-      label: "Does not meet AMS score criteria",
-      actions: [
-        "Do not ascend if symptoms are developing; reassess after rest, fluids, food, and warmth.",
-        "A normal score does not rule out HACE or HAPE red flags.",
-      ],
+      severity: notable ? "caution" : "info",
+      label: notable
+        ? "Does not meet AMS score criteria, but symptoms are significant"
+        : "Does not meet AMS score criteria",
+      actions: notable
+        ? [
+            "AMS scoring needs a headache, so this is not a positive AMS score — but do not ascend with these symptoms.",
+            "Rest, hydrate, eat, and reassess; descend if symptoms worsen. Check for ataxia and breathlessness at rest.",
+          ]
+        : [
+            "Do not ascend if symptoms are developing; reassess after rest, fluids, food, and warmth.",
+            "A normal score does not rule out HACE or HAPE red flags.",
+          ],
     };
   }
   if (total <= 5) {

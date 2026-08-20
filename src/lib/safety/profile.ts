@@ -139,8 +139,15 @@ export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
   return row ? { returnAt: row.returnAt } : null;
 }
 
+/**
+ * Returns null for an unparseable time. An invalid stored value used to fall through
+ * to `NaN <= 0 === false`, which silently disabled the overdue alarm and rendered
+ * "Return in NaN min" — the alarm looked armed while doing nothing.
+ */
 export function overdueStatus(returnAt: string, now = Date.now()) {
-  const remainingMin = Math.round((Date.parse(returnAt) - now) / 60000);
+  const returnMs = Date.parse(returnAt);
+  if (!Number.isFinite(returnMs)) return null;
+  const remainingMin = Math.round((returnMs - now) / 60000);
   if (remainingMin <= 0) {
     return {
       overdue: true,

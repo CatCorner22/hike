@@ -149,3 +149,30 @@ describe("safety alerts", () => {
     expect(offTrailLevel(120, 80)).toBe("warn");
   });
 });
+
+describe("bearingToTrail", () => {
+  const line: GeoJSON.LineString = {
+    type: "LineString",
+    coordinates: [
+      [-119.6, 37.75],
+      [-119.5, 37.75],
+    ],
+  };
+
+  // Regression: this came straight from turf.bearing (-180..180) and was rendered raw,
+  // so the OFF TRAIL banner could tell a hiker to "Walk -122° true".
+  it("is always a compass heading, never negative", () => {
+    for (let lat = 37.72; lat <= 37.78; lat += 0.005) {
+      for (let lng = -119.66; lng <= -119.44; lng += 0.02) {
+        const { bearingToTrail } = progressAlongTrail({ lat, lng }, line);
+        expect(bearingToTrail, `${lat},${lng}`).toBeGreaterThanOrEqual(0);
+        expect(bearingToTrail, `${lat},${lng}`).toBeLessThan(360);
+      }
+    }
+  });
+
+  it("points north from south of the line and south from north of it", () => {
+    expect(progressAlongTrail({ lat: 37.74, lng: -119.55 }, line).bearingToTrail).toBeCloseTo(0, 0);
+    expect(progressAlongTrail({ lat: 37.76, lng: -119.55 }, line).bearingToTrail).toBeCloseTo(180, 0);
+  });
+});

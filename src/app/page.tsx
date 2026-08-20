@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listRecentTrails } from "@/lib/trails/service";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans, activities } from "@/lib/db/schema";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
+import { resolveOwnerIdFromCookies } from "@/lib/auth/owner-server";
 import { formatDistance, formatDuration } from "@/lib/geo";
 import { Compass, Map, Tent } from "lucide-react";
 
@@ -14,17 +15,28 @@ export default async function HomePage() {
   let recentActivities: Array<typeof activities.$inferSelect> = [];
   let recentTrails: Awaited<ReturnType<typeof listRecentTrails>> = [];
 
+  // This page reads the database directly instead of going through /api, so it has to
+  // apply the same owner scoping the routes do — otherwise the landing page lists every
+  // plan and GPS track on the deployment no matter what the API enforces.
+  const ownerId = await resolveOwnerIdFromCookies();
+
   if (hasDatabase()) {
     const db = getDb();
     [plans, recentActivities, recentTrails] = await Promise.all([
-      db.query.hikePlans.findMany({
-        orderBy: [desc(hikePlans.plannedDate)],
-        limit: 5,
-      }),
-      db.query.activities.findMany({
-        orderBy: [desc(activities.startedAt)],
-        limit: 5,
-      }),
+      ownerId
+        ? db.query.hikePlans.findMany({
+            where: eq(hikePlans.ownerId, ownerId),
+            orderBy: [desc(hikePlans.plannedDate)],
+            limit: 5,
+          })
+        : Promise.resolve([]),
+      ownerId
+        ? db.query.activities.findMany({
+            where: eq(activities.ownerId, ownerId),
+            orderBy: [desc(activities.startedAt)],
+            limit: 5,
+          })
+        : Promise.resolve([]),
       listRecentTrails(5),
     ]);
   }

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
@@ -9,6 +9,7 @@ import {
   isoDatetimeSchema,
   parseJsonBody,
 } from "@/lib/api/validation";
+import { requireOwner } from "@/lib/auth/owner";
 import { createPlan, listPlans } from "@/lib/store/local";
 
 const planCreateSchema = z.object({
@@ -21,25 +22,31 @@ const planCreateSchema = z.object({
   customGeometry: geoJsonLineOrMultiLineStringSchema.nullable().optional(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
+
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): constrain this query to plans owned by the authenticated user.
       const plans = await db.query.hikePlans.findMany({
+        where: eq(hikePlans.ownerId, owner.ownerId),
         orderBy: [desc(hikePlans.updatedAt)],
         limit: 50,
       });
       return NextResponse.json({ plans });
     }
 
-    return NextResponse.json({ plans: await listPlans() });
+    return NextResponse.json({ plans: await listPlans(owner.ownerId) });
   } catch (error) {
     return errorResponse(error, "Failed to list plans");
   }
 }
 
 export async function POST(request: Request) {
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
+
   const parsed = await parseJsonBody(request, planCreateSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
@@ -47,8 +54,8 @@ export async function POST(request: Request) {
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): assign the authenticated user as the plan owner.
       const [plan] = await db.insert(hikePlans).values({
+        ownerId: owner.ownerId,
         name: body.name,
         trailId: body.trailId ?? null,
         plannedDate: body.plannedDate ? new Date(body.plannedDate) : null,
@@ -61,6 +68,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json(await createPlan({
+      ownerId: owner.ownerId,
       name: body.name,
       trailId: body.trailId ?? null,
       plannedDate: body.plannedDate ?? null,

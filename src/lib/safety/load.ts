@@ -73,6 +73,14 @@ export const DISCLAIMER =
   "Planning estimates, not a fitness clearance or ration prescription. Adjust for the person, weather, route, medical needs, and observed fatigue; turn back before safety margins disappear.";
 
 const FOOD_ENERGY_DENSITY_KCAL_PER_KG = 4250;
+/**
+ * Pandolf is only valid inside its study conditions. Outside them it grows without
+ * bound — 2.5 m/s in 35 cm of snow up a 35% grade returned ~23,000 W (~20,000 kcal/h),
+ * which downstream became a 30 kg food estimate and a pack at 120% of body weight.
+ * A very hard sustained human effort is well under 1,200 W, so anything above this is
+ * the equation extrapolating, not a plan.
+ */
+const MAX_PLAUSIBLE_WATTS = 1400;
 const MAX_WATER_L_PER_HOUR = 1.5;
 const MAX_WATER_L_PER_DAY = 12;
 
@@ -124,13 +132,19 @@ export function pandolfWatts(input: {
     return null;
   }
   const raw = basePandolfWatts(input);
-  if (g >= 0) return round1(raw);
+  if (g >= 0) return plausible(raw);
 
   // Santee et al. correction is applied only to negative grade. It replaces raw Pandolf's invalid descent behavior.
   const correction =
     TERRAIN_FACTORS[terrain] *
     ((g * (w + l) * v) / 3.5 - ((w + l) * Math.pow(g + 6, 2)) / w + (25 - v * v));
-  return round1(raw - correction);
+  return plausible(raw - correction);
+}
+
+/** Refuse to report an extrapolation as if it were an estimate. */
+function plausible(watts: number): number | null {
+  if (!Number.isFinite(watts) || watts <= 0 || watts > MAX_PLAUSIBLE_WATTS) return null;
+  return round1(watts);
 }
 
 /** Pandolf, Givoni & Goldman (1977); converts estimated metabolic watts using 1 kcal = 4184 J. */

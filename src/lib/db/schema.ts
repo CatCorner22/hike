@@ -1,6 +1,7 @@
 import {
   boolean,
   doublePrecision,
+  index,
   jsonb,
   pgEnum,
   pgTable,
@@ -61,6 +62,10 @@ export const trailResearch = pgTable("trail_research", {
 
 export const hikePlans = pgTable("hike_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // Nullable so the migration does not have to invent an owner for pre-existing rows.
+  // The API treats a NULL owner as belonging to nobody, so legacy rows are invisible
+  // until they are claimed — see drizzle/0002_owner_scoping.sql.
+  ownerId: text("owner_id"),
   name: text("name").notNull(),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   plannedDate: timestamp("planned_date"),
@@ -70,10 +75,11 @@ export const hikePlans = pgTable("hike_plans", {
   customGeometry: jsonb("custom_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [index("hike_plans_owner_id_idx").on(table.ownerId)]);
 
 export const activities = pgTable("activities", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id"),
   planId: uuid("plan_id").references(() => hikePlans.id, { onDelete: "set null" }),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   name: text("name"),
@@ -83,7 +89,7 @@ export const activities = pgTable("activities", {
   notes: text("notes"),
   trackGeometry: jsonb("track_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [index("activities_owner_id_idx").on(table.ownerId)]);
 
 export const activityPoints = pgTable("activity_points", {
   id: uuid("id").primaryKey().defaultRandom(),

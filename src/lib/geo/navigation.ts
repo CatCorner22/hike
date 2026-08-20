@@ -13,6 +13,7 @@ export interface TrailProgress {
   remainingMeters: number;
   totalMeters: number;
   remainingElevationMeters: number;
+  /** Compass heading back to the route, always 0..360. */
   bearingToTrail: number;
 }
 
@@ -70,7 +71,11 @@ function progressOnSegment(
       elevationProfile,
       traveledMeters,
     ),
-    bearingToTrail: turf.bearing(pt, turf.point([nearest.lng, nearest.lat])),
+    // turf.bearing is -180..180; TrailProgress.bearingToTrail is a compass heading,
+    // and every consumer renders it straight to the user.
+    bearingToTrail: normalizeHeading(
+      turf.bearing(pt, turf.point([nearest.lng, nearest.lat])),
+    ),
   };
 }
 

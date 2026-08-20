@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans } from "@/lib/db/schema";
@@ -9,6 +9,7 @@ import {
   isoDatetimeSchema,
   parseJsonBody,
 } from "@/lib/api/validation";
+import { requireOwner } from "@/lib/auth/owner";
 import { deletePlan, getPlan, updatePlan } from "@/lib/store/local";
 
 const planPatchSchema = z.object({
@@ -21,17 +22,23 @@ const planPatchSchema = z.object({
   customGeometry: geoJsonLineOrMultiLineStringSchema.nullable().optional(),
 });
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+// Someone else's plan answers 404, not 403: a 403 would confirm the id exists, which
+// is itself a disclosure when the ids are the only thing standing between an outsider
+// and a stranger's route and GPS history.
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): verify that the authenticated user owns this plan.
-      const plan = await db.query.hikePlans.findFirst({ where: eq(hikePlans.id, id) });
+      const plan = await db.query.hikePlans.findFirst({
+        where: and(eq(hikePlans.id, id), eq(hikePlans.ownerId, owner.ownerId)),
+      });
       if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json(plan);
     }
-    const plan = await getPlan(id);
+    const plan = await getPlan(id, owner.ownerId);
     if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(plan);
   } catch (error) {
@@ -41,6 +48,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
 
 export async function PATCH(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   const parsed = await parseJsonBody(request, planPatchSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
@@ -57,13 +66,16 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       if ("customGeometry" in body) values.customGeometry = body.customGeometry;
 
       const db = getDb();
-      // TODO(auth): limit this update to a plan owned by the authenticated user.
-      const [plan] = await db.update(hikePlans).set(values).where(eq(hikePlans.id, id)).returning();
+      const [plan] = await db
+        .update(hikePlans)
+        .set(values)
+        .where(and(eq(hikePlans.id, id), eq(hikePlans.ownerId, owner.ownerId)))
+        .returning();
       if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json(plan);
     }
 
-    const updates: Parameters<typeof updatePlan>[1] = {};
+    const updates: Parameters<typeof updatePlan>[2] = {};
     if ("name" in body) updates.name = body.name;
     if ("trailId" in body) updates.trailId = body.trailId;
     if ("plannedDate" in body) updates.plannedDate = body.plannedDate;
@@ -71,7 +83,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if ("waypoints" in body) updates.waypoints = body.waypoints;
     if ("campgroundIds" in body) updates.campgroundIds = body.campgroundIds ?? [];
     if ("customGeometry" in body) updates.customGeometry = body.customGeometry;
-    const plan = await updatePlan(id, updates);
+    const plan = await updatePlan(id, owner.ownerId, updates);
     if (!plan) return NextResponse.json({ error: "Not found" }, { status: 404 });
     return NextResponse.json(plan);
   } catch (error) {
@@ -79,16 +91,25 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   }
 }
 
-export async function DELETE(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): limit this deletion to a plan owned by the authenticated user.
-      await db.delete(hikePlans).where(eq(hikePlans.id, id));
+      // .returning() so a delete that matched nothing reports 404 instead of claiming
+      // success — otherwise deleting a stranger's plan and deleting your own look alike.
+      const deleted = await db
+        .delete(hikePlans)
+        .where(and(eq(hikePlans.id, id), eq(hikePlans.ownerId, owner.ownerId)))
+        .returning({ id: hikePlans.id });
+      if (deleted.length === 0) return NextResponse.json({ error: "Not found" }, { status: 404 });
       return NextResponse.json({ success: true });
     }
-    await deletePlan(id);
+    if (!(await deletePlan(id, owner.ownerId))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     return errorResponse(error, "Failed to delete plan");

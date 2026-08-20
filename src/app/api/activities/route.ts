@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, parseJsonBody } from "@/lib/api/validation";
+import { requireOwner } from "@/lib/auth/owner";
 import { createActivity, listActivities } from "@/lib/store/local";
 
 const activityCreateSchema = z.object({
@@ -14,21 +15,28 @@ const activityCreateSchema = z.object({
   startedAt: isoDatetimeSchema.optional(),
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): constrain this query to activities owned by the authenticated user.
-      const rows = await db.query.activities.findMany({ orderBy: [desc(activities.startedAt)], limit: 50 });
+      const rows = await db.query.activities.findMany({
+        where: eq(activities.ownerId, owner.ownerId),
+        orderBy: [desc(activities.startedAt)],
+        limit: 50,
+      });
       return NextResponse.json({ activities: rows });
     }
-    return NextResponse.json({ activities: await listActivities() });
+    return NextResponse.json({ activities: await listActivities(owner.ownerId) });
   } catch (error) {
     return errorResponse(error, "Failed to list activities");
   }
 }
 
 export async function POST(request: Request) {
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
   const parsed = await parseJsonBody(request, activityCreateSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
@@ -36,8 +44,8 @@ export async function POST(request: Request) {
   try {
     if (hasDatabase()) {
       const db = getDb();
-      // TODO(auth): assign the authenticated user as the activity owner.
       const [activity] = await db.insert(activities).values({
+        ownerId: owner.ownerId,
         trailId: body.trailId ?? null,
         planId: body.planId ?? null,
         name: body.name ?? null,
@@ -47,6 +55,7 @@ export async function POST(request: Request) {
       return NextResponse.json(activity);
     }
     return NextResponse.json(await createActivity({
+      ownerId: owner.ownerId,
       trailId: body.trailId ?? null,
       planId: body.planId ?? null,
       name: body.name ?? null,
