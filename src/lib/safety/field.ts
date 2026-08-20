@@ -2,9 +2,58 @@ import { gpxFromTrack } from "@/lib/geo";
 import { formatRangeAzimuth, rangeAzimuth, type RangeAzimuth } from "@/lib/safety/landnav";
 import type { IceProfile, SafetyWaypoint } from "@/lib/safety/profile";
 
+export const SAFETY_NAME_MAX_LENGTH = 120;
+export const ICE_PHONE_MAX_LENGTH = 32;
+
+const INVISIBLE_NAME_CHARS = /[\s\p{Cc}\p{Cf}]/gu;
+
+function visibleText(value: unknown): string {
+  // `trim()` leaves U+200B behind, so an apparently filled ICE card used to
+  // print a name SAR could not see. Treat format/control characters as absent.
+  return typeof value === "string" ? value.replace(INVISIBLE_NAME_CHARS, "") : "";
+}
+
+function displayNameIssue(value: unknown, label: string, minCharacters: number): string | null {
+  if (typeof value !== "string" || visibleText(value).length === 0) {
+    return `${label} is blank or contains only invisible characters.`;
+  }
+  if (Array.from(value).length > SAFETY_NAME_MAX_LENGTH) {
+    return `${label} is longer than ${SAFETY_NAME_MAX_LENGTH} characters.`;
+  }
+  if (Array.from(visibleText(value)).length < minCharacters) {
+    return `${label} must contain at least ${minCharacters} readable characters.`;
+  }
+  return null;
+}
+
+export function hikerNameIssue(value: unknown): string | null {
+  return displayNameIssue(value, "Your name", 1);
+}
+
+export function iceNameIssue(value: unknown): string | null {
+  return displayNameIssue(value, "ICE name", 2);
+}
+
+export function icePhoneIssue(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) return "ICE phone is required.";
+  if (Array.from(value).length > ICE_PHONE_MAX_LENGTH) {
+    return `ICE phone is longer than ${ICE_PHONE_MAX_LENGTH} characters.`;
+  }
+  if (!/^\+?[0-9 ()-]+$/.test(value.trim())) {
+    return "ICE phone may contain only digits, spaces, dashes, parentheses, and one leading +.";
+  }
+  const digits = value.replace(/\D/g, "");
+  if (digits.length < 7 || digits.length > 15) {
+    return "ICE phone must contain 7 to 15 dialable digits.";
+  }
+  if (/^(\d)\1+$/.test(digits)) {
+    return "ICE phone is an obvious placeholder, not a dialable number.";
+  }
+  return null;
+}
+
 export function isIceFilled(profile: IceProfile): boolean {
-  const digits = profile.icePhone.replace(/\D/g, "");
-  return profile.iceName.trim().length >= 2 && digits.length >= 7;
+  return iceNameIssue(profile.iceName) === null && icePhoneIssue(profile.icePhone) === null;
 }
 
 export function hypothermiaWarning(input: {
@@ -102,6 +151,7 @@ export function nearestWaypoint(
   let best: { point: (typeof waypoints)[number]; range: RangeAzimuth } | null = null;
   for (const point of waypoints) {
     const range = rangeAzimuth(here, point);
+    if (!range) continue;
     if (!best || range.meters < best.range.meters) best = { point, range };
   }
   if (!best) return null;

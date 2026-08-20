@@ -60,9 +60,14 @@ describe("altitude emergency and pacing advice", () => {
   });
 
   it("holds the 500 m/night boundary and warns above it", () => {
+    // Was "info". Deliberately raised to "caution": with "info" here, severity
+    // FELL as the hiker climbed past 3000 m (caution at exactly 3000, info just
+    // above), so gaining altitude made the app less concerned. The boundary
+    // behaviour this test exists to pin -- 500 m compliant, 501 m a warning --
+    // is unchanged.
     expect(ascentRateAdvice({ currentElevationM: 3500, previousNightElevationM: 3000 })).toMatchObject({
       gainM: 500,
-      severity: "info",
+      severity: "caution",
     });
     expect(ascentRateAdvice({ currentElevationM: 3501, previousNightElevationM: 3000 })).toMatchObject({
       severity: "warning",
@@ -125,5 +130,41 @@ describe("altitudeFromProfile — input validity", () => {
     expect(summary.totalGainM).toBe(1000);
     expect(summary.crosses3000).toBe(true);
     expect(summary.metersAbove2500).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Severity must never fall as elevation rises. Crossing above 3000 m with a
+ * compliant sleeping gain used to drop from "caution" to "info", so a hiker who
+ * climbed one metre saw the app become less concerned about altitude.
+ */
+describe("ascentRateAdvice severity is monotonic in elevation", () => {
+  const rank = { info: 0, caution: 1, warning: 2, critical: 3 } as const;
+
+  it("never decreases as current elevation increases", () => {
+    for (const gain of [0, 100, 200, 400, 500, 600, 900]) {
+      let worst = -1;
+      for (let elevation = 2000; elevation <= 5000; elevation += 50) {
+        const result = ascentRateAdvice({
+          currentElevationM: elevation,
+          previousNightElevationM: elevation - gain,
+        });
+        if (!result) continue;
+        const current = rank[result.severity as keyof typeof rank];
+        expect(
+          current,
+          `severity dropped to ${result.severity} at ${elevation} m with gain ${gain} m`,
+        ).toBeGreaterThanOrEqual(worst);
+        worst = current;
+      }
+    }
+  });
+
+  it("does not become less concerned one metre above 3000 m", () => {
+    const at = ascentRateAdvice({ currentElevationM: 3000, previousNightElevationM: 2800 });
+    const above = ascentRateAdvice({ currentElevationM: 3001, previousNightElevationM: 2801 });
+    expect(rank[above!.severity as keyof typeof rank]).toBeGreaterThanOrEqual(
+      rank[at!.severity as keyof typeof rank],
+    );
   });
 });

@@ -1,4 +1,5 @@
 import { deadReckon } from "@/lib/safety/landnav";
+import { isValidCoordinate } from "@/lib/geo/coords";
 import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export interface SearchLeg {
@@ -30,11 +31,16 @@ export function expandingSquareLine(
   center: { lat: number; lng: number },
   legM: number,
   rings = 3,
-): GeoJSON.LineString {
+): GeoJSON.LineString | null {
+  if (!isValidCoordinate(center) || !Number.isFinite(legM) || legM <= 0 || !Number.isInteger(rings) || rings < 1) {
+    return null;
+  }
   const coords: GeoJSON.Position[] = [[center.lng, center.lat]];
   let here = center;
   for (const leg of expandingSquareLegs(legM, rings)) {
-    here = deadReckon(here, leg.headingTrue, leg.meters);
+    const next = deadReckon(here, leg.headingTrue, leg.meters);
+    if (!next) return null;
+    here = next;
     coords.push([here.lng, here.lat]);
   }
   return { type: "LineString", coordinates: coords };
@@ -61,11 +67,13 @@ export function sectorSearchLine(
   legM: number,
   baseHeading = 0,
   spokes = 3,
-): GeoJSON.LineString {
+): GeoJSON.LineString | null {
+  if (!isValidCoordinate(center)) return null;
   const coords: GeoJSON.Position[] = [[center.lng, center.lat]];
   const here = center;
   for (const leg of sectorSearchLegs(legM, baseHeading, spokes)) {
     const tip = deadReckon(here, leg.headingTrue, leg.meters);
+    if (!tip) return null;
     coords.push([tip.lng, tip.lat]);
     coords.push([here.lng, here.lat]);
   }
@@ -122,11 +130,14 @@ export function parallelTrackLegs(
 export function searchLineFromLegs(
   start: { lat: number; lng: number },
   legs: SearchLeg[],
-): GeoJSON.LineString {
+): GeoJSON.LineString | null {
+  if (!isValidCoordinate(start)) return null;
   const coords: GeoJSON.Position[] = [[start.lng, start.lat]];
   let here = start;
   for (const leg of legs) {
-    here = deadReckon(here, leg.headingTrue, leg.meters);
+    const next = deadReckon(here, leg.headingTrue, leg.meters);
+    if (!next) return null;
+    here = next;
     coords.push([here.lng, here.lat]);
   }
   return { type: "LineString", coordinates: coords };

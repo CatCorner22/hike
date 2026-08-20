@@ -17,6 +17,16 @@ import {
 import { CHECKIN_INTERVALS, getCheckinSettings, saveCheckinSettings } from "@/lib/safety/checkin";
 import { hikeReadiness } from "@/lib/safety/readiness";
 
+type ReturnOccurrence = "earlier" | "later" | null;
+
+export function resolveGateReturnTime(
+  returnAt: string,
+  occurrence: ReturnOccurrence,
+  timeZone?: string,
+) {
+  return returnAt ? resolveLocalDateTime(returnAt, timeZone, occurrence) : null;
+}
+
 export function ReadinessGate({
   packReady,
   onReady,
@@ -46,6 +56,8 @@ export function ReadinessGate({
   const [checkinMin, setCheckinMin] = useState(60);
   const [missing, setMissing] = useState<string[]>([]);
   const [overdueNote, setOverdueNote] = useState<string | null>(null);
+  const [returnOccurrence, setReturnOccurrence] = useState<ReturnOccurrence>(null);
+  const returnResolution = resolveGateReturnTime(returnAt, returnOccurrence);
 
   useEffect(() => {
     void (async () => {
@@ -77,10 +89,11 @@ export function ReadinessGate({
 
   async function saveAndGo() {
     await saveIceProfile(profile);
-    const resolved = returnAt ? resolveLocalDateTime(returnAt) : null;
+    const resolved = returnResolution;
     if (returnAt && resolved?.kind !== "resolved") {
       setMissing([resolved?.message ?? "Planned return time"]);
-      await setOverdueAlarm(null);
+      // Do not erase a previously armed deadline just because a replacement
+      // wall time is ambiguous; that would silently remove the only overdue alarm.
       return;
     }
     await setOverdueAlarm(resolved?.kind === "resolved" ? resolved.value : null);
@@ -145,9 +158,32 @@ export function ReadinessGate({
               id="return"
               type="datetime-local"
               value={returnAt}
-              onChange={(e) => setReturnAt(e.target.value)}
+              onChange={(e) => {
+                setReturnAt(e.target.value);
+                setReturnOccurrence(null);
+              }}
             />
           </div>
+          {returnResolution?.kind === "ambiguous" && (
+            <fieldset className="space-y-2 rounded-md border p-3">
+              <legend className="px-1 text-sm font-medium">Repeated clock time — choose the real return instant</legend>
+              <p className="text-sm text-muted-foreground">{returnResolution.message}</p>
+              {returnResolution.choices.map((choice, index) => {
+                const occurrence = index === 0 ? "earlier" : "later";
+                return (
+                  <label key={choice.instant.toISOString()} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name="return-occurrence"
+                      checked={returnOccurrence === occurrence}
+                      onChange={() => setReturnOccurrence(occurrence)}
+                    />
+                    {index === 0 ? "First occurrence" : "Second occurrence"} ({choice.utcOffset})
+                  </label>
+                );
+              })}
+            </fieldset>
+          )}
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -188,7 +224,7 @@ export function ReadinessGate({
                 void (async () => {
                   // Persist whatever they did manage to enter before leaving.
                   await saveIceProfile(profile);
-                  const resolved = returnAt ? resolveLocalDateTime(returnAt) : null;
+                  const resolved = returnResolution;
                   if (resolved?.kind === "resolved") await setOverdueAlarm(resolved.value);
                   await saveCheckinSettings({ enabled: checkinOn, intervalMin: checkinMin });
                 })().finally(onProceedAnyway);

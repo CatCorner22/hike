@@ -65,7 +65,7 @@ describe("antimeridian controls", () => {
     expect(trailLengthMeters(DATELINE_LINE)).toBeGreaterThan(22_000);
     expect(trailLengthMeters(DATELINE_LINE)).toBeLessThan(23_000);
     expect(bearingBetween({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 })).toBeCloseTo(90, 5);
-    const ra = rangeAzimuth({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 });
+    const ra = rangeAzimuth({ lat: 0, lng: 179.9 }, { lat: 0, lng: -179.9 })!;
     expect(ra.meters).toBeGreaterThan(22_000);
     expect(ra.meters).toBeLessThan(23_000);
     expect(ra.trueDeg).toBeCloseTo(90, 5);
@@ -129,7 +129,7 @@ describe("UTM/USNG validity boundaries", () => {
     ]) {
       const parsed = parseUsng(formatMgrs10(origin.lat, origin.lng)!, origin);
       expect(parsed).not.toBeNull();
-      expect(rangeAzimuth(origin, parsed!).meters).toBeLessThan(25);
+      expect(rangeAzimuth(origin, parsed!)!.meters).toBeLessThan(25);
     }
   });
 

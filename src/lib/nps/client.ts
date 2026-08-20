@@ -1,4 +1,4 @@
-import { fetchWithTimeout } from "@/lib/api/outbound";
+import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
 const NPS_BASE = "https://developer.nps.gov/api/v1";
 
 function getApiKey() {
@@ -27,7 +27,7 @@ async function npsFetch<T>(path: string, params: Record<string, string> = {}): P
   }
 
   if (!response.ok) return null;
-  return response.json();
+  return readJsonCapped(response);
 }
 
 export interface NpsCampground {

@@ -108,7 +108,7 @@ export function SafetyNavMap({
       ctx.fillRect(0, 0, width, height);
 
       if (!bbox) {
-        ctx.fillStyle = "#e5e7eb";
+        ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
         ctx.font = "12px sans-serif";
         ctx.fillText("Route data invalid", 12, topInsetPx + 20);
         return;
@@ -138,7 +138,7 @@ export function SafetyNavMap({
       if (showGrid && user) {
         const u = latLngToUtm(user.lat, user.lng);
         if (!u) {
-          ctx.fillStyle = "#e5e7eb";
+          ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
           ctx.font = "12px sans-serif";
           ctx.fillText("UTM grid unavailable at this latitude", 12, topInsetPx + 38);
         } else {
@@ -198,11 +198,11 @@ export function SafetyNavMap({
       if (endpoints) {
         const start = toPx(endpoints.start.lng, endpoints.start.lat);
         const end = toPx(endpoints.end.lng, endpoints.end.lat);
-        ctx.fillStyle = "#22c55e";
+        ctx.fillStyle = nightMode === "red" ? "#ffb0b0" : nightMode === "nvg" ? "#8ee6a6" : "#22c55e";
         ctx.beginPath();
         ctx.arc(start.x, start.y, 6, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = "#ef4444";
+        ctx.fillStyle = nightMode === "red" ? "#ff8888" : nightMode === "nvg" ? "#ff9a9a" : "#ef4444";
         ctx.beginPath();
         ctx.arc(end.x, end.y, 6, 0, Math.PI * 2);
         ctx.fill();
@@ -210,7 +210,7 @@ export function SafetyNavMap({
 
       if (search && search.coordinates.length >= 2) {
         ctx.setLineDash([2, 4]);
-        ctx.strokeStyle = "#facc15";
+        ctx.strokeStyle = nightMode === "red" ? "#ff9a9a" : nightMode === "nvg" ? "#b8f5c8" : "#facc15";
         ctx.lineWidth = 2;
         ctx.beginPath();
         search.coordinates.forEach(([lng, lat], index) => {
@@ -224,7 +224,7 @@ export function SafetyNavMap({
 
       if (backtrack && backtrack.coordinates.length >= 2) {
         ctx.setLineDash([4, 6]);
-        ctx.strokeStyle = "#38bdf8";
+        ctx.strokeStyle = nightMode === "red" ? "#d88a8a" : nightMode === "nvg" ? "#8ee6a6" : "#38bdf8";
         ctx.lineWidth = 3;
         ctx.beginPath();
         backtrack.coordinates.forEach(([lng, lat], index) => {
@@ -238,7 +238,12 @@ export function SafetyNavMap({
 
       for (const wp of waypoints) {
         const p = toPx(wp.lng, wp.lat);
-        ctx.fillStyle = WAYPOINT_COLORS[wp.kind] ?? "#e5e7eb";
+        ctx.fillStyle =
+          nightMode === "red"
+            ? "#e9a0a0"
+            : nightMode === "nvg"
+              ? "#9deaae"
+              : WAYPOINT_COLORS[wp.kind] ?? "#e5e7eb";
         ctx.beginPath();
         ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
         ctx.fill();
@@ -246,7 +251,7 @@ export function SafetyNavMap({
 
       if (goto) {
         const p = toPx(goto.lng, goto.lat);
-        ctx.strokeStyle = "#facc15";
+        ctx.strokeStyle = nightMode === "red" ? "#ff9a9a" : nightMode === "nvg" ? "#b8f5c8" : "#facc15";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(p.x - 8, p.y);
@@ -269,14 +274,14 @@ export function SafetyNavMap({
         const from = toPx(user.lng, user.lat);
         const to = toPx(nearest.lng, nearest.lat);
         ctx.setLineDash([6, 6]);
-        ctx.strokeStyle = "#f97316";
+        ctx.strokeStyle = nightMode === "red" ? "#e88c8c" : nightMode === "nvg" ? "#9deaae" : "#f97316";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(from.x, from.y);
         ctx.lineTo(to.x, to.y);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.fillStyle = "#fdba74";
+        ctx.fillStyle = nightMode === "red" ? "#ffaaaa" : nightMode === "nvg" ? "#b8f5c8" : "#fdba74";
         ctx.beginPath();
         ctx.arc(to.x, to.y, 5, 0, Math.PI * 2);
         ctx.fill();
@@ -284,7 +289,7 @@ export function SafetyNavMap({
 
       if (ghost) {
         const g = toPx(ghost.lng, ghost.lat);
-        ctx.strokeStyle = "#64748b";
+        ctx.strokeStyle = nightMode === "red" ? "#c18484" : nightMode === "nvg" ? "#78c98e" : "#64748b";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(g.x, g.y, 8, 0, Math.PI * 2);
@@ -303,13 +308,20 @@ export function SafetyNavMap({
         ) {
           // Same scale as everything else, so the ring is the real accuracy radius.
           const r = Math.min(ringM * pxPerMetre, 80);
-          ctx.fillStyle = gpsDenied ? "rgba(249, 115, 22, 0.16)" : "rgba(37, 99, 235, 0.18)";
+          ctx.fillStyle =
+            nightMode === "red"
+              ? gpsDenied
+                ? "rgba(255, 138, 138, 0.16)"
+                : "rgba(255, 176, 176, 0.18)"
+              : gpsDenied
+                ? "rgba(249, 115, 22, 0.16)"
+                : "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
           ctx.fill();
           if (gpsDenied) {
             ctx.setLineDash([4, 4]);
-            ctx.strokeStyle = "#fb923c";
+            ctx.strokeStyle = nightMode === "red" ? "#ffaaaa" : "#fb923c";
             ctx.lineWidth = 1.5;
             ctx.beginPath();
             ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
@@ -317,15 +329,15 @@ export function SafetyNavMap({
             ctx.setLineDash([]);
           }
         }
-        ctx.fillStyle = "#2563eb";
-        ctx.strokeStyle = "#ffffff";
+        ctx.fillStyle = nightMode === "red" ? "#ff9a9a" : nightMode === "nvg" ? "#8ee6a6" : "#2563eb";
+        ctx.strokeStyle = nightMode === "red" ? "#4a0b0b" : nightMode === "nvg" ? "#063516" : "#ffffff";
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
         if (user.heading != null) {
-          ctx.fillStyle = "#93c5fd";
+          ctx.fillStyle = nightMode === "red" ? "#ffc1c1" : nightMode === "nvg" ? "#b8f5c8" : "#93c5fd";
           ctx.beginPath();
           ctx.moveTo(p.x, p.y - 16);
           ctx.lineTo(p.x - 5, p.y - 4);
@@ -339,12 +351,12 @@ export function SafetyNavMap({
 
       // Keep orientation labels clear of the page header overlay.
       const labelTop = topInsetPx + 20;
-      ctx.fillStyle = "#e5e7eb";
+      ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
       ctx.font = "12px sans-serif";
       ctx.fillText(headingUp ? "Heading up" : "North up", 12, labelTop);
       if (!headingUp) {
         ctx.fillText("N", width / 2 - 4, labelTop - 2);
-        ctx.strokeStyle = "#9ca3af";
+        ctx.strokeStyle = nightMode === "red" ? "#d88a8a" : nightMode === "nvg" ? "#8ee6a6" : "#9ca3af";
         ctx.beginPath();
         ctx.moveTo(width / 2, labelTop + 2);
         ctx.lineTo(width / 2, labelTop + 14);

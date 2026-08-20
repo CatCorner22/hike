@@ -27,6 +27,8 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-safety-critical: var(--safety-critical);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -64,6 +66,8 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --safety-critical: #8b0000;
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -99,6 +103,8 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.205 0 0);
+  --safety-critical: oklch(0.84 0.16 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -126,5 +132,112 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+/*
+ * Navigate's red and NVG modes must change the entire UI chrome, not only the
+ * canvas. The html selectors also reach sheet portals, which render outside
+ * the page shell.
+ */
+.navigate-night-red,
+html.navigate-night-red-document {
+  --background: #140303;
+  --foreground: #ffd7d7;
+  --card: #2a0707;
+  --card-foreground: #ffd7d7;
+  --popover: #2a0707;
+  --popover-foreground: #ffd7d7;
+  --primary: #ffb3b3;
+  --primary-foreground: #300505;
+  --secondary: #4a1010;
+  --secondary-foreground: #ffd7d7;
+  --muted: #3a0b0b;
+  --muted-foreground: #ffb3b3;
+  --accent: #4a1010;
+  --accent-foreground: #ffd7d7;
+  --destructive: #ff8a8a;
+  --destructive-foreground: #300505;
+  --safety-critical: #ffd7d7;
+  --border: #7a2525;
+  --input: #7a2525;
+  --ring: #ffb3b3;
+  --sidebar: #2a0707;
+  --sidebar-foreground: #ffd7d7;
+  --sidebar-primary: #ffb3b3;
+  --sidebar-primary-foreground: #300505;
+  --sidebar-accent: #4a1010;
+  --sidebar-accent-foreground: #ffd7d7;
+  --sidebar-border: #7a2525;
+  --sidebar-ring: #ffb3b3;
+}
+
+.navigate-night-nvg,
+html.navigate-night-nvg-document {
+  --background: #03140a;
+  --foreground: #e3ffe9;
+  --card: #082617;
+  --card-foreground: #e3ffe9;
+  --popover: #082617;
+  --popover-foreground: #e3ffe9;
+  --primary: #b3f5c4;
+  --primary-foreground: #05210f;
+  --secondary: #103d22;
+  --secondary-foreground: #e3ffe9;
+  --muted: #0d331b;
+  --muted-foreground: #b3f5c4;
+  --accent: #103d22;
+  --accent-foreground: #e3ffe9;
+  --destructive: #ffaaaa;
+  --destructive-foreground: #210707;
+  --safety-critical: #e3ffe9;
+  --border: #28703f;
+  --input: #28703f;
+  --ring: #b3f5c4;
+  --sidebar: #082617;
+  --sidebar-foreground: #e3ffe9;
+  --sidebar-primary: #b3f5c4;
+  --sidebar-primary-foreground: #05210f;
+  --sidebar-accent: #103d22;
+  --sidebar-accent-foreground: #e3ffe9;
+  --sidebar-border: #28703f;
+  --sidebar-ring: #b3f5c4;
+}
+
+/* A 44 px fixed target keeps SOS in one-handed reach in the lower two-thirds. */
+.navigate-emergency-trigger {
+  position: fixed !important;
+  right: max(0.75rem, env(safe-area-inset-right)) !important;
+  bottom: max(0.75rem, env(safe-area-inset-bottom)) !important;
+  z-index: 40;
+  min-width: 2.75rem !important;
+  min-height: 2.75rem !important;
+  width: 2.75rem !important;
+  height: 2.75rem !important;
+  border-color: var(--destructive) !important;
+  background: var(--destructive) !important;
+  color: var(--destructive-foreground) !important;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--destructive) 40%, transparent);
+}
+
+/* Short landscape-like windows keep the safety HUD within the map and off controls. */
+@media (max-height: 480px) {
+  .navigate-header {
+    padding-bottom: 0.75rem;
+  }
+
+  .navigate-route-card {
+    max-width: calc(100% - 3.5rem);
+  }
+
+  .navigate-route-card > p:not(.navigate-grid-readout),
+  .navigate-route-card > button {
+    display: none;
+  }
+
+  .navigate-hud {
+    top: auto !important;
+    bottom: 0.5rem;
+    max-height: 3.25rem;
   }
 }

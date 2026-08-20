@@ -241,10 +241,15 @@ export function ascentRateAdvice(input: {
       message: `Sleeping elevation gain ${gainM} m exceeds the ~500 m/night guideline above 3000 m. Add a lower night or revise the plan; take a rest day every 3–4 days or ~1000 m.`,
     };
   }
+  // Not "info". Crossing above 3000 m used to LOWER the severity from the
+  // "caution" reported at exactly 3000 m, so a hiker who climbed a single metre
+  // saw the app become less concerned. Severity must never fall as the hazard
+  // rises. A compliant ascent rate is good news about the rate, not evidence
+  // that altitude illness is no longer possible at this elevation.
   return {
     gainM,
-    severity: "info",
-    message: `Sleeping elevation gain ${gainM} m is within the ~500 m/night guideline above 3000 m. Plan a rest day every 3–4 days or ~1000 m.`,
+    severity: "caution",
+    message: `Sleeping elevation gain ${gainM} m is within the ~500 m/night guideline, but you are above 3000 m: altitude illness is still possible. Plan a rest day every 3–4 days or ~1000 m, and do not ascend with symptoms.`,
   };
 }
 

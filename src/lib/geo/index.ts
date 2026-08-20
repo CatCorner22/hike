@@ -1,5 +1,10 @@
 import * as turf from "@turf/turf";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
+import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+import { isValidCoordinate } from "@/lib/geo/coords";
+
+/** Elevation is an enhancement, not a blocker: fail fast and cache an empty profile. */
+const ELEVATION_TIMEOUT_MS = 8_000;
 
 function geometrySegments(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
@@ -42,6 +47,7 @@ export function distanceToTrailMeters(
   point: { lat: number; lng: number },
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
+  if (!isValidCoordinate(point)) return Number.NaN;
   const pt = turf.point([point.lng, point.lat]);
   let best = Infinity;
   for (const coords of geometrySegments(trail)) {
@@ -55,7 +61,8 @@ export function distanceToTrailMeters(
 export function nearestPointOnTrail(
   point: { lat: number; lng: number },
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
-): { lat: number; lng: number; distanceMeters: number; index: number } {
+): { lat: number; lng: number; distanceMeters: number; index: number } | null {
+  if (!isValidCoordinate(point)) return null;
   const pt = turf.point([point.lng, point.lat]);
   let best: { lat: number; lng: number; distanceMeters: number; index: number } | null = null;
   let indexOffset = 0;
@@ -163,20 +170,21 @@ export function coordsToLineString(
 }
 
 export function formatDistance(meters: number): string {
-  if (!Number.isFinite(meters) || meters < 0) return "—";
+  if (!Number.isFinite(meters) || meters < 0 || meters > 40_075_017) return "—";
   const miles = meters / 1609.34;
   if (miles >= 0.1) return `${miles.toFixed(1)} mi`;
   return `${Math.round(meters)} m`;
 }
 
 export function formatElevation(meters: number): string {
-  if (!Number.isFinite(meters)) return "—";
+  if (!Number.isFinite(meters) || meters < -12_000 || meters > 12_000) return "—";
   const feet = meters * 3.28084;
-  return `${Math.round(feet).toLocaleString()} ft`;
+  const rounded = Math.round(feet);
+  return `${(rounded === 0 ? 0 : rounded).toLocaleString()} ft`;
 }
 
 export function formatDuration(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 366 * 24 * 60 * 60) return "—";
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
@@ -186,10 +194,15 @@ export function formatDuration(seconds: number): string {
 }
 
 export function formatPace(minPerKm: number): string {
-  if (!Number.isFinite(minPerKm) || minPerKm < 0) return "—";
+  if (!Number.isFinite(minPerKm) || minPerKm < 0 || minPerKm > 240) return "—";
   const minPerMile = minPerKm * 1.60934;
-  const mins = Math.floor(minPerMile);
-  const secs = Math.round((minPerMile - mins) * 60);
+  let mins = Math.floor(minPerMile);
+  let secs = Math.round((minPerMile - mins) * 60);
+  if (secs === 60) {
+    mins += 1;
+    secs = 0;
+  }
+  if (mins === 0) mins = 0;
   return `${mins}:${secs.toString().padStart(2, "0")} /mi`;
 }
 
@@ -248,13 +261,21 @@ export async function fetchElevationProfile(
   if (cached) elevationCache.delete(cacheKey);
 
   try {
-    const response = await fetch("https://api.open-elevation.com/api/v1/lookup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ locations: points.map((point) => ({ latitude: point.lat, longitude: point.lng })) }),
-    });
+    // Bounded on purpose. This ran as a bare fetch with no timeout and no size
+    // cap, so a stalled or oversized elevation service left "Prepare offline"
+    // hanging with no way forward -- at the trailhead, on the last bar of
+    // signal, that is the moment the hiker needs it to either work or fail.
+    const response = await fetchWithTimeout(
+      "https://api.open-elevation.com/api/v1/lookup",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locations: points.map((point) => ({ latitude: point.lat, longitude: point.lng })) }),
+      },
+      ELEVATION_TIMEOUT_MS,
+    );
     if (!response.ok) return cacheElevationProfile(cacheKey, []);
-    const data = await response.json();
+    const data = await readJsonCapped<{ results?: unknown }>(response);
     const results: unknown[] = Array.isArray(data.results) ? data.results : [];
     const profile = results.flatMap((result, index) => {
       if (
@@ -292,6 +313,7 @@ export function bearingBetween(
   from: { lat: number; lng: number },
   to: { lat: number; lng: number },
 ): number {
+  if (!isValidCoordinate(from) || !isValidCoordinate(to)) return Number.NaN;
   return turf.bearing(turf.point([from.lng, from.lat]), turf.point([to.lng, to.lat]));
 }
 

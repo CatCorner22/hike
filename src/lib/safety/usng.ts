@@ -161,7 +161,12 @@ export function utmToLatLng(u: {
       ((1 + 2 * t1 + c1) * d ** 3) / 6 +
       ((5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * EP2 + 24 * t1 ** 2) * d ** 5) / 120) /
       Math.cos(phi1);
-  return { lat: (lat * 180) / Math.PI, lng: (lng * 180) / Math.PI };
+  const longitude = (lng * 180) / Math.PI;
+  // The inverse projection can cross -180 by a few centimetres through floating
+  // point rounding. Normalize that equivalent antimeridian coordinate before it
+  // reaches the shared on-globe validator; do not let a valid grid fix disappear.
+  const normalizedLng = ((longitude + 180) % 360 + 360) % 360 - 180;
+  return { lat: (lat * 180) / Math.PI, lng: normalizedLng };
 }
 
 function parseUtmText(compact: string): { lat: number; lng: number } | null {
@@ -241,7 +246,11 @@ export function parseUsng(
       // A hint from another UTM zone cannot safely disambiguate this grid; guessing can send rescuers far away.
       if (hintUtm.zone !== zone) return null;
       const hinted = inBand
-        .map((p) => ({ p, d: Math.abs(p.lat - hint.lat) + Math.abs(p.lng - hint.lng) }))
+        .map((p) => ({
+          p,
+          d: Math.abs(p.lat - hint.lat) +
+            Math.abs(((p.lng - hint.lng + 540) % 360) - 180),
+        }))
         .sort((a, b) => a.d - b.d)[0];
       return hinted && hinted.d < 2 ? hinted.p : null;
     }

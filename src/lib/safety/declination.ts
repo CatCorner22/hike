@@ -124,7 +124,7 @@ export function gmAngleCard(lat: number, lng: number): {
 }
 
 export function formatWalkBearing(trueBearing: number, lat?: number, lng?: number): string {
-  if (!Number.isFinite(trueBearing)) return "—";
+  if (!Number.isFinite(trueBearing) || Math.abs(trueBearing) > 360) return "—";
   // turf.bearing returns -180..180; a compass has no -122°.
   const heading = ((trueBearing % 360) + 360) % 360;
   const trueLabel = `${Math.round(heading) % 360}° true`;

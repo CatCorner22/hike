@@ -16,8 +16,13 @@ export function naismithMinutes(distanceM: number, gainM = 0, lossM = 0): number
 }
 
 export function formatNaismith(minutes: number): string {
-  if (minutes < 60) return `Naismith ~${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+  if (!Number.isFinite(minutes) || minutes < 0 || minutes > 7 * 24 * 60) {
+    return "Naismith unavailable";
+  }
+  const rounded = Math.round(minutes);
+  if (rounded === 0) return "Naismith ~0 min";
+  if (rounded < 60) return `Naismith ~${rounded} min`;
+  const h = Math.floor(rounded / 60);
+  const m = rounded % 60;
   return `Naismith ~${h} h ${m} min`;
 }

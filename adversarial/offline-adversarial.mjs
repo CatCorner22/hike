@@ -223,7 +223,13 @@ try {
     await env.page.getByRole("button", { name: /prepare offline|update offline pack/i }).click(); await env.page.waitForTimeout(800);
     const state = await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => { const o = indexedDB.open("hike-nav-packs"); o.onsuccess = () => { const tx = o.result.transaction(["routePacks", "aliases"], "readonly"); const p = tx.objectStore("routePacks").get(id); const a = tx.objectStore("aliases").get(id); tx.oncomplete = () => resolve({ pack: p.result != null, alias: a.result != null }); tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); }), { id: `plan-${planId}` });
     const text = await env.page.locator("body").innerText();
-    log("quota/synchronous-alias-failure-honest-ui", /synthetic alias quota failure|Could not save|failed to save/i.test(text), text.match(/.{0,30}(synthetic alias quota failure|Could not save|failed to save).{0,80}/i)?.[0] ?? "message absent");
+    // The wording is owned by formatOfflineRouteStorageError, which maps a
+    // QuotaExceededError to plain recovery instructions instead of raw browser
+    // text. Match the PROPERTY -- the UI admits the save failed and says what to
+    // do -- not one exact sentence.
+    const honest = /storage is full|could not save|failed to save|not saved|re-download/i.test(text)
+      && !/route geometry and safety data are saved/i.test(text);
+    log("quota/synchronous-alias-failure-honest-ui", honest, text.match(/.{0,40}(storage is full|could not save|failed to save|not saved|re-download).{0,90}/i)?.[0] ?? `no honest message; body=${text.slice(0, 160).replace(/\s+/g, " ")}`);
     log("quota/synchronous-alias-failure-atomic", !(state.pack && !state.alias), `${JSON.stringify(outcome)} state=${JSON.stringify(state)}`);
     await env.context.close();
   }

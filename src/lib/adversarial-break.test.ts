@@ -217,7 +217,7 @@ describe("adversarial-break: land-nav honesty", () => {
 
   it("does not invent DR distance without paces", () => {
     const start = { lat: 37, lng: -119 };
-    const dest = deadReckon(start, 0, distanceFromPaces(0, 65));
+    const dest = deadReckon(start, 0, distanceFromPaces(0, 65))!;
     expect(dest.lat).toBeCloseTo(37, 6);
     expect(dest.lng).toBeCloseTo(-119, 6);
     expect(deadReckonUncertaintyM({ distanceM: 0, lastAccuracyM: 10 })).toBeCloseTo(10);

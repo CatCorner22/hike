@@ -47,8 +47,8 @@ export async function proxy(request: NextRequest) {
     throw error;
   }
 
-  if (existing) return NextResponse.next();
-  if (!isDocumentRequest(request)) return NextResponse.next();
+  if (existing) return protectOwnerScopedResponse(request, NextResponse.next());
+  if (!isDocumentRequest(request)) return protectOwnerScopedResponse(request, NextResponse.next());
 
   const token = await signOwnerToken(newOwnerId());
   // Set it on the request as well, so a handler in this same request sees the new
@@ -56,6 +56,47 @@ export async function proxy(request: NextRequest) {
   request.cookies.set(OWNER_COOKIE, token);
   const response = NextResponse.next({ request: { headers: request.headers } });
   response.cookies.set(OWNER_COOKIE, token, ownerCookieOptions());
+  // This response carries a freshly minted owner credential in Set-Cookie, and
+  // Next otherwise labelled it `s-maxage=31536000`. A shared cache (CDN,
+  // corporate proxy) storing it would replay one hiker's identity to every
+  // later visitor, handing them that hiker's plans and recorded tracks. A
+  // response that establishes a session must never be shared.
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  return protectOwnerScopedResponse(request, response);
+}
+
+/**
+ * Routes whose rendered HTML contains one hiker's own data: their plans,
+ * recorded activities, and the navigate screen for a specific plan.
+ */
+const OWNER_SCOPED_PREFIXES = ["/plan", "/activities", "/navigate"];
+
+function isOwnerScopedPath(pathname: string): boolean {
+  return OWNER_SCOPED_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
+
+/**
+ * Keeps owner-scoped pages out of shared caches.
+ *
+ * Next labelled these documents `s-maxage=31536000`, so a CDN or corporate proxy
+ * could cache one hiker's rendered plan list -- their routes and return times --
+ * and serve it to the next visitor. `Vary: Cookie` alone is not enough here:
+ * Next rewrites the Vary header after the proxy runs, so the only reliable
+ * control is to mark these responses private.
+ *
+ * Public pages (the landing page, trail pages, the guide) are left cacheable.
+ */
+function protectOwnerScopedResponse(request: NextRequest, response: NextResponse): NextResponse {
+  if (!isOwnerScopedPath(request.nextUrl.pathname)) return response;
+  response.headers.set("Cache-Control", "private, no-store, max-age=0");
+  const existingVary = response.headers.get("Vary");
+  if (!existingVary) {
+    response.headers.set("Vary", "Cookie");
+  } else if (!/(^|,\s*)cookie(\s*,|$)/i.test(existingVary)) {
+    response.headers.set("Vary", `${existingVary}, Cookie`);
+  }
   return response;
 }
 

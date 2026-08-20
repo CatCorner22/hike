@@ -113,7 +113,16 @@ export function readCookie(request: Request, name: string): string | null {
     const separator = part.indexOf("=");
     if (separator < 0) continue;
     if (part.slice(0, separator).trim() !== name) continue;
-    return decodeURIComponent(part.slice(separator + 1).trim());
+    const raw = part.slice(separator + 1).trim();
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      // A malformed percent escape (`%E0%A4%A`) made decodeURIComponent throw,
+      // which surfaced as a 500. An unreadable cookie is simply not a valid
+      // session: fail closed with no owner so the caller answers 401, rather
+      // than turning a mangled cookie into a server error.
+      return null;
+    }
   }
   return null;
 }

@@ -1,3 +1,5 @@
+import { isValidCoordinate } from "@/lib/geo/coords";
+
 export type Bbox = [number, number, number, number];
 
 export interface Projector {
@@ -66,11 +68,14 @@ export function followWindow(
   user: { lat: number; lng: number },
   mustInclude: Array<{ lat: number; lng: number } | null | undefined> = [],
   minRadiusDeg = 0.003,
-): Bbox {
+): Bbox | null {
+  if (!isValidCoordinate(user) || !Number.isFinite(minRadiusDeg) || minRadiusDeg <= 0 || minRadiusDeg > 180) {
+    return null;
+  }
   let latRadius = minRadiusDeg;
   let lngRadius = minRadiusDeg;
   for (const point of mustInclude) {
-    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lng)) continue;
+    if (!isValidCoordinate(point)) continue;
     // 25% margin so the point sits inside the edge rather than on it.
     latRadius = Math.max(latRadius, Math.abs(point.lat - user.lat) * 1.25);
     lngRadius = Math.max(lngRadius, Math.abs(point.lng - user.lng) * 1.25);

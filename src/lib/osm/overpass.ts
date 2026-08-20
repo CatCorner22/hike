@@ -1,6 +1,6 @@
 import { toSouthWestNorthEast, type BboxLngLat } from "@/lib/geo/bbox";
 import { bboxFromGeometry } from "@/lib/geo";
-import { fetchWithTimeout } from "@/lib/api/outbound";
+import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
 
 export interface OverpassElement {
   type: "node" | "way" | "relation";
@@ -71,7 +71,7 @@ async function runOverpass(query: string): Promise<OverpassResponse> {
         lastError = new Error(`Overpass API error: ${response.status}`);
         continue;
       }
-      const data = await response.json() as OverpassResponse;
+      const data = await readJsonCapped<OverpassResponse>(response);
       overpassCache.set(query, { expiresAt: Date.now() + OVERPASS_CACHE_TTL_MS, data });
       return data;
     } catch (error) {
