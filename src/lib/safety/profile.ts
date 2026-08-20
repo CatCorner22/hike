@@ -50,7 +50,7 @@ interface SafetyDB extends DBSchema {
 let dbPromise: Promise<IDBPDatabase<SafetyDB>> | null = null;
 
 export function getSafetyDb() {
-  if (typeof window === "undefined") return null;
+  if (typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
     dbPromise = openDB<SafetyDB>("hike-safety", 2, {
       upgrade(db, oldVersion) {

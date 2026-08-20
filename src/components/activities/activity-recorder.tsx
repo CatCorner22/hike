@@ -200,6 +200,7 @@ export function ActivityRecorder({ trailId, planId, onComplete }: ActivityRecord
     </div>
     {error && <p className="text-sm text-destructive">{error}</p>}
     {pointSync.pending > 0 && <p className="text-sm text-muted-foreground">{pointSync.syncing ? "Syncing" : `${pointSync.pending} point${pointSync.pending === 1 ? "" : "s"} waiting to sync`}{pointSync.lastError ? `: ${pointSync.lastError}` : ""}</p>}
+    {pointSync.dropped > 0 && <p className="text-sm text-destructive">{pointSync.dropped} recorded point{pointSync.dropped === 1 ? "" : "s"} could not be saved and {pointSync.dropped === 1 ? "was" : "were"} discarded — the activity they belong to no longer exists on the server.</p>}
     <div className="flex gap-2">
       {status === "idle" && <Button onClick={startRecording} className="flex-1"><Play className="mr-2 h-4 w-4" />Start recording</Button>}
       {status === "recording" && <><Button variant="secondary" onClick={pauseRecording}><Pause className="mr-2 h-4 w-4" />Pause</Button><Button variant="destructive" onClick={stopRecording} className="flex-1"><Square className="mr-2 h-4 w-4" />Stop & save</Button></>}

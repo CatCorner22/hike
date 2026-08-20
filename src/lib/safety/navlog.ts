@@ -22,7 +22,7 @@ interface NavLogDB extends DBSchema {
 let dbPromise: Promise<IDBPDatabase<NavLogDB>> | null = null;
 
 function getDb() {
-  if (typeof window === "undefined") return null;
+  if (typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
     dbPromise = openDB<NavLogDB>("hike-navlog", 1, {
       upgrade(db) {

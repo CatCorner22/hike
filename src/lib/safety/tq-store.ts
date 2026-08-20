@@ -12,7 +12,7 @@ interface TourniquetDB extends DBSchema {
 let dbPromise: Promise<IDBPDatabase<TourniquetDB>> | null = null;
 
 function getDb() {
-  if (typeof window === "undefined") return null;
+  if (typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
     dbPromise = openDB<TourniquetDB>("hike-tourniquet", 1, {
       upgrade(db) {

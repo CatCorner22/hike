@@ -129,6 +129,42 @@ opened online, then opened with the network cut.
 [PASS] B5 UI is honest about eviction risk
 ```
 
+### T3. Unsyncable GPS points retried forever and grew without bound
+
+`flushActivityPoints` treated every non-OK response the same way: `break`, leave the
+batch queued with `synced: 0`, try again later. But `deleteSyncedPointsOlderThan` only
+prunes `synced: 1`, so nothing ever removed them, while `usePointSync` retries **every
+30 s, on every `online` event, and on every queue event, for the life of the app**.
+
+For a status that can never succeed — 404 because the activity was deleted or belongs to
+another owner, 400 because the payload is rejected — that is:
+
+- battery and cellular burned in exactly the place this app tells people to conserve both,
+- unbounded IndexedDB growth **in the same quota that holds the offline route packs**
+  navigation depends on. The readiness UI already warns that packs "may be evicted under
+  storage pressure"; this was a mechanism for generating that pressure indefinitely.
+
+Owner scoping made the 404 case newly reachable: clear cookies, and every queued point
+belongs to an activity the server will never acknowledge again.
+
+Permanent statuses (400, 404, 410, 413, 422) now delete the batch and report the count;
+retryable ones (network failure, 5xx) still keep the points. **401 is deliberately not
+permanent** — a session is re-minted on the next document navigation, so those points are
+still deliverable. Dropping recorded track is a real loss, so the recorder now says so
+instead of swallowing it.
+
+### T4. Five of six IndexedDB stores tested for the wrong thing
+
+`route-pack.ts` guards on `typeof indexedDB === "undefined"`. The offline point queue,
+the breadcrumb track, the ICE profile, the nav log and the tourniquet clock all guarded
+on `typeof window === "undefined"` and returned null — silently — otherwise.
+
+Not a live defect: every one of those is reached from `"use client"` code where `window`
+exists. But `window` is absent in workers while `indexedDB` is present, the two modules
+disagreed about how to answer the same question, and the guard made the breadcrumb and
+ICE stores — both life-safety, both untested — impossible to test at all. All five now
+test the capability they actually need.
+
 ---
 
 ## Second pass — the safety decision aids
