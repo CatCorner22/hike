@@ -25,7 +25,8 @@ import {
   minutesUntilSunset,
 } from "@/lib/safety/daylight";
 import { sunCompassHint, sunPosition } from "@/lib/safety/astro";
-import { gridConvergence, polarisHint } from "@/lib/safety/tactics";
+import { polarisHint } from "@/lib/safety/tactics";
+import { gridConvergence } from "@/lib/safety/declination";
 import {
   formatZulu,
   intersection,

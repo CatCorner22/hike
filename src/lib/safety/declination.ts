@@ -47,10 +47,11 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
  * true north. Reaches ~3° at a zone edge, so it is not optional in a grid workflow.
  * Convention: grid azimuth = true azimuth − convergence.
  */
-export function gridConvergence(lat: number, lng: number): number {
+export function gridConvergence(lat: number, lng: number): number | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   const rad = Math.PI / 180;
   const zone = utmZone(lat, lng);
-  if (zone == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return 0;
+  if (zone == null) return null;
   const lon0 = (zone - 1) * 6 - 180 + 3;
   return (Math.atan(Math.tan((lng - lon0) * rad) * Math.sin(lat * rad)) * 180) / Math.PI;
 }
@@ -71,6 +72,7 @@ export function gmAngleCard(lat: number, lng: number): {
   const declination = magneticDeclination(lat, lng);
   if (declination == null) return null;
   const convergence = gridConvergence(lat, lng);
+  if (convergence == null) return null;
   const gmAngle = declination - convergence;
   const east = gmAngle >= 0;
   const abs = Math.abs(gmAngle).toFixed(1);
