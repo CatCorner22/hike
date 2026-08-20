@@ -263,10 +263,36 @@ async function run() {
       return { via: "none" };
     }, GEOMETRY);
 
-    await page.waitForTimeout(3000);
-    log("B1 prepare offline", prepared.via !== "none" ? "PASS" : "SKIP", `via ${prepared.via}`);
+    // Wait for the REAL precondition, not a fixed sleep: preparing warms the navigate
+    // shell over the network, and cutting the connection while that fetch is still in
+    // flight (slower CI runners lose this race at 3 s) aborts it — the cold offline
+    // open then lands on the fallback page and B3 fails for a harness reason.
+    const navShellUrl = `${BASE}/navigate/plan-${planId}`;
+    const shellDeadline = Date.now() + 30_000;
+    let shellCached = false;
+    while (Date.now() < shellDeadline) {
+      shellCached = await page.evaluate(async (url) => {
+        try {
+          const cache = await caches.open("hike-navigate-shell");
+          return Boolean(await cache.match(url, { ignoreVary: true }));
+        } catch {
+          return false;
+        }
+      }, navShellUrl);
+      if (shellCached) break;
+      await page.waitForTimeout(500);
+    }
+    log(
+      "B1 prepare offline",
+      prepared.via !== "none" ? "PASS" : "SKIP",
+      `via ${prepared.via}; navigate shell cached=${shellCached}`,
+    );
     const prepareScreenText =
       (await page.locator("body").innerText().catch(() => "")) || "";
+    if (!shellCached) {
+      // Surface the app's own explanation in the CI log before B3 inevitably fails.
+      log("B1a shell warming outcome", "....", prepareScreenText.slice(0, 300).replace(/\s+/g, " "));
+    }
 
     const packCount = await page.evaluate(async () => {
       return await new Promise((resolve) => {
