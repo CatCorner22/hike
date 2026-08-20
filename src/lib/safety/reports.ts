@@ -1,6 +1,7 @@
 import { formatUsng } from "@/lib/safety/usng";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
+import { formatReport, reportField } from "@/lib/safety/report-field";
 
 export function sitrep(input: {
   lat?: number;
@@ -18,20 +19,18 @@ export function sitrep(input: {
       : "UNKNOWN";
   const who = input.profile?.name || "Hiker";
   const party = input.profile?.partySize ?? 1;
-  return [
+  return formatReport([
     "SITREP",
     `DTG: ${formatZulu()}`,
-    `FROM: ${who} / party ${party}`,
-    `LOC: ${loc}`,
-    input.trailName ? `ROUTE: ${input.trailName}` : "",
-    `STATUS: ${input.status ?? "OK — mobile"}`,
-    `ACTION: ${input.action ?? "Staying put / continuing planned route"}`,
-    `NEEDS: ${input.needs ?? "None"}`,
-    input.profile?.medical ? `MEDICAL: ${input.profile.medical}` : "",
-    input.profile?.bloodType ? `BLOOD: ${input.profile.bloodType}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `FROM: ${reportField(who)} / party ${reportField(party)}`,
+    `LOC: ${reportField(loc)}`,
+    input.trailName ? `ROUTE: ${reportField(input.trailName)}` : "",
+    `STATUS: ${reportField(input.status ?? "OK — mobile")}`,
+    `ACTION: ${reportField(input.action ?? "Staying put / continuing planned route")}`,
+    `NEEDS: ${reportField(input.needs ?? "None")}`,
+    input.profile?.medical ? `MEDICAL: ${reportField(input.profile.medical)}` : "",
+    input.profile?.bloodType ? `BLOOD: ${reportField(input.profile.bloodType)}` : "",
+  ]);
 }
 
 export function mistReport(input: {
@@ -42,16 +41,14 @@ export function mistReport(input: {
   lat?: number;
   lng?: number;
 }): string {
-  return [
+  return formatReport([
     "MIST (handoff)",
-    `M — Mechanism: ${input.mechanism ?? "not stated"}`,
-    `I — Injuries: ${input.injuries ?? "not stated"}`,
-    `S — Signs: ${input.signs ?? "alert / breathing not stated"}`,
-    `T — Treatment given: ${input.treatment ?? "none stated"}`,
-    input.lat != null && input.lng != null ? `LOC: ${formatUsng(input.lat, input.lng)}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
+    `M — Mechanism: ${reportField(input.mechanism ?? "not stated")}`,
+    `I — Injuries: ${reportField(input.injuries ?? "not stated")}`,
+    `S — Signs: ${reportField(input.signs ?? "alert / breathing not stated")}`,
+    `T — Treatment given: ${reportField(input.treatment ?? "none stated")}`,
+    input.lat != null && input.lng != null ? `LOC: ${reportField(formatUsng(input.lat, input.lng))}` : "",
+  ]);
 }
 
 export function marchCard(): string[] {
@@ -88,7 +85,7 @@ export function sarFrequencies(): string[] {
 export type ImsafeFlag = "illness" | "meds" | "stress" | "alcohol" | "fatigue" | "emotion";
 
 export function imsafeWarning(flags: ImsafeFlag[]): string | null {
-  if (flags.length === 0) return null;
+  if (!Array.isArray(flags) || flags.length === 0) return null;
   const labels: Record<ImsafeFlag, string> = {
     illness: "illness",
     meds: "medication",
@@ -97,5 +94,6 @@ export function imsafeWarning(flags: ImsafeFlag[]): string | null {
     fatigue: "fatigue",
     emotion: "emotion",
   };
+  if (flags.some((flag) => !Object.hasOwn(labels, flag))) return null;
   return `IMSAFE: ${flags.map((f) => labels[f]).join(", ")} — pick an easier plan or stay put.`;
 }

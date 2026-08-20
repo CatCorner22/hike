@@ -18,13 +18,22 @@ export interface UtmCoord {
   north: boolean;
 }
 
-export function latitudeBand(lat: number): string {
-  if (lat < -80 || lat > 84) return lat >= 84 ? "X" : "C";
+function isValidUtmLatLng(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -80 && lat <= 84 && lng >= -180 && lng <= 180;
+}
+
+export function latitudeBand(lat: number): string | null {
+  if (!Number.isFinite(lat) || lat < -80 || lat > 84) return null;
   const index = Math.min(BANDS.length - 1, Math.floor((lat + 80) / 8));
   return BANDS[index];
 }
 
-export function utmZone(lat: number, lng: number): number {
+export function utmZone(lat: number, lng: number): number | null {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lng < -180 || lng > 180) return null;
+  // +180 is the eastern boundary of zone 60. The conversion formula below
+  // uses its zone-60 central meridian, never the nonexistent zone 61.
+  if (lng === 180) return 60;
   let zone = Math.floor((lng + 180) / 6) + 1;
   if (lat >= 56 && lat < 64 && lng >= 3 && lng < 12) zone = 32;
   if (lat >= 72 && lat < 84) {
@@ -33,11 +42,14 @@ export function utmZone(lat: number, lng: number): number {
     else if (lng >= 21 && lng < 33) zone = 35;
     else if (lng >= 33 && lng < 42) zone = 37;
   }
-  return zone;
+  return zone >= 1 && zone <= 60 ? zone : null;
 }
 
-export function latLngToUtm(lat: number, lng: number): UtmCoord {
+export function latLngToUtm(lat: number, lng: number): UtmCoord | null {
+  if (!isValidUtmLatLng(lat, lng)) return null;
   const zone = utmZone(lat, lng);
+  const band = latitudeBand(lat);
+  if (zone == null || band == null) return null;
   const latRad = (lat * Math.PI) / 180;
   const lngRad = (lng * Math.PI) / 180;
   const lon0 = (((zone - 1) * 6 - 180 + 3) * Math.PI) / 180;
@@ -72,21 +84,24 @@ export function latLngToUtm(lat: number, lng: number): UtmCoord {
 
   return {
     zone,
-    band: latitudeBand(lat),
+    band,
     easting,
     northing,
     north: lat >= 0,
   };
 }
 
-export function formatUtm(lat: number, lng: number): string {
+export function formatUtm(lat: number, lng: number): string | null {
   const u = latLngToUtm(lat, lng);
-  const hemi = u.north ? "N" : "S";
-  return `${u.zone}${hemi} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
+  if (!u) return null;
+  // UTM reports here use the MGRS latitude band, never an ambiguous hemisphere suffix.
+  return `${u.zone}${u.band} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
 }
 
-export function formatUsng(lat: number, lng: number, digits = 4): string {
+export function formatUsng(lat: number, lng: number, digits = 4): string | null {
+  if (!Number.isInteger(digits) || digits < 1 || digits > 5) return null;
   const u = latLngToUtm(lat, lng);
+  if (!u) return null;
   const { col, row } = squareLetters(u);
   const e = Math.floor(u.easting % 100000);
   const n = Math.floor(u.northing % 100000);
@@ -96,7 +111,7 @@ export function formatUsng(lat: number, lng: number, digits = 4): string {
   return `${u.zone}${u.band} ${col}${row} ${eStr} ${nStr}`;
 }
 
-export function formatMgrs10(lat: number, lng: number): string {
+export function formatMgrs10(lat: number, lng: number): string | null {
   return formatUsng(lat, lng, 5);
 }
 
@@ -180,9 +195,10 @@ function northingCandidates(northingMod: number, north: boolean): number[] {
 }
 
 export function parseUsng(
-  text: string,
+  text: string | null | undefined,
   hint?: { lat: number; lng: number },
 ): { lat: number; lng: number } | null {
+  if (typeof text !== "string") return null;
   const compact = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const utm = parseUtmText(compact);
   if (utm) return utm;
@@ -190,6 +206,7 @@ export function parseUsng(
   const match = compact.match(/^(\d{1,2})([C-HJ-NP-X])([A-Z]{2})(\d{2,10})$/);
   if (!match) return null;
   const zone = Number(match[1]);
+  if (zone < 1 || zone > 60) return null;
   const band = match[2];
   const col = match[3][0];
   const row = match[3][1];
@@ -209,6 +226,7 @@ export function parseUsng(
   if (rowIndex < 0) return null;
   const northingMod = ((rowIndex - rowOffset + 20) % 20) * 100000 + Number(nPart);
   const north = band >= "N";
+<<<<<<< HEAD
   const range = bandLatRange(band);
   const hintUtm = hint && isValidHint(hint) ? latLngToUtm(hint.lat, hint.lng) : null;
 
@@ -225,6 +243,24 @@ export function parseUsng(
       .sort((a, b) => a.d - b.d)[0];
     if (hinted && hinted.d < 2 && (!hintUtm || hintUtm.zone === zone)) return hinted.p;
     return null;
+=======
+  const hintUtm = hint ? latLngToUtm(hint.lat, hint.lng) : null;
+  let northing: number;
+  if (hintUtm && hintUtm.zone === zone) {
+    const base = Math.floor(hintUtm.northing / 2_000_000) * 2_000_000;
+    northing = base + northingMod;
+    if (Math.abs(northing - hintUtm.northing) > 1_000_000) {
+      northing += northing < hintUtm.northing ? 2_000_000 : -2_000_000;
+    }
+  } else {
+    // The MGRS latitude band resolves the repeating 2,000 km northing without GPS.
+    const index = BANDS.indexOf(band);
+    const centreLat = band === "X" ? 78 : index * 8 - 76;
+    const target = (north ? centreLat : centreLat) * 110_946 + (north ? 0 : 10_000_000);
+    const period = 2_000_000;
+    const delta = (((northingMod - target) % period) + period) % period;
+    northing = target + (delta >= period / 2 ? delta - period : delta);
+>>>>>>> origin/main
   }
 
   if (inBand.length === 1) return inBand[0];
@@ -240,10 +276,12 @@ function isValidHint(hint: { lat: number; lng: number }) {
 }
 
 export function formatDms(lat: number, lng: number): string {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return "—";
   return `${toDms(lat, "N", "S")} ${toDms(lng, "E", "W")}`;
 }
 
 export function formatDdm(lat: number, lng: number): string {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return "—";
   return `${toDdm(lat, "N", "S")} ${toDdm(lng, "E", "W")}`;
 }
 

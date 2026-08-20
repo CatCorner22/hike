@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npx eslint .
+      - name: Unit and adversarial regression tests
+        run: npx vitest run
+      - name: Production build
+        run: npm run build
+
+  offline-navigation:
+    name: Offline navigation e2e
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        run: npm run build
+      - name: Start production server
+        # The service worker is disabled in development, so offline behaviour
+        # can only be tested against a production build. Both env vars are
+        # required because the server intentionally fails closed without them.
+        env:
+          OWNER_TOKEN_SECRET: ci-only-owner-token-secret
+          ALLOW_LOCAL_STORE_IN_PRODUCTION: "true"
+        run: |
+          npx next start --port 3111 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:3111/; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          exit 1
+      - name: Cold-start offline navigation
+        # Guards the failure mode that matters most: preparing a route at the
+        # trailhead, losing signal, then opening navigation for the first time.
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node e2e/offline-navigation.mjs

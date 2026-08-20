@@ -1,13 +1,14 @@
 import {
   boolean,
   doublePrecision,
-  integer,
+  index,
   jsonb,
   pgEnum,
   pgTable,
   text,
   timestamp,
   uuid,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const campingTypeEnum = pgEnum("camping_type", [
@@ -32,7 +33,7 @@ export const crowdLevelEnum = pgEnum("crowd_level", [
 
 export const trails = pgTable("trails", {
   id: uuid("id").primaryKey().defaultRandom(),
-  osmId: text("osm_id").notNull().unique(),
+  osmId: text("osm_id").notNull(),
   osmType: text("osm_type").notNull(),
   name: text("name").notNull(),
   geometry: jsonb("geometry").notNull(),
@@ -46,7 +47,9 @@ export const trails = pgTable("trails", {
   bbox: jsonb("bbox"),
   tags: jsonb("tags"),
   cachedAt: timestamp("cached_at").defaultNow().notNull(),
-});
+}, (table) => [
+  uniqueIndex("trails_osm_id_osm_type_unique").on(table.osmId, table.osmType),
+]);
 
 export const trailResearch = pgTable("trail_research", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -59,6 +62,10 @@ export const trailResearch = pgTable("trail_research", {
 
 export const hikePlans = pgTable("hike_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // Nullable so the migration does not have to invent an owner for pre-existing rows.
+  // The API treats a NULL owner as belonging to nobody, so legacy rows are invisible
+  // until they are claimed — see drizzle/0002_owner_scoping.sql.
+  ownerId: text("owner_id"),
   name: text("name").notNull(),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   plannedDate: timestamp("planned_date"),
@@ -68,10 +75,11 @@ export const hikePlans = pgTable("hike_plans", {
   customGeometry: jsonb("custom_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => [index("hike_plans_owner_id_idx").on(table.ownerId)]);
 
 export const activities = pgTable("activities", {
   id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id"),
   planId: uuid("plan_id").references(() => hikePlans.id, { onDelete: "set null" }),
   trailId: uuid("trail_id").references(() => trails.id, { onDelete: "set null" }),
   name: text("name"),
@@ -81,7 +89,7 @@ export const activities = pgTable("activities", {
   notes: text("notes"),
   trackGeometry: jsonb("track_geometry"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => [index("activities_owner_id_idx").on(table.ownerId)]);
 
 export const activityPoints = pgTable("activity_points", {
   id: uuid("id").primaryKey().defaultRandom(),
