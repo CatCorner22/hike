@@ -31,7 +31,10 @@ describe("tactics", () => {
   it("points at the pole it claims, all day, in both hemispheres", () => {
     for (const hemisphere of ["north", "south"] as const) {
       for (const hour of [6.5, 8, 9, 10.5, 12, 13.5, 15, 16, 17.5]) {
-        const { clockAzimuthFrom12, toward } = watchMethodHeading(hour, hemisphere);
+        const heading = watchMethodHeading(hour, hemisphere);
+        // Every hour in this sweep is valid, so a null here is itself a failure.
+        expect(heading).not.toBeNull();
+        const { clockAzimuthFrom12, toward } = heading!;
         const hourOn12 = (hour % 12) * 30;
 
         // Sun azimuth (true, clockwise from north) at this solar hour.

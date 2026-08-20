@@ -1,4 +1,9 @@
-import { remainingElevationGain, type LatLng, type TrailProgress } from "@/lib/geo/navigation";
+import {
+  remainingElevationGain,
+  type LatLng,
+  type TrailProgress,
+  type TravelDirection,
+} from "@/lib/geo/navigation";
 import type { RoutePack } from "@/lib/offline/route-pack";
 
 interface Segment {
@@ -107,7 +112,7 @@ function validPoint(point: LatLng): boolean {
 }
 
 function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): TrailProgress {
-  return { nearest: point, offsetMeters: 0, traveledMeters: 0, remainingMeters: totalMeters, totalMeters, remainingElevationMeters: 0, bearingToTrail: 0, valid };
+  return { nearest: point, offsetMeters: 0, traveledMeters: 0, remainingMeters: totalMeters, totalMeters, remainingDirection: "unknown", remainingElevationMeters: 0, bearingToTrail: 0, valid };
 }
 
 /**
@@ -115,7 +120,11 @@ function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): Trai
  * from that window (or the route branches), it falls back to all segments once
  * rather than returning a potentially wrong nearest route segment.
  */
-export function progressWithRouteCache(cache: RouteProgressCache, point: LatLng): TrailProgress {
+export function progressWithRouteCache(
+  cache: RouteProgressCache,
+  point: LatLng,
+  direction: TravelDirection = "forward",
+): TrailProgress {
   if (!validPoint(point) || cache.segments.length === 0) return emptyProgress(validPoint(point) ? point : { lat: 0, lng: 0 }, cache.totalMeters, false);
   const search = (start: number, end: number) => {
     let best: { index: number; distanceMeters: number; fraction: number; nearest: LatLng } | null = null;
@@ -147,13 +156,30 @@ export function progressWithRouteCache(cache: RouteProgressCache, point: LatLng)
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
+  // Mirror progressAlongTrail's direction handling exactly. Walking against the
+  // stored direction, "total - traveled" counts UP as you approach your
+  // destination, which also silenced the turnaround/daylight warning at the
+  // start of a long walk. With no direction established, the nearer end is the
+  // honest answer.
+  const toEnd = Math.max(cache.totalMeters - traveledMeters, 0);
+  const toStart = Math.max(traveledMeters, 0);
+  const remainingMeters =
+    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
+  const resolvedDirection: TravelDirection =
+    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+
   return {
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
-    remainingMeters: Math.max(cache.totalMeters - traveledMeters, 0),
+    remainingMeters,
     totalMeters: cache.totalMeters,
-    remainingElevationMeters: remainingElevationGain(cache.elevationProfile, traveledMeters),
+    remainingDirection: direction,
+    remainingElevationMeters: remainingElevationGain(
+      cache.elevationProfile,
+      traveledMeters,
+      resolvedDirection,
+    ),
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
   };

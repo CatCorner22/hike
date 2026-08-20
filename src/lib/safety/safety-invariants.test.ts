@@ -10,6 +10,16 @@ import { reportField } from "./report-field";
 import { fiveLineHeloBrief, saluteReport } from "./sar-advanced";
 import { casualtyCard } from "./tccc";
 import { litterEvacTime } from "./sar-advanced";
+
+/**
+ * litterEvacTime returns prose, so "refused" means it carries no time estimate.
+ * A fictional "~0 min" from garbage input is the failure this guards.
+ */
+function refusesToEstimate(message: string | null): boolean {
+  if (message == null) return true;
+  return !/~\s*[\d.]+\s*(min|h)\b/.test(message);
+}
+
 import { boilTimeMinutes, chemicalDoseWaitMinutes, hydrationPlan, sourceRisk, sweatRateLitersPerHour } from "./water";
 
 const hostile = "\r\nL1 LOCATION: FORGED\0\u202e\u2066 " + "X".repeat(20_000);
@@ -95,7 +105,7 @@ describe("permanent safety invariants", () => {
       expect(avalancheTerrainRisk(value)).toBeNull();
       expect(expectedSpo2(value)).toBeNull();
       expect(boilingPointC(value)).toBeNull();
-      expect(litterEvacTime(value, 2)).toBeNull();
+      expect(refusesToEstimate(litterEvacTime(value, 2))).toBe(true);
     }
     expect(boilTimeMinutes(-501)).toBeNull();
     expect(boilTimeMinutes(9001)).toBeNull();
@@ -108,7 +118,7 @@ describe("permanent safety invariants", () => {
     expect(radioHorizonKm(301)).toBeNull();
     expect(lineOfSightRangeKm(2, 301)).toBeNull();
     expect(ascentRateAdvice({ currentElevationM: 9001, previousNightElevationM: 100 })).toBeNull();
-    expect(litterEvacTime(1, 1)).toBeNull();
+    expect(refusesToEstimate(litterEvacTime(1, 1))).toBe(true);
   });
 
   it("never returns an off-trail all-clear for invalid position data", () => {
