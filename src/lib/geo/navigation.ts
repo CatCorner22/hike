@@ -32,14 +32,17 @@ export interface TrailProgress {
   valid: boolean;
 }
 
+export interface SnapHint {
+  traveledMeters: number;
+}
+
+/** First usable segment only — never flatten MultiLineString (that invents connectors). */
 export function toLineString(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): GeoJSON.LineString {
   if (geometry.type === "LineString") return geometry;
-  return {
-    type: "LineString",
-    coordinates: geometry.coordinates.flat(),
-  };
+  const first = geometry.coordinates.find((line) => line.length >= 2) ?? [];
+  return { type: "LineString", coordinates: first };
 }
 
 export function trailLengthMeters(
@@ -53,6 +56,49 @@ export function trailLengthMeters(
     }, 0);
   }
   return turf.length(turf.feature(geometry), { units: "meters" });
+}
+
+function isTravelDirection(value: unknown): value is TravelDirection {
+  return value === "forward" || value === "backward" || value === "unknown";
+}
+
+function resolveHintAndDirection(
+  hintOrDirection?: SnapHint | TravelDirection | null,
+  maybeDirection?: TravelDirection,
+): { hint: SnapHint | null; direction: TravelDirection } {
+  if (isTravelDirection(hintOrDirection)) {
+    return { hint: null, direction: hintOrDirection };
+  }
+  const hint =
+    hintOrDirection && typeof hintOrDirection === "object" && Number.isFinite(hintOrDirection.traveledMeters)
+      ? hintOrDirection
+      : null;
+  return { hint, direction: isTravelDirection(maybeDirection) ? maybeDirection : "forward" };
+}
+
+/**
+ * Distance still to walk, given how far along the stored line the hiker is and which way
+ * they are travelling. Walking against the stored direction, "total - traveled" counts
+ * *up* as you approach your destination — it read 0.00 km at the trailhead and 5.28 km at
+ * the far end, and fed turnaroundWarning, silencing the daylight warning at the start of
+ * a long walk. With no direction established yet, the nearer end is the honest answer.
+ *
+ * Every code path that turns traveled metres into a "remaining" figure must go through
+ * this — the fast progress cache re-derived it independently once and re-introduced the
+ * backwards readout.
+ */
+export function resolveRemaining(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+): { remainingMeters: number; resolvedDirection: TravelDirection } {
+  const toEnd = Math.max(totalMeters - traveledMeters, 0);
+  const toStart = Math.max(traveledMeters, 0);
+  const remainingMeters =
+    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
+  const resolvedDirection: TravelDirection =
+    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  return { remainingMeters, resolvedDirection };
 }
 
 function progressOnSegment(
@@ -70,22 +116,17 @@ function progressOnSegment(
     lng: snapped.geometry.coordinates[0],
     lat: snapped.geometry.coordinates[1],
   };
-  const offsetMeters = snapped.properties.dist ?? 0;
+  const offsetMeters = snapped.properties.dist ?? Number.NaN;
   const segmentTraveled = snapped.properties.location ?? 0;
   const traveledMeters = Math.min(
     traveledOffsetMeters + segmentTraveled,
     totalMeters,
   );
-  const toEnd = Math.max(totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  // Walking against the stored direction, "total - traveled" counts *up* as you approach
-  // your destination: it read 0.00 km at the trailhead and 5.28 km at the far end. That
-  // also fed turnaroundWarning, so the daylight warning stayed silent at the start of a
-  // long walk. With no direction established yet, the nearer end is the honest answer.
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    totalMeters,
+    direction,
+  );
 
   return {
     nearest,
@@ -99,7 +140,7 @@ function progressOnSegment(
       traveledMeters,
       resolvedDirection,
     ),
-// turf.bearing is -180..180; navigation UI consumes a compass heading.
+    // turf.bearing is -180..180; navigation UI consumes a compass heading.
     bearingToTrail: normalizeHeading(
       turf.bearing(pt, turf.point([nearest.lng, nearest.lat])),
     ) ?? 0,
@@ -107,50 +148,90 @@ function progressOnSegment(
   };
 }
 
+function pickContinuous(candidates: TrailProgress[], hint?: SnapHint | null): TrailProgress {
+  const ranked = [...candidates].sort((a, b) => a.offsetMeters - b.offsetMeters);
+  const best = ranked[0];
+  if (!hint || ranked.length === 1) return stabilizeLoop(best, hint);
+  const near = ranked.filter((c) => c.offsetMeters <= best.offsetMeters + 25);
+  const forward = near.filter((c) => hint.traveledMeters - c.traveledMeters < 150);
+  const pool = forward.length ? forward : near;
+  pool.sort(
+    (a, b) =>
+      Math.abs(a.traveledMeters - hint.traveledMeters) -
+      Math.abs(b.traveledMeters - hint.traveledMeters),
+  );
+  return stabilizeLoop(pool[0], hint);
+}
+
+/** Keep a loop from snapping remaining-m back to the start vertex. */
+export function stabilizeLoop(progress: TrailProgress, hint?: SnapHint | null): TrailProgress {
+  if (!hint || !Number.isFinite(progress.traveledMeters)) return progress;
+  const total = progress.totalMeters;
+  if (total < 200) return progress;
+  const jumpedToStart =
+    hint.traveledMeters > total - 120 && progress.traveledMeters < 80;
+  if (!jumpedToStart) return progress;
+  const direction = progress.remainingDirection ?? "forward";
+  const { remainingMeters } = resolveRemaining(total, total, direction);
+  return {
+    ...progress,
+    traveledMeters: total,
+    remainingMeters,
+  };
+}
+
+/**
+ * Snap a point onto the route.
+ *
+ * The 4th argument is either a continuity `SnapHint` (Phase 3) or a `TravelDirection`
+ * (remaining-m toward the end you are walking). Pass both as `(…, hint, direction)`
+ * when you have them.
+ */
 export function progressAlongTrail(
   point: LatLng,
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   elevationProfile: Array<{ distanceMeters: number; elevation: number }> = [],
-  direction: TravelDirection = "forward",
+  hintOrDirection?: SnapHint | TravelDirection | null,
+  maybeDirection?: TravelDirection,
 ): TrailProgress {
+  const { hint, direction } = resolveHintAndDirection(hintOrDirection, maybeDirection);
   if (!isValidLatLng(point) || !isValidGeometry(geometry)) {
     return emptyProgress(isValidLatLng(point) ? point : { lat: 0, lng: 0 }, 0, false);
   }
   const totalMeters = trailLengthMeters(geometry);
 
   if (geometry.type === "MultiLineString") {
-    let best: TrailProgress | null = null;
+    const candidates: TrailProgress[] = [];
     let cumulative = 0;
 
     for (const coords of geometry.coordinates) {
       if (coords.length < 2 || !coords.every(isFinitePosition)) continue;
-      const progress = progressOnSegment(
-        point,
-        coords,
-        elevationProfile,
-        cumulative,
-        totalMeters,
-        direction,
+      candidates.push(
+        progressOnSegment(
+          point,
+          coords,
+          elevationProfile,
+          cumulative,
+          totalMeters,
+          direction,
+        ),
       );
-      if (!best || progress.offsetMeters < best.offsetMeters) {
-        best = progress;
-      }
       cumulative += turf.length(turf.lineString(coords), { units: "meters" });
     }
 
-    if (best) return best;
+    if (candidates.length) return pickContinuous(candidates, hint);
+    return emptyProgress(point, totalMeters);
   }
 
-  const coords =
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
-
+  const coords = geometry.coordinates;
   if (coords.length < 2) {
     return emptyProgress(point, totalMeters);
   }
 
-  return progressOnSegment(point, coords, elevationProfile, 0, totalMeters, direction);
+  return stabilizeLoop(
+    progressOnSegment(point, coords, elevationProfile, 0, totalMeters, direction),
+    hint,
+  );
 }
 
 /**
@@ -183,13 +264,13 @@ export function travelDirectionAlong(
 function emptyProgress(point: LatLng, totalMeters: number, valid = true): TrailProgress {
   return {
     nearest: point,
-    offsetMeters: 0,
+    offsetMeters: Number.NaN,
     traveledMeters: 0,
     remainingMeters: Math.max(totalMeters, 0),
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
-    bearingToTrail: 0,
+    bearingToTrail: Number.NaN,
     valid,
   };
 }
@@ -277,11 +358,17 @@ export function safeBbox(
 ): [number, number, number, number] | null {
   if (!isValidGeometry(geometry) || (extra && !isValidLatLng(extra))) return null;
   if (!extra) return bboxFromGeometry(geometry, 0.004);
-  const coords = geometry.type === "LineString" ? geometry.coordinates : geometry.coordinates.flat();
-  const longitudes = [...coords.map(([lng]) => lng), extra.lng];
+  const lines = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+  const longitudes: number[] = [extra.lng];
+  const latitudes: number[] = [extra.lat];
+  for (const line of lines) {
+    for (const [lng, lat] of line) {
+      longitudes.push(lng);
+      latitudes.push(lat);
+    }
+  }
   const interval = minimumLongitudeInterval(longitudes);
   if (!interval) return null;
-  const latitudes = [...coords.map(([, lat]) => lat), extra.lat];
   return [
     interval.minLng - 0.004,
     Math.min(...latitudes) - 0.004,

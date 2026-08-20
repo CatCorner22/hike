@@ -41,6 +41,7 @@ import {
   copyEmergencyInfo,
   emergencyMessage,
   formatCoords,
+  type PositionSource,
 } from "@/lib/safety/emergency";
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
@@ -77,6 +78,8 @@ import {
   type PaceTerrain,
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
+import { buildPaperBackup } from "@/lib/safety/paper-backup";
+import type { PackWeather } from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -202,6 +205,8 @@ interface SafetyPanelProps {
   gpsDenied?: boolean;
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
+  onDeniedPaceLen?: (paceLen: number) => void;
+  positionSource?: PositionSource;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
   remainingGainM?: number;
@@ -211,6 +216,7 @@ interface SafetyPanelProps {
   onCommsAttempt?: () => void;
   lastCommsAt?: number | null;
   onCheckinLogged?: () => void;
+  packWeather?: PackWeather | null;
 }
 
 export function SafetyPanel({
@@ -241,6 +247,8 @@ export function SafetyPanel({
   gpsDenied = false,
   onToggleGpsDenied,
   onDeniedPaces,
+  onDeniedPaceLen,
+  positionSource,
   geometry,
   remainingMeters,
   remainingGainM,
@@ -250,6 +258,7 @@ export function SafetyPanel({
   onCommsAttempt,
   lastCommsAt = null,
   onCheckinLogged,
+  packWeather,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -299,9 +308,11 @@ export function SafetyPanel({
   const [tsdSpeed, setTsdSpeed] = useState("4");
   const [tsdMin, setTsdMin] = useState("");
   const [flashSec, setFlashSec] = useState("30");
-  const [tempC, setTempC] = useState("5");
-  const [windKph, setWindKph] = useState("20");
-  const [rh, setRh] = useState("40");
+  const [tempC, setTempC] = useState(packWeather?.tempC != null ? String(packWeather.tempC) : "5");
+  const [windKph, setWindKph] = useState(
+    packWeather?.windKph != null ? String(packWeather.windKph) : "20",
+  );
+  const [rh, setRh] = useState(packWeather?.rhPct != null ? String(packWeather.rhPct) : "40");
   const [waterL, setWaterL] = useState("2");
   const [injured, setInjured] = useState("0");
   const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
@@ -363,6 +374,15 @@ export function SafetyPanel({
   }, [packId]);
 
   useEffect(() => {
+    if (!packWeather) return;
+    queueMicrotask(() => {
+      if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
+      if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
+      if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
+    });
+  }, [packWeather]);
+
+  useEffect(() => {
     const tick = () => {
       const last = checkins[0]?.recordedAt ?? null;
       setCheckinLabel(checkinStatus(last, checkinSettings)?.label ?? null);
@@ -404,8 +424,9 @@ export function SafetyPanel({
         stale,
         recordedAt,
         profile,
+        positionSource,
       }),
-    [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile],
+    [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile, positionSource],
   );
 
   async function handleCopy() {
@@ -458,6 +479,7 @@ export function SafetyPanel({
 
   const moon = useMemo(() => moonPhase(), []);
   const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
+  const declination = lat != null && lng != null ? magneticDeclination(lat, lng) : null;
   const imsafeNote = imsafeWarning(imsafe);
   // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
   // happened to rank first — so "finish with a headlamp" read as darkness at midday,
@@ -847,6 +869,7 @@ export function SafetyPanel({
                   accuracyM,
                   stale,
                   recordedAt,
+                  positionSource,
                   offTrailM,
                   returnAt: returnResolution?.instant.toISOString() ?? null,
                   checkins,
@@ -865,6 +888,27 @@ export function SafetyPanel({
             >
               <Download className="mr-2 size-4" />
               {dossierStatus ?? "Safety dossier"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!geometry}
+              onClick={async () => {
+                if (!geometry) return;
+                const text = buildPaperBackup({
+                  trailName,
+                  geometry,
+                  profile,
+                  returnAt: returnLocal ? new Date(returnLocal).toISOString() : null,
+                  checkins,
+                  packAge: packWeather?.cachedAt,
+                });
+                const ok = await copyEmergencyInfo(text);
+                if (!ok) downloadTextFile(`${safeFilename(trailName)}-paper.txt`, text, "text/plain");
+                setDossierStatus(ok ? "Paper backup copied" : "Paper backup downloaded");
+                window.setTimeout(() => setDossierStatus(null), 2500);
+              }}
+            >
+              Paper backup
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -1078,7 +1122,15 @@ export function SafetyPanel({
               </div>
               <div>
                 <Label htmlFor="pace-len">Paces / 100 m</Label>
-                <Input id="pace-len" value={paceLen} onChange={(e) => setPaceLen(e.target.value)} />
+                <Input
+                  id="pace-len"
+                  value={paceLen}
+                  onChange={(e) => {
+                    setPaceLen(e.target.value);
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > 0) onDeniedPaceLen?.(n);
+                  }}
+                />
               </div>
             </div>
             <div>
@@ -1122,11 +1174,15 @@ export function SafetyPanel({
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Resection / offset / box / mils
             </p>
+            <p className="text-xs text-muted-foreground">
+              Resection: bearing FROM you TO each known point. Intersection: bearing FROM each
+              observer TO the unknown.
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <Input value={gridA} placeholder="Known A grid" onChange={(e) => setGridA(e.target.value)} />
-              <Input value={brgA} placeholder="Bearing to A" onChange={(e) => setBrgA(e.target.value)} />
+              <Input value={brgA} placeholder="Bearing FROM observer A" onChange={(e) => setBrgA(e.target.value)} />
               <Input value={gridB} placeholder="Known B grid" onChange={(e) => setGridB(e.target.value)} />
-              <Input value={brgB} placeholder="Bearing to B" onChange={(e) => setBrgB(e.target.value)} />
+              <Input value={brgB} placeholder="Bearing FROM observer B" onChange={(e) => setBrgB(e.target.value)} />
             </div>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input
@@ -1136,6 +1192,11 @@ export function SafetyPanel({
               />
               Bearings are magnetic
             </label>
+            {bearingsMag && declination == null && (
+              <p className="text-xs text-destructive">
+                Magnetic unavailable here — enter true bearings. Do not treat compass as already converted.
+              </p>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -1151,12 +1212,13 @@ export function SafetyPanel({
                   setResectInfo("Bearings must be numbers.");
                   return;
                 }
-                if (bearingsMag && lat != null && lng != null) {
-                  const dec = magneticDeclination(lat, lng);
-                  if (dec != null) {
-                    azA = toTrueBearing(azA, dec);
-                    azB = toTrueBearing(azB, dec);
+                if (bearingsMag) {
+                  if (declination == null) {
+                    setResectInfo("Magnetic unavailable here — enter true bearings or uncheck magnetic.");
+                    return;
                   }
+                  azA = toTrueBearing(azA, declination);
+                  azB = toTrueBearing(azB, declination);
                 }
                 const fix = resection(a, azA, b, azB);
                 if (!fix) {
@@ -1173,7 +1235,7 @@ export function SafetyPanel({
             </Button>
             <div className="grid grid-cols-2 gap-2">
               <Input value={gridC} placeholder="Known C (3-pt)" onChange={(e) => setGridC(e.target.value)} />
-              <Input value={brgC} placeholder="Bearing to C" onChange={(e) => setBrgC(e.target.value)} />
+              <Input value={brgC} placeholder="Bearing FROM observer C" onChange={(e) => setBrgC(e.target.value)} />
             </div>
             <Button
               variant="outline"
@@ -1186,11 +1248,11 @@ export function SafetyPanel({
                   return;
                 }
                 const toTrue = (raw: string) => {
-                  let az = Number(raw);
+                  const az = Number(raw);
                   if (!Number.isFinite(az)) return null;
-                  if (bearingsMag && lat != null && lng != null) {
-                    const dec = magneticDeclination(lat, lng);
-                    if (dec != null) az = toTrueBearing(az, dec);
+                  if (bearingsMag) {
+                    if (declination == null) return null;
+                    return toTrueBearing(az, declination);
                   }
                   return az;
                 };
@@ -1198,7 +1260,11 @@ export function SafetyPanel({
                 const azB = toTrue(brgB);
                 const azC = toTrue(brgC);
                 if (azA == null || azB == null || azC == null) {
-                  setResectInfo("All three bearings must be numbers.");
+                  setResectInfo(
+                    bearingsMag && declination == null
+                      ? "Magnetic unavailable here — enter true bearings or uncheck magnetic."
+                      : "All three bearings must be numbers.",
+                  );
                   return;
                 }
                 const fix = resection3([
@@ -1233,12 +1299,13 @@ export function SafetyPanel({
                   setResectInfo("Bearings must be numbers.");
                   return;
                 }
-                if (bearingsMag && lat != null && lng != null) {
-                  const dec = magneticDeclination(lat, lng);
-                  if (dec != null) {
-                    azA = toTrueBearing(azA, dec);
-                    azB = toTrueBearing(azB, dec);
+                if (bearingsMag) {
+                  if (declination == null) {
+                    setResectInfo("Magnetic unavailable here — enter true bearings or uncheck magnetic.");
+                    return;
                   }
+                  azA = toTrueBearing(azA, declination);
+                  azB = toTrueBearing(azB, declination);
                 }
                 const hit = intersection(a, azA, b, azB);
                 if (!hit) {
@@ -1412,6 +1479,12 @@ export function SafetyPanel({
             >
               Copy route card
             </Button>
+            {packWeather && (
+              <p className="text-xs text-muted-foreground col-span-full">
+                Using pack-time snapshot ({packWeather.source}
+                {packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <Input value={tempC} placeholder="°C" onChange={(e) => setTempC(e.target.value)} />
               <Input value={windKph} placeholder="wind km/h" onChange={(e) => setWindKph(e.target.value)} />
@@ -1516,6 +1589,7 @@ export function SafetyPanel({
             </label>
             {remainingMeters != null && remainingMeters > 0 && (() => {
               const litter = litterEvacAdvice(remainingMeters, profile.partySize);
+              if (!litter) return null;
               return (
                 <p
                   className={

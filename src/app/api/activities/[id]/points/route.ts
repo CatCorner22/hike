@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { and, eq, gt, or } from "drizzle-orm";
 import { z } from "zod";
+import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
@@ -47,6 +48,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     }
     if (hasDatabase()) {
       const db = getDb();
+      const existing = await db.query.activityPoints.findMany({
+        where: eq(activityPoints.activityId, id),
+        columns: { id: true },
+      });
+      if (existing.length + points.length > MAX_ACTIVITY_POINTS) {
+        return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+      }
       const saved = await db.insert(activityPoints).values(points.map((point) => ({
         activityId: id,
         lat: point.lat,
@@ -57,6 +65,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json("points" in body ? { points: saved } : saved[0]);
     }
 
+    const existing = await listActivityPoints(id);
+    if (existing.length + points.length > MAX_ACTIVITY_POINTS) {
+      return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+    }
     const saved = await Promise.all(points.map((point) => addActivityPoint({
       activityId: id,
       lat: point.lat,

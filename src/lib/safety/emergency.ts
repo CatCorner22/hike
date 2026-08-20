@@ -10,6 +10,8 @@ export function formatCoords(lat: number, lng: number, accuracyM?: number): stri
   return base;
 }
 
+export type PositionSource = "gps" | "lastKnown" | "deadReckon";
+
 export function emergencyMessage(input: {
   lat?: number;
   lng?: number;
@@ -20,10 +22,17 @@ export function emergencyMessage(input: {
   recordedAt?: number;
   profile?: IceProfile | null;
   partyNote?: string;
+  positionSource?: PositionSource;
 }): string {
-  const lines = ["HIKING EMERGENCY LOCATION"];
+  const source: PositionSource =
+    input.positionSource ?? (input.stale ? "lastKnown" : "gps");
+  const lines = ["SOS / EMERGENCY LOCATION"];
   if (input.lat != null && input.lng != null) {
-    if (input.stale) lines.push("LAST KNOWN POSITION — GPS not live");
+    if (source === "deadReckon") {
+      lines.push("DEAD RECKON POSITION — GPS denied; pace/heading estimate");
+    } else if (source === "lastKnown" || input.stale) {
+      lines.push("LAST KNOWN POSITION — GPS not live");
+    }
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
     lines.push(`DDM: ${formatDdm(input.lat, input.lng)}`);
     const usng = formatUsng(input.lat, input.lng);
@@ -45,8 +54,12 @@ export function emergencyMessage(input: {
     lines.push("No GPS fix available on this device.");
   }
   if (input.trailName) lines.push(`Route: ${input.trailName}`);
-  if (input.offTrailM != null && input.offTrailM > 20 && !input.stale) {
-    lines.push(`Approx. ${Math.round(input.offTrailM)} m off marked route`);
+  if (input.offTrailM != null && input.offTrailM > 20) {
+    lines.push(
+      input.stale
+        ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
+        : `Approx. ${Math.round(input.offTrailM)} m off marked route`,
+    );
   }
   const profile = input.profile;
   if (profile) {
@@ -59,7 +72,17 @@ export function emergencyMessage(input: {
     }
   }
   if (input.partyNote) lines.push(input.partyNote);
-  lines.push("Sent from Hike app (offline-capable GPS).");
+  if (input.lat != null && input.lng != null) {
+    if (source === "deadReckon") {
+      lines.push("Sent from Hike app — dead-reckon estimate, not a live GPS fix.");
+    } else if (source === "lastKnown" || input.stale) {
+      lines.push("Sent from Hike app — last-known coordinates, GPS not live.");
+    } else {
+      lines.push("Sent from Hike app (offline-capable GPS).");
+    }
+  } else {
+    lines.push("Sent from Hike app — no GPS fix on this device.");
+  }
   return lines.join("\n");
 }
 

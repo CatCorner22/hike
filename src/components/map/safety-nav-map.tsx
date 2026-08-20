@@ -20,6 +20,8 @@ interface SafetyNavMapProps {
   search?: GeoJSON.LineString | null;
   showGrid?: boolean;
   nightMode?: "off" | "red" | "nvg";
+  gpsDenied?: boolean;
+  uncertaintyM?: number;
   /**
    * Pixels of vertical space reserved at the top of the canvas for a page-level
    * header overlay. Orientation labels are drawn below this so they stay legible
@@ -61,6 +63,8 @@ export function SafetyNavMap({
   search = null,
   showGrid = true,
   nightMode = "off",
+  gpsDenied = false,
+  uncertaintyM,
   topInsetPx = 0,
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -287,12 +291,23 @@ export function SafetyNavMap({
 
       if (user) {
         const p = toPx(user.lng, user.lat);
-        if (user.accuracy && user.accuracy > 0) {
-          // Same scale as everything else, so the ring is the real accuracy radius.
-          ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
+        const ringM = gpsDenied ? uncertaintyM ?? user.accuracy : user.accuracy;
+        if (ringM && ringM > 0) {
+          // Same scale as everything else, so the ring is the real accuracy / DR radius.
+          const r = Math.min(ringM * pxPerMetre, gpsDenied ? 110 : 80);
+          ctx.fillStyle = gpsDenied ? "rgba(249, 115, 22, 0.16)" : "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.min(user.accuracy * pxPerMetre, 80), 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
           ctx.fill();
+          if (gpsDenied) {
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = "#fb923c";
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
         }
         ctx.fillStyle = "#2563eb";
         ctx.strokeStyle = "#ffffff";
@@ -333,7 +348,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bbox, endpoints, follow, ghost, goto, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, user, waypoints]);
+  }, [backtrack, bbox, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

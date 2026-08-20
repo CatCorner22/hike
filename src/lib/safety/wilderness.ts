@@ -52,10 +52,13 @@ export function amsAssessment(input: {
   const score = exposure + symptomScore;
 
   let level: AmsLevel = "none";
+  // Exposure is not illness, and AMS is not diagnosed below a real altitude floor.
+  // Fatigue at 1500 m is just fatigue; ataxia remains an emergency at any elevation.
+  const highEnough = alt >= 2500 || (alt >= 2000 && gain >= 300);
   if (input.symptoms.length > 0) {
     if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-    else if (score >= 5) level = "moderate";
-    else level = "mild";
+    else if (highEnough && score >= 5) level = "moderate";
+    else if (highEnough) level = "mild";
   }
 
   const actions: string[] = [];
@@ -98,6 +101,8 @@ export function amsAssessment(input: {
  */
 export function avalancheTerrainWarning(input: {
   slopePct?: number | null;
+  /** Ignored. Heading is not aspect; do not treat north as leeward. */
+  aspectDeg?: number;
   month?: number;
   snowOnGround?: boolean;
 }): string | null {

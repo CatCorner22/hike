@@ -29,6 +29,16 @@ function ownMarkedDocument(response: Response, html: string): Response | null {
 
 /** Warm only an app-shaped, explicitly marked navigation document. */
 export async function warmNavigateShell(navId: string): Promise<WarmNavigateShellResult> {
+  const first = await warmNavigateShellOnce(navId);
+  if (first.ok) return first;
+  // One retry: this runs at the trailhead on the last bars of signal, where a single
+  // dropped fetch is common and a second attempt usually lands. A still-failing result
+  // is reported to the user, never swallowed.
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  return warmNavigateShellOnce(navId);
+}
+
+async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellResult> {
   const url = navigateUrl(navId);
   if (!url || typeof caches === "undefined") return { ok: false, cachedAssets: 0, error: "Offline cache is unavailable in this browser." };
   if (!navigator.onLine) return { ok: false, cachedAssets: 0, error: "Reconnect to cache the navigation screen." };

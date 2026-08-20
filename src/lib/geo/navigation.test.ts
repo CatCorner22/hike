@@ -59,6 +59,29 @@ describe("progressAlongTrail", () => {
     expect(onSecond.offsetMeters).toBeLessThan(5);
     expect(onSecond.traveledMeters).toBeGreaterThan(multiLine.coordinates[0].length);
   });
+
+  it("keeps remaining-m at the finish of a loop instead of snapping to the start", () => {
+    const loop: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: [
+        [-119.0, 37.0],
+        [-119.0, 37.004],
+        [-118.996, 37.004],
+        [-118.996, 37.0],
+        [-119.0, 37.0],
+      ],
+    };
+    const nearEnd = progressAlongTrail({ lat: 37.0002, lng: -119.001 }, loop);
+    expect(nearEnd.totalMeters).toBeGreaterThan(200);
+    const kept = progressAlongTrail(
+      { lat: 37.0002, lng: -119.001 },
+      loop,
+      [],
+      { traveledMeters: nearEnd.totalMeters - 40 },
+    );
+    expect(kept.remainingMeters).toBe(0);
+    expect(kept.traveledMeters).toBe(kept.totalMeters);
+  });
 });
 
 describe("remainingElevationGain", () => {
@@ -126,7 +149,7 @@ describe("progressAlongTrail empty geometry", () => {
     };
     const progress = progressAlongTrail({ lat: 37, lng: -119 }, empty);
     expect(progress.traveledMeters).toBe(0);
-    expect(progress.offsetMeters).toBe(0);
+    expect(Number.isFinite(progress.offsetMeters)).toBe(false);
   });
 });
 

@@ -167,6 +167,10 @@ function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): numbe
   return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
+function wayPositions(way: OverpassElement): GeoJSON.Position[] {
+  return (way.geometry || []).map((p) => [p.lon, p.lat] as GeoJSON.Position);
+}
+
 function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
   return endpointDistanceMeters(a, b) <= 25;
 }
@@ -256,11 +260,35 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
 }
 
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  const lines = elements
-    .filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
-    .map((way) => way.geometry!.map((point) => [point.lon, point.lat] as GeoJSON.Position));
-  if (!lines.length) return null;
-  const chains = stitchRelationWays(lines);
+  const waysById = new Map(
+    elements.filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
+      .map((way) => [way.id, way]),
+  );
+  const relation = elements.find((element) => element.type === "relation");
+  const members = relation?.members?.filter((member) => member.type === "way") ?? [];
+  const ordered: GeoJSON.Position[][] = [];
+  const used = new Set<number>();
+
+  if (members.length > 0) {
+    for (const member of members) {
+      const way = waysById.get(member.ref);
+      if (!way) continue;
+      let coords = wayPositions(way);
+      if (coords.length < 2) continue;
+      if (member.role === "backward") coords = [...coords].reverse();
+      ordered.push(coords);
+      used.add(way.id);
+    }
+  }
+
+  for (const way of waysById.values()) {
+    if (used.has(way.id)) continue;
+    const coords = wayPositions(way);
+    if (coords.length >= 2) ordered.push(coords);
+  }
+
+  if (!ordered.length) return null;
+  const chains = stitchRelationWays(ordered);
   return chains.length === 1
     ? { type: "LineString", coordinates: chains[0] }
     : { type: "MultiLineString", coordinates: chains };

@@ -254,6 +254,18 @@ export function intersection(
   return { point: { lat, lng }, cutDeg, warning };
 }
 
+/** Growing error ring for GPS-denied dead reckon (pace + heading slop). */
+export function deadReckonUncertaintyM(input: {
+  lastAccuracyM?: number;
+  distanceM: number;
+  headingErrorDeg?: number;
+}): number {
+  const last = Number.isFinite(input.lastAccuracyM) ? (input.lastAccuracyM as number) : 15;
+  const dist = Math.max(0, input.distanceM);
+  const headingErr = ((input.headingErrorDeg ?? 15) * Math.PI) / 180;
+  return last + dist * 0.1 + dist * Math.tan(headingErr);
+}
+
 export function formatTsd(tsd: { distanceM: number; speedKph: number; minutes: number }): string {
   if (![tsd.distanceM, tsd.speedKph, tsd.minutes].every((value) => Number.isFinite(value) && value >= 0)) return "—";
   return `${Math.round(tsd.distanceM)} m · ${tsd.speedKph.toFixed(1)} km/h · ${Math.round(tsd.minutes)} min`;

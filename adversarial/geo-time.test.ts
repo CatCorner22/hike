@@ -209,7 +209,9 @@ describe("time, clock-skew, and treatment timing", () => {
 describe("degenerate geometry and numeric guards", () => {
   it("has safe fallbacks for empty/stub geometry and short backtracks", () => {
     const empty: GeoJSON.MultiLineString = { type: "MultiLineString", coordinates: [[], [[0, 0]]] };
-    expect(progressAlongTrail({ lat: 0, lng: 0 }, empty)).toMatchObject({ traveledMeters: 0, offsetMeters: 0 });
+    const emptyProgress = progressAlongTrail({ lat: 0, lng: 0 }, empty);
+    expect(emptyProgress.traveledMeters).toBe(0);
+    expect(Number.isFinite(emptyProgress.offsetMeters)).toBe(false);
     expect(reverseTrackLine([])).toBeNull();
     expect(reverseTrackLine([{ lat: 0, lng: 0 }])).toBeNull();
     expect(backtrackProgress({ lat: 0, lng: 0 }, [])).toBeNull();

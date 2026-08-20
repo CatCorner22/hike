@@ -91,8 +91,8 @@ export async function GET(request: Request) {
       orderBy: [asc(campgrounds.name)],
       limit: 200,
     });
+    // Empty results stay empty unless the caller asked for ?sync=true.
     let rows = await findRows();
-    if (rows.length === 0) { await syncCampgrounds(q, state); rows = await findRows(); }
     if (bbox && rows.length < 20) {
       const osmCamps = await searchBackcountryCamps(toSouthWestNorthEast(bbox));
       rows = [...rows, ...osmCamps.map((c) => ({

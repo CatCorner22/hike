@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
@@ -49,6 +50,14 @@ export function PrepareOffline({
     // signal when deciding whether an origin may receive persistent storage.
     const persistentStorageRequest = requestPersistentStorage();
     try {
+      const first =
+        geometry.type === "LineString"
+          ? geometry.coordinates[0]
+          : geometry.coordinates.find((line) => line.length >= 1)?.[0];
+      const center = bbox
+        ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
+        : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
+      const weather = await fetchPackWeather(center.lat, center.lng);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -56,6 +65,7 @@ export function PrepareOffline({
         geometry,
         bbox,
         elevationProfile,
+        weather: weather ?? undefined,
       });
       await persistRoutePack(pack);
       setReady(true);
@@ -72,10 +82,13 @@ export function PrepareOffline({
           ? "Browser storage is not persistent, so this pack may be evicted under storage pressure."
           : null,
       ].filter(Boolean);
+      const weatherNote = weather
+        ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
+        : "Type temp/wind in Safety if you want field weather.";
       setMessage(
         warnings.length
-          ? `Route saved. ${warnings.join(" ")}`
-          : "Route and navigation screen saved. Navigation will work without cell service.",
+          ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
+          : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`,
       );
     } catch (error) {
       setReady(false);

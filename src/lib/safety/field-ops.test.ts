@@ -22,6 +22,10 @@ describe("field weather / movement", () => {
     expect(hi!).toBeGreaterThan(32);
   });
 
+  it("does not invent a heat index at the 27 °C / 40 % edge", () => {
+    expect(heatIndexC(27, 40)).toBeNull();
+  });
+
   it("applies the 30–30 lightning rule", () => {
     const close = lightningRule(15);
     expect(close).not.toBeNull();

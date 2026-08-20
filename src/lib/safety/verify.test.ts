@@ -12,6 +12,16 @@ describe("verifyRegroup", () => {
     expect(r.ok).toBe(true);
   });
 
+  it("accepts a matching password even if the spoken challenge differs", () => {
+    const r = verifyRegroup({
+      challengeResponse: "wrong",
+      passwordResponse: "Blue",
+      expectedChallenge: "Eagle",
+      expectedPassword: "Blue",
+    });
+    expect(r.ok).toBe(true);
+  });
+
   it("fails on wrong password", () => {
     const r = verifyRegroup({
       challengeResponse: "Eagle",

@@ -5,14 +5,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listRecentTrails } from "@/lib/trails/service";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans, activities } from "@/lib/db/schema";
+import { listActivities, listPlans } from "@/lib/store/local";
 import { desc, eq } from "drizzle-orm";
 import { resolveOwnerIdFromCookies } from "@/lib/auth/owner-server";
 import { formatDistance, formatDuration } from "@/lib/geo";
-import { Compass, Map, Tent } from "lucide-react";
+import { Compass, HelpCircle, Map, Tent } from "lucide-react";
+
+type HomePlan = { id: string; name: string; plannedDate: Date | string | null };
+type HomeActivity = {
+  id: string;
+  name: string | null;
+  startedAt: Date | string;
+  stats: unknown;
+};
 
 export default async function HomePage() {
-  let plans: Array<typeof hikePlans.$inferSelect> = [];
-  let recentActivities: Array<typeof activities.$inferSelect> = [];
+  let plans: HomePlan[] = [];
+  let recentActivities: HomeActivity[] = [];
   let recentTrails: Awaited<ReturnType<typeof listRecentTrails>> = [];
 
   // This page reads the database directly instead of going through /api, so it has to
@@ -39,6 +48,13 @@ export default async function HomePage() {
         : Promise.resolve([]),
       listRecentTrails(5),
     ]);
+  } else if (ownerId) {
+    const [localPlans, localActs] = await Promise.all([listPlans(ownerId), listActivities(ownerId)]);
+    plans = localPlans.slice(0, 5);
+    recentActivities = localActs.slice(0, 5);
+    recentTrails = await listRecentTrails(5);
+  } else {
+    recentTrails = await listRecentTrails(5);
   }
 
   return (
@@ -70,6 +86,13 @@ export default async function HomePage() {
                 <Tent className="mr-2 h-4 w-4" />
                 Find camping
               </Link>
+              <Link
+                href="/guide"
+                className={buttonVariants({ variant: "ghost", className: "text-white hover:bg-white/10 hover:text-white" })}
+              >
+                <HelpCircle className="mr-2 h-4 w-4" />
+                How to use Hike
+              </Link>
             </div>
           </div>
         </div>
@@ -85,13 +108,29 @@ export default async function HomePage() {
           </CardHeader>
           <CardContent>
             {plans.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
-                No plans yet.{" "}
-                <Link href="/explore" className="text-primary hover:underline">
-                  Find a trail
-                </Link>{" "}
-                to get started.
-              </p>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Three steps to your first hike:</p>
+                <ol className="list-decimal space-y-1 pl-5">
+                  <li>
+                    <Link href="/explore" className="text-primary hover:underline">
+                      Find a trail
+                    </Link>{" "}
+                    and create a plan from it.
+                  </li>
+                  <li>
+                    Press <strong>Prepare offline</strong> while you have signal — this is
+                    what makes navigation work in the backcountry.
+                  </li>
+                  <li>
+                    Press <strong>Navigate</strong> at the trailhead.
+                  </li>
+                </ol>
+                <p>
+                  <Link href="/guide" className="text-primary hover:underline">
+                    Read the two-minute guide →
+                  </Link>
+                </p>
+              </div>
             ) : (
               <ul className="space-y-3">
                 {plans.map((plan) => (
@@ -129,7 +168,7 @@ export default async function HomePage() {
             ) : (
               <ul className="space-y-3">
                 {recentActivities.map((activity) => {
-                  const stats = activity.stats as {
+                  const stats = (activity.stats ?? null) as {
                     distanceMeters?: number;
                     durationSeconds?: number;
                   } | null;
