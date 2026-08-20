@@ -84,10 +84,56 @@ export function buddySeparationWarning(
   return `${Math.round(best.meters)} m from last ${best.kind} — regroup or mark this split on the nav log.`;
 }
 
-export function litterEvacTime(distanceM: number, partySize = 2): string | null {
-  if (!Number.isFinite(distanceM) || distanceM <= 0 || distanceM > 100_000 || !Number.isInteger(partySize) || partySize < 2 || partySize > 20) return null;
-  const rateMph = partySize >= 4 ? 1.2 : partySize >= 2 ? 0.8 : 0.5;
-  const hours = distanceM / 1609 / rateMph;
-  if (hours < 1) return `Litter carry ~${Math.round(hours * 60)} min for ${Math.round(distanceM)} m (rough).`;
-  return `Litter carry ~${hours.toFixed(1)} h for ${Math.round(distanceM)} m — plan relays and swap carriers.`;
+/**
+ * A hand-carried litter needs six carriers to lift at all, and realistically twelve or
+ * more to rotate over any distance. The party size is not the carrier count: the casualty
+ * cannot carry, and someone has to stay on their airway and monitor them.
+ */
+export const MIN_LITTER_CARRIERS = 6;
+
+export interface LitterEvacAdvice {
+  /** Can this party actually carry, or is the honest answer "shelter and send for help"? */
+  feasible: boolean;
+  carriers: number;
+  hours: number | null;
+  message: string;
+}
+
+export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
+  const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
+  const metres = Number.isFinite(distanceM) ? Math.max(0, distanceM) : 0;
+  // One casualty plus one attendant on the airway; everyone else can take a handle.
+  const carriers = Math.max(0, party - 2);
+
+  if (carriers < MIN_LITTER_CARRIERS) {
+    return {
+      feasible: false,
+      carriers,
+      hours: null,
+      message:
+        `${carriers} available carrier${carriers === 1 ? "" : "s"} — a litter carry needs at least ` +
+        `${MIN_LITTER_CARRIERS} to lift and about twice that to rotate. Do not attempt to move ` +
+        `them: shelter in place, insulate from the ground, and send for help. Dropping a casualty ` +
+        `or exhausting a carrier makes a second patient.`,
+    };
+  }
+
+  // Conservative planning rates for a hand-carried litter on backcountry ground. Even a
+  // full rotating team rarely beats 1 mph, and off-trail is far slower.
+  const rateMph = carriers >= 12 ? 1 : carriers >= 8 ? 0.7 : 0.5;
+  const hours = metres / 1609 / rateMph;
+  const forDistance = `${Math.round(metres)} m with ${carriers} carriers`;
+  const time = hours < 1 ? `~${Math.round(hours * 60)} min` : `~${hours.toFixed(1)} h`;
+  return {
+    feasible: true,
+    carriers,
+    hours,
+    message:
+      `Litter carry ${time} for ${forDistance}, on a good surface. Swap carriers every few ` +
+      `minutes, and expect it to take far longer off-trail, in snow, or on steep ground.`,
+  };
+}
+
+export function litterEvacTime(distanceM: number, partySize = 2): string {
+  return litterEvacAdvice(distanceM, partySize).message;
 }
