@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatDistance, formatDuration } from "@/lib/geo";
+import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
 import { format } from "date-fns";
 
 const MapView = dynamic(
@@ -81,7 +81,7 @@ export default function ActivityDetailPage() {
           label="Elevation gain"
           value={
             activity.stats?.elevationGainMeters != null
-              ? `${Math.round(activity.stats.elevationGainMeters * 3.28)} ft`
+              ? formatElevation(activity.stats.elevationGainMeters)
               : "—"
           }
         />
