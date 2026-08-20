@@ -19,6 +19,22 @@ import {
  *
  * (Next 16 renamed the `middleware` file convention to `proxy`.)
  */
+/**
+ * A document navigation is the only request that should mint a session.
+ *
+ * Minting on every request meant a cookie-less API call silently got a brand-new owner
+ * instead of the documented 401: any script or crawler could POST plans and create
+ * owners without limit, and the 401 branch was effectively unreachable in production.
+ * A browser gets its cookie from the document response, so every subsequent fetch from
+ * the page already carries one.
+ */
+function isDocumentRequest(request: NextRequest): boolean {
+  const dest = request.headers.get("sec-fetch-dest");
+  if (dest) return dest === "document";
+  // Clients without Fetch Metadata: fall back to content negotiation.
+  return (request.headers.get("accept") ?? "").includes("text/html");
+}
+
 export async function proxy(request: NextRequest) {
   let existing: string | null = null;
   try {
@@ -32,6 +48,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (existing) return NextResponse.next();
+  if (!isDocumentRequest(request)) return NextResponse.next();
 
   const token = await signOwnerToken(newOwnerId());
   // Set it on the request as well, so a handler in this same request sees the new

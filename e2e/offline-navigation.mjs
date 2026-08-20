@@ -14,6 +14,11 @@
 import { chromium } from "playwright";
 
 const BASE = process.env.BASE ?? "http://localhost:3111";
+// Honour a browser supplied by the environment. CI images and sandboxes often ship
+// Chromium out-of-band, and a hardcoded chromium.launch() makes this probe unrunnable
+// there — which is how an offline regression reaches a trailhead unnoticed.
+const CHROMIUM_PATH = process.env.CHROMIUM_PATH || undefined;
+const LAUNCH_OPTIONS = CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {};
 const GEO = { latitude: 37.7749, longitude: -119.5383 };
 
 // A short synthetic route near the mocked GPS position.
@@ -30,10 +35,24 @@ function log(scenario, status, detail) {
   console.log(`[${mark}] ${scenario}${detail ? ` — ${detail}` : ""}`);
 }
 
-async function createPlan() {
+/**
+ * Plans are scoped to an owner, so the probe has to act as ONE user. The browser
+ * establishes the session (the proxy mints the cookie on a document navigation), and
+ * the out-of-band create reuses that exact cookie. Creating the plan under a different
+ * owner is indistinguishable from the plan not existing — which is the point of the
+ * scoping, and which silently invalidated every offline assertion below.
+ */
+async function sessionCookieFrom(context) {
+  const cookies = await context.cookies(BASE);
+  const owner = cookies.find((cookie) => cookie.name === "hike_owner");
+  if (!owner) throw new Error("no hike_owner cookie was issued for this browser context");
+  return `${owner.name}=${owner.value}`;
+}
+
+async function createPlan(cookie) {
   const res = await fetch(`${BASE}/api/plans`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", cookie },
     body: JSON.stringify({
       name: "Offline probe route",
       customGeometry: GEOMETRY,
@@ -109,7 +128,7 @@ async function grantDurableStorage(browser, context, origin) {
 
 async function run() {
   const results = [];
-  const browser = await chromium.launch();
+  const browser = await chromium.launch(LAUNCH_OPTIONS);
 
   // ---------- Scenario A: warm start ----------
   {
@@ -120,7 +139,9 @@ async function run() {
     });
     await grantDurableStorage(browser, context, BASE);
     const page = await context.newPage();
-    const planId = await createPlan();
+    // Establish the owner session first; the plan must belong to this browser.
+    await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
+    const planId = await createPlan(await sessionCookieFrom(context));
     const navUrl = `${BASE}/navigate/plan-${planId}`;
 
     await page.goto(navUrl, { waitUntil: "domcontentloaded" });
@@ -173,7 +194,8 @@ async function run() {
         };
       }
     });
-    const planId = await createPlan();
+    await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
+    const planId = await createPlan(await sessionCookieFrom(context));
 
     // Visit the plan detail screen online and register the SW.
     await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });

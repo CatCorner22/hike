@@ -23,7 +23,7 @@ let dbPromise: Promise<IDBPDatabase<NavTrackDB>> | null = null;
 const writeQueue = new Map<string, Promise<void>>();
 
 function getDb() {
-  if (typeof window === "undefined") return null;
+  if (typeof indexedDB === "undefined") return null;
   if (!dbPromise) {
     dbPromise = openDB<NavTrackDB>("hike-nav-tracks", 1, {
       upgrade(db) {
