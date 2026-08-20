@@ -1,0 +1,78 @@
+{
+  "environment": {
+    "node": "v20.20.1",
+    "platform": "linux",
+    "cpus": 2
+  },
+  "geometries": [
+    {
+      "coordinates": 1000,
+      "legacyProgressMs": 45.03,
+      "cachedProgressFirstFixMs": 3.16,
+      "cachedProgressSteadyFixMs": 0.58,
+      "buildRoutePackMs": 4.16,
+      "persistedGpxBytes": 0,
+      "lengthMeters": 87.88624748419673
+    },
+    {
+      "coordinates": 10000,
+      "legacyProgressMs": 70.83,
+      "cachedProgressFirstFixMs": 5.98,
+      "cachedProgressSteadyFixMs": 9.44,
+      "buildRoutePackMs": 21.72,
+      "persistedGpxBytes": 0,
+      "lengthMeters": 879.6968351720964
+    },
+    {
+      "coordinates": 100000,
+      "legacyProgressMs": 712.62,
+      "cachedProgressFirstFixMs": 10.72,
+      "cachedProgressSteadyFixMs": 0.2,
+      "buildRoutePackMs": 91.33,
+      "persistedGpxBytes": 0,
+      "lengthMeters": 8797.812593312057
+    }
+  ],
+  "oversizePack": {
+    "coordinates": 500000,
+    "rejected": true,
+    "message": "This route has 500,000 coordinates. Offline navigation supports up to 100,000 coordinates; split or simplify it while online.",
+    "ms": 162.69
+  },
+  "relation": {
+    "orderedMs": 174.49,
+    "disconnectedMs": 39.94,
+    "disconnectedLines": 5000
+  },
+  "elevation": {
+    "samplesReturned": 51,
+    "ms": 450.92,
+    "postBytes": 3213
+  },
+  "localStore": [
+    {
+      "preexistingPoints": 0,
+      "appendLatencyMs": 0.56,
+      "journalBytes": 155
+    },
+    {
+      "preexistingPoints": 1000,
+      "appendLatencyMs": 0.23,
+      "journalBytes": 155
+    },
+    {
+      "preexistingPoints": 10000,
+      "appendLatencyMs": 0.27,
+      "journalBytes": 155
+    },
+    {
+      "preexistingPoints": 50000,
+      "appendLatencyMs": 0.33,
+      "journalBytes": 155
+    }
+  ],
+  "lazyGpx": {
+    "exportBytesAt100k": 6790448,
+    "persistedBytesAt100k": 0
+  }
+}
