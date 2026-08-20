@@ -16,6 +16,7 @@ import {
   compassLabel,
   gpsAccuracyLabel,
   normalizeHeading,
+  travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -335,17 +336,34 @@ export default function NavigatePage() {
     };
   }, []);
 
+  // Which end of the route the hiker is actually walking toward. The stored line
+  // direction is arbitrary, so without this "Remaining" counts up as you approach your
+  // destination. Recomputed from the breadcrumb track, not on every fix.
+  const travelDirection = useMemo(() => {
+    if (loadState.status !== "ready") return "unknown" as const;
+    return travelDirectionAlong(
+      loadState.pack.geometry,
+      trackPoints.map((point) => ({ lat: point.lat, lng: point.lng })),
+    );
+  }, [loadState, trackPoints]);
+
   useEffect(() => {
     if (loadState.status !== "ready" || !navFix || !trusted) {
       if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
+    // Cached incremental search: a full scan costs ~477 ms per fix on a 100k
+    // point route, and this runs on every GPS update.
     if (!progressCacheRef.current || progressCacheRef.current.packId !== loadState.pack.id) {
       progressCacheRef.current = createRouteProgressCache(loadState.pack);
     }
-    const p = progressWithRouteCache(progressCacheRef.current, { lat: navFix.lat, lng: navFix.lng });
+    const p = progressWithRouteCache(
+      progressCacheRef.current,
+      { lat: navFix.lat, lng: navFix.lng },
+      travelDirection,
+    );
     queueMicrotask(() => setProgress(p));
-  }, [navFix, loadState, trusted]);
+  }, [navFix, loadState, trusted, travelDirection]);
 
   useEffect(() => {
     if (loadState.status !== "ready") return;
@@ -784,7 +802,14 @@ export default function NavigatePage() {
                   void lastCheckin(navId).then((e) => setLastCheckinAt(e?.recordedAt ?? null));
                 }}
               />
-              <div className="max-w-[55%] text-right">
+              {/*
+                The header gradient fades to transparent, so muted text placed
+                over the lower half sat on the dark map and was close to
+                illegible -- including the USNG grid reference, which is the
+                string you read aloud to a rescuer. This scrim guarantees a
+                known background behind the text at any map darkness or theme.
+              */}
+              <div className="max-w-[58%] rounded-lg bg-background/90 px-2 py-1 text-right backdrop-blur-sm">
                 <p className="truncate text-sm font-semibold">{pack.name}</p>
                 <p className="text-xs text-muted-foreground">
                   {source === "cache" ? "Offline pack" : "Saved to device"}
@@ -923,7 +948,13 @@ export default function NavigatePage() {
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
-            label={backtrackOn ? "Backtrack" : "Remaining"}
+            label={
+              backtrackOn
+                ? "Backtrack"
+                : progress && progress.remainingDirection === "unknown"
+                  ? "To nearer end"
+                  : "Remaining"
+            }
             value={
               backtrackOn && retrace
                 ? formatDistance(retrace.remainingMeters)

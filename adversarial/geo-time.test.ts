@@ -8,7 +8,7 @@ import {
   safeBbox,
   trailLengthMeters,
 } from "@/lib/geo/navigation";
-import { isFixNearRouteBbox, magneticDeclination } from "@/lib/safety/declination";
+import { gridConvergence, isFixNearRouteBbox, magneticDeclination } from "@/lib/safety/declination";
 import {
   formatMgrs10,
   formatUsng,
@@ -25,7 +25,7 @@ import {
   minutesUntilSunset,
 } from "@/lib/safety/daylight";
 import { sunCompassHint, sunPosition } from "@/lib/safety/astro";
-import { gridConvergence, polarisHint } from "@/lib/safety/tactics";
+import { polarisHint } from "@/lib/safety/tactics";
 import {
   formatZulu,
   intersection,
@@ -243,5 +243,34 @@ describe("degenerate geometry and numeric guards", () => {
       expect(formatDuration(value)).not.toMatch(/NaN|Infinity|∞/);
       expect(formatPace(value)).not.toMatch(/NaN|Infinity|∞/);
     }
+  });
+});
+
+/**
+ * The gps-adversarial probe found a dateline route reported as on-route, which
+ * was correct behaviour hidden by a bad assertion. Lock the real property in a
+ * unit test so it cannot regress without the probe running.
+ */
+describe("antimeridian route progress (regression from probe false positive)", () => {
+  const crossing: GeoJSON.LineString = {
+    type: "LineString",
+    coordinates: [
+      [179.9, 0],
+      [-179.9, 0],
+    ],
+  };
+
+  it("treats a fix between the endpoints as on route, not 20,000 km away", () => {
+    const onRoute = progressAlongTrail({ lat: 0, lng: 179.95 }, crossing);
+    expect(onRoute.valid).toBe(true);
+    expect(onRoute.offsetMeters).toBeLessThan(100);
+  });
+
+  it("still reports a genuinely distant fix as off route", () => {
+    const faraway = progressAlongTrail({ lat: 0, lng: 0 }, crossing);
+    expect(faraway.valid).toBe(true);
+    // Greenwich is ~20,000 km from a dateline route; the old 359.8-degree bbox
+    // accepted it as on route and suppressed the off-trail warning.
+    expect(faraway.offsetMeters).toBeGreaterThan(10_000_000);
   });
 });

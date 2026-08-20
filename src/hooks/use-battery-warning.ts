@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { batterySafetyAdvice } from "@/lib/safety/field-ops";
 
-export function useBatteryWarning(threshold = 0.15) {
+/**
+ * `batterySafetyAdvice` has tiers at 20%, 10% and 5%. Gating at 15% made the 20% tier
+ * — "plan your next comms window before the phone dies" — unreachable, so the band where
+ * there is still time to act on it said nothing at all.
+ */
+export function useBatteryWarning(threshold = 0.2) {
   const [warning, setWarning] = useState<string | null>(null);
 
   useEffect(() => {
@@ -18,6 +23,7 @@ export function useBatteryWarning(threshold = 0.15) {
     if (!nav.getBattery) return;
 
     let battery: Awaited<ReturnType<NonNullable<typeof nav.getBattery>>> | null = null;
+    let cancelled = false;
 
     const update = () => {
       if (!battery) return;
@@ -32,6 +38,9 @@ export function useBatteryWarning(threshold = 0.15) {
     };
 
     void nav.getBattery().then((b) => {
+      // getBattery() can resolve after unmount; subscribing then would leak listeners
+      // that outlive the component and never get removed.
+      if (cancelled) return;
       battery = b;
       update();
       b.addEventListener("levelchange", update);
@@ -39,6 +48,7 @@ export function useBatteryWarning(threshold = 0.15) {
     });
 
     return () => {
+      cancelled = true;
       battery?.removeEventListener("levelchange", update);
       battery?.removeEventListener("chargingchange", update);
     };

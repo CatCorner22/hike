@@ -81,10 +81,23 @@ export function amsAssessment(input: {
   return { score, level, warning, actions };
 }
 
-/** Simple terrain heuristic — not a substitute for avalanche forecast or beacon travel. */
+/**
+ * Simple terrain heuristic — not a substitute for an avalanche forecast or beacon travel.
+ *
+ * Deliberately takes no aspect. Aspect is the compass direction a slope *faces* — its
+ * downhill direction — and the app cannot derive it: the elevation profile is along-track
+ * only, which gives gradient but not cross-slope orientation. The navigate panel was
+ * passing the user's travel heading instead, which is a different quantity entirely
+ * (traverse a slope and your heading is roughly perpendicular to its aspect; climb it and
+ * your heading is its opposite). That made "classic avalanche start zone" fire or not
+ * fire on identical terrain depending only on which way the hiker happened to be walking.
+ *
+ * Wind loading and aspect are exactly what the local bulletin is for; `avalanche.ts`
+ * carries the ALPTRUTh checklist and danger-scale assessment for inputs a person supplies
+ * deliberately.
+ */
 export function avalancheTerrainWarning(input: {
   slopePct?: number | null;
-  aspectDeg?: number;
   month?: number;
   snowOnGround?: boolean;
 }): string | null {
@@ -101,20 +114,11 @@ export function avalancheTerrainWarning(input: {
 
   if (!snow || slope < 30) return null;
 
-  const aspect = input.aspectDeg;
-  const leeward =
-    aspect != null &&
-    ((aspect >= 135 && aspect <= 225) || (aspect >= 315 || aspect <= 45));
-
-  if (slope >= 30 && leeward) {
-    return `~${slope}% leeward slope in snow season — classic avalanche start zone. Check forecast, carry beacon/probe/shovel, one at a time.`;
-  }
-
   if (slope >= 35) {
-    return `~${slope}% slope with snow possible — stay off convex rolls and wind-loaded pockets.`;
+    return `~${slope}% slope with snow possible — classic avalanche start-zone angle. Check the forecast for aspect and wind loading, stay off convex rolls, carry beacon/probe/shovel and travel one at a time.`;
   }
 
-  return null;
+  return `~${slope}% slope in snow season — approaching avalanche start-zone angle. Check the forecast for aspect and wind loading before committing.`;
 }
 
 export function bearSafetyCard(): string[] {
