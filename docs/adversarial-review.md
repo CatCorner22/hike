@@ -857,6 +857,97 @@ it — are each caught.
 
 ---
 
+## Tenth pass — the store everything else depends on (`profile.ts`)
+
+The ICE contact, the overdue deadline, the waypoints and the check-ins all live in one
+IndexedDB database. Every failure mode of that database was silent, and two of them were
+permanent.
+
+### DB1. A failed open was cached for the life of the page
+
+```ts
+let dbPromise: Promise<IDBPDatabase<SafetyDB>> | null = null;
+export function getSafetyDb() {
+  if (typeof indexedDB === "undefined") return null;
+  if (!dbPromise) dbPromise = openDB<SafetyDB>("hike-safety", 2, { … });
+  return dbPromise;
+}
+```
+
+The `typeof indexedDB === "undefined"` guard shows the intent — degrade, don't throw —
+but a **rejected** `openDB` bypasses it entirely. Storage denied in a private window,
+quota exhausted, a corrupt store: the rejection is cached in `dbPromise` and re-thrown by
+every later call, forever.
+
+And **no caller has a `catch`**:
+
+| Caller | What actually happens |
+|---|---|
+| `safety-panel.tsx` | `void getIceProfile().then(setProfile)` — profile stays empty, unhandled rejection |
+| `readiness-gate.tsx` | the whole `Promise.all` rejects, so no state is set at all |
+| `navigate/[planId]` `unlockIfReady` | never reaches `setNavUnlocked(true)` — **Navigate stays locked, with nothing on screen saying why** |
+
+### DB2. A blocked upgrade never settled at all
+
+`openDB` does not reject when another tab holds an older version open — it simply
+**never settles**. Same symptom as DB1, reached without any error occurring: an installed
+PWA plus an open browser tab is enough, and the schema has already gone 1 → 2.
+
+Both are fixed in one place. `getSafetyDb` now resolves to `null` — which every caller
+already handles as "no stored profile" — and clears its cache so the next call genuinely
+retries. A blocked open is raced against a 5 s ceiling; the pending open is kept rather
+than discarded, so a retry re-awaits it instead of stacking a second connection. The
+`blocking` callback closes this tab's connection so it is not the one hanging somebody
+else, including in the microtask window between `openDB` resolving and the module
+assigning the connection.
+
+### DB3. Writes that were refused looked like writes that landed
+
+`persistReturn` printed the deadline **before** awaiting the store:
+
+```ts
+setReturnTimeMessage(`Deadline: ${…}.`);
+await setOverdueAlarm(resolved.value);   // may throw; nobody catches
+```
+
+So a phone that refused the write showed a deadline that read as armed and did nothing —
+the same failure `overdueStatus` was hardened against from the other side. The ICE
+profile was worse: `void saveIceProfile(next)` from a debounce, so a quota error became
+an unhandled rejection while the hiker looked at their emergency contact sitting in React
+state, gone on next launch. The phone most likely to be out of quota is the one that has
+been caching map tiles all week — the same phone this is meant to protect.
+
+`saveIceProfile` and `setOverdueAlarm` now return whether the write landed, and the panel
+says so:
+
+```
+NOT SAVED — this phone refused to store 2026-08-20T19:00 (GMT-7, America/Los_Angeles).
+Nothing here will warn you when it passes: write it down and tell your contact.
+```
+
+```
+NOT SAVED — this phone refused to store these details, so they will be gone on next
+launch. Free up storage, or write them on the paper backup.
+```
+
+### Also checked, and found sound
+
+`resolveLocalDateTime` is correct: it scans ±15 h, which covers the real offset range of
+−12:00 to +14:00, rejects DST gaps, and requires an explicit choice for a repeated wall
+time. `overdueStatus` and `formatElapsed` fail closed and degrade units. The `parseLocalParts`
+round-trip catches out-of-range component values that `Date.UTC` would otherwise roll over.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 599/599 green, `npm run build`
+succeeds. Seven mutations — rethrowing the open failure, re-caching it, removing the
+blocked-open timeout, missing the `blocking` microtask window, stacking a second
+connection on retry, rethrowing a refused ICE save, and claiming a deadline saved with no
+store — are each caught.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

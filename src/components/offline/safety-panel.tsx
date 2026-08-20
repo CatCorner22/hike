@@ -293,6 +293,7 @@ export function SafetyPanel({
   const [returnLocal, setReturnLocal] = useState("");
   const [returnResolution, setReturnResolution] = useState<ResolvedLocalTime | null>(null);
   const [returnTimeMessage, setReturnTimeMessage] = useState<string | null>(null);
+  const [profileSaveFailed, setProfileSaveFailed] = useState(false);
   const [returnTimeChoices, setReturnTimeChoices] = useState<[ResolvedLocalTime, ResolvedLocalTime] | null>(null);
   const [overdueLabel, setOverdueLabel] = useState<string | null>(null);
   const [overdue, setOverdue] = useState(false);
@@ -471,7 +472,7 @@ export function SafetyPanel({
     if (persistTimer.current) clearTimeout(persistTimer.current);
     persistTimer.current = setTimeout(() => {
       persistTimer.current = null;
-      void saveIceProfile(next);
+      void saveIceProfile(next).then((stored) => setProfileSaveFailed(!stored));
     }, 400);
   }
 
@@ -545,20 +546,30 @@ export function SafetyPanel({
     await saveCheckinSettings(next);
   }
 
+  // The deadline message used to be written before the store was awaited, so a phone
+  // that refused the write left an alarm that read as armed and did nothing.
+  function deadlineMessage(time: ResolvedLocalTime, stored: boolean) {
+    const when = `${time.resolvedLocal} (${time.utcOffset}, ${time.timeZone})`;
+    return stored
+      ? `Deadline: ${when}.`
+      : `NOT SAVED — this phone refused to store ${when}. Nothing here will warn you when it passes: write it down and tell your contact.`;
+  }
+
   async function persistReturn(value: string) {
     setReturnLocal(value);
     setReturnTimeMessage(null);
     setReturnTimeChoices(null);
     if (!value) {
       setReturnResolution(null);
-      await setOverdueAlarm(null);
+      if (!(await setOverdueAlarm(null))) {
+        setReturnTimeMessage("Could not clear the stored deadline — the old one may still be armed.");
+      }
       return;
     }
     const resolved = resolveLocalDateTime(value);
     if (resolved.kind === "resolved") {
       setReturnResolution(resolved.value);
-      setReturnTimeMessage(`Deadline: ${resolved.value.resolvedLocal} (${resolved.value.utcOffset}, ${resolved.value.timeZone}).`);
-      await setOverdueAlarm(resolved.value);
+      setReturnTimeMessage(deadlineMessage(resolved.value, await setOverdueAlarm(resolved.value)));
       return;
     }
     setReturnResolution(null);
@@ -570,8 +581,7 @@ export function SafetyPanel({
   async function chooseReturnOccurrence(choice: ResolvedLocalTime) {
     setReturnResolution(choice);
     setReturnTimeChoices(null);
-    setReturnTimeMessage(`Deadline: ${choice.resolvedLocal} (${choice.utcOffset}, ${choice.timeZone}).`);
-    await setOverdueAlarm(choice);
+    setReturnTimeMessage(deadlineMessage(choice, await setOverdueAlarm(choice)));
   }
 
   async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
@@ -1985,6 +1995,12 @@ export function SafetyPanel({
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               ICE / medical (on device)
             </p>
+            {profileSaveFailed && (
+              <p className="text-xs text-destructive">
+                NOT SAVED — this phone refused to store these details, so they will be gone
+                on next launch. Free up storage, or write them on the paper backup.
+              </p>
+            )}
             <Label htmlFor="hiker-name">Your name</Label>
             <Input
               id="hiker-name"
