@@ -1183,6 +1183,60 @@ it fires.
 
 ---
 
+## Fourteenth pass — the search patterns (`search.ts`)
+
+These draw the ground a party actually walks when someone is missing, and the plan text
+they report afterwards.
+
+### SR1. The creeping-line search did not creep
+
+The sideways step alternated **right, then left, then right** — walking straight back
+onto the track it had just left. Measured against the drawn line for a 200 m leg and
+50 m spacing, due north:
+
+| passes | corridor covered — creeping line | corridor covered — parallel track | distance walked |
+|---|---|---|---|
+| 2 | 50 m | 50 m | 450 m |
+| 4 | **50 m** | 150 m | 950 m |
+| 6 | **50 m** | 250 m | 1 450 m |
+
+Six passes: the searcher walks the full 1 450 m, re-walks the same two tracks three
+times, and covers a corridor **one width wide**. The panel calls
+`creepingLineLegs(L * 3, L, 4)`, so choosing "Creeping line" with a 100 m leg searched a
+third of the ground the plan described — and the party reports the drainage clear.
+
+`parallelTrackLegs`, sitting directly beneath it and nearly identical, was correct. The
+two have been collapsed onto one `sweepLegs` implementation, because two copies of the
+same geometry are exactly how one of them drifted. They differ in doctrine — creeping
+line runs its legs across the search area's long axis, parallel track along it — which is
+a choice the caller makes with `axisHeading`, not a difference in the pattern.
+
+### SR2. Two exported functions disagreed about what a sector search draws
+
+`sectorSearchLine` drew an out-and-back star centred on the datum. The panel plots the
+same legs through `searchLineFromLegs`, which chains them into the equilateral triangle
+off the datum that the pattern actually is. `sectorSearchLine` has no production caller,
+so nothing was drawn wrongly — but leaving two exported functions that disagree about the
+same named pattern is a trap for whoever wires it up next. It now chains too, and a test
+pins the two to the same output.
+
+### Checked, and found sound
+
+`expandingSquareLegs` follows the L, L, 2L, 2L, 3L, 3L progression correctly, and the
+tracks it lays down are one spacing apart with no gap wider than that — verified from the
+drawn coordinates, not from the leg list. `sectorSearchLegs`' cumulative distance is right
+for the triangle the panel draws, so an earlier suspicion that it halved the distance
+walked was **wrong and is not a finding**: that would only have applied to the unused star.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 675/675 green, `npm run build`
+succeeds. Two mutations — restoring the alternating sideways step, and restoring the star
+— are each caught. CI is green on this branch at `eec8f4c`, both jobs.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
