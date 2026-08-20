@@ -3,7 +3,8 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Calendar, Car, Dog, Tent, Users } from "lucide-react";
-import { safeSourceUrl, type TrailResearchBrief } from "@/lib/research/schema";
+import type { TrailResearchBrief } from "@/lib/research/schema";
+import { httpsUrl } from "@/lib/urls";
 
 interface ResearchBriefProps {
   brief: TrailResearchBrief;
@@ -93,8 +94,8 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
             <h4 className="mb-1 text-sm font-medium">Sources</h4>
             <ul className="space-y-1 text-sm">
               {brief.sources.map((source) => {
-                const href = safeSourceUrl(source.url);
-                if (!href) return null;
+                const href = httpsUrl(source.url);
+                if (!href) return <li key={source.url}>{source.title}</li>;
                 return (
                   <li key={href}>
                     <a

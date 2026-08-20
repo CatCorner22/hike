@@ -109,9 +109,10 @@ describe("adversarial-break: trail geometry", () => {
 describe("adversarial-break: land-nav honesty", () => {
   it("uses the same half-angle for the southern watch method (15:00 → ~45°)", () => {
     const south = watchMethodHeading(15, "south");
-    expect(south.toward).toBe("N");
-    expect(south.clockAzimuthFrom12).toBeCloseTo(45, 0);
-    expect(south.clockAzimuthFrom12).not.toBeCloseTo(225, 0);
+    expect(south).not.toBeNull();
+    expect(south!.toward).toBe("N");
+    expect(south!.clockAzimuthFrom12).toBeCloseTo(45, 0);
+    expect(south!.clockAzimuthFrom12).not.toBeCloseTo(225, 0);
   });
 
   it("does not claim the sun azimuth agrees with a watch-dial angle", () => {

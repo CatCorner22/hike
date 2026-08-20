@@ -5,14 +5,23 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listRecentTrails } from "@/lib/trails/service";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans, activities } from "@/lib/db/schema";
+import { listActivities, listPlans } from "@/lib/store/local";
 import { desc, eq } from "drizzle-orm";
 import { resolveOwnerIdFromCookies } from "@/lib/auth/owner-server";
 import { formatDistance, formatDuration } from "@/lib/geo";
 import { Compass, HelpCircle, Map, Tent } from "lucide-react";
 
+type HomePlan = { id: string; name: string; plannedDate: Date | string | null };
+type HomeActivity = {
+  id: string;
+  name: string | null;
+  startedAt: Date | string;
+  stats: unknown;
+};
+
 export default async function HomePage() {
-  let plans: Array<typeof hikePlans.$inferSelect> = [];
-  let recentActivities: Array<typeof activities.$inferSelect> = [];
+  let plans: HomePlan[] = [];
+  let recentActivities: HomeActivity[] = [];
   let recentTrails: Awaited<ReturnType<typeof listRecentTrails>> = [];
 
   // This page reads the database directly instead of going through /api, so it has to
@@ -39,6 +48,13 @@ export default async function HomePage() {
         : Promise.resolve([]),
       listRecentTrails(5),
     ]);
+  } else if (ownerId) {
+    const [localPlans, localActs] = await Promise.all([listPlans(ownerId), listActivities(ownerId)]);
+    plans = localPlans.slice(0, 5);
+    recentActivities = localActs.slice(0, 5);
+    recentTrails = await listRecentTrails(5);
+  } else {
+    recentTrails = await listRecentTrails(5);
   }
 
   return (
@@ -152,7 +168,7 @@ export default async function HomePage() {
             ) : (
               <ul className="space-y-3">
                 {recentActivities.map((activity) => {
-                  const stats = activity.stats as {
+                  const stats = (activity.stats ?? null) as {
                     distanceMeters?: number;
                     durationSeconds?: number;
                   } | null;

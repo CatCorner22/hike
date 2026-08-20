@@ -167,69 +167,10 @@ function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): numbe
   return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-<<<<<<< HEAD
 function wayPositions(way: OverpassElement): GeoJSON.Position[] {
-  return (way.geometry || []).map((p) => [p.lon, p.lat]);
+  return (way.geometry || []).map((p) => [p.lon, p.lat] as GeoJSON.Position);
 }
 
-function pointsClose(a: GeoJSON.Position | undefined, b: GeoJSON.Position | undefined, eps = 1e-5) {
-  if (!a || !b) return false;
-  return Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
-}
-
-function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  const relation = elements.find((e) => e.type === "relation");
-  const waysById = new Map(
-    elements.filter((e) => e.type === "way" && e.geometry?.length).map((w) => [w.id, w]),
-  );
-
-  const ordered: GeoJSON.Position[][] = [];
-  const members = relation?.members?.filter((m) => m.type === "way") ?? [];
-
-  if (members.length > 0) {
-    for (const member of members) {
-      const way = waysById.get(member.ref);
-      if (!way) continue;
-      let coords = wayPositions(way);
-      if (coords.length < 2) continue;
-      if (member.role === "backward") coords = [...coords].reverse();
-      ordered.push(coords);
-    }
-  }
-
-  if (ordered.length === 0) {
-    for (const way of waysById.values()) {
-      const coords = wayPositions(way);
-      if (coords.length >= 2) ordered.push(coords);
-    }
-  }
-
-  if (ordered.length === 0) return null;
-
-  const lines: GeoJSON.Position[][] = [];
-  for (const raw of ordered) {
-    let coords = raw;
-    const last = lines[lines.length - 1];
-    if (last) {
-      const lastEnd = last[last.length - 1];
-      if (pointsClose(lastEnd, coords[0])) {
-        last.push(...coords.slice(1));
-        continue;
-      }
-      if (pointsClose(lastEnd, coords[coords.length - 1])) {
-        coords = [...coords].reverse();
-        last.push(...coords.slice(1));
-        continue;
-      }
-    }
-    lines.push([...coords]);
-  }
-
-  if (lines.length === 1) {
-    return { type: "LineString", coordinates: lines[0] };
-  }
-  return { type: "MultiLineString", coordinates: lines };
-=======
 function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
   return endpointDistanceMeters(a, b) <= 25;
 }
@@ -319,15 +260,38 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
 }
 
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  const lines = elements
-    .filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
-    .map((way) => way.geometry!.map((point) => [point.lon, point.lat] as GeoJSON.Position));
-  if (!lines.length) return null;
-  const chains = stitchRelationWays(lines);
+  const waysById = new Map(
+    elements.filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
+      .map((way) => [way.id, way]),
+  );
+  const relation = elements.find((element) => element.type === "relation");
+  const members = relation?.members?.filter((member) => member.type === "way") ?? [];
+  const ordered: GeoJSON.Position[][] = [];
+  const used = new Set<number>();
+
+  if (members.length > 0) {
+    for (const member of members) {
+      const way = waysById.get(member.ref);
+      if (!way) continue;
+      let coords = wayPositions(way);
+      if (coords.length < 2) continue;
+      if (member.role === "backward") coords = [...coords].reverse();
+      ordered.push(coords);
+      used.add(way.id);
+    }
+  }
+
+  for (const way of waysById.values()) {
+    if (used.has(way.id)) continue;
+    const coords = wayPositions(way);
+    if (coords.length >= 2) ordered.push(coords);
+  }
+
+  if (!ordered.length) return null;
+  const chains = stitchRelationWays(ordered);
   return chains.length === 1
     ? { type: "LineString", coordinates: chains[0] }
     : { type: "MultiLineString", coordinates: chains };
->>>>>>> origin/main
 }
 
 function computeBbox(geometry: GeoJSON.LineString | GeoJSON.MultiLineString): [number, number, number, number] {

@@ -1,5 +1,6 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
+import type { PackWeather } from "@/lib/offline/pack-weather";
 
 /**
  * Offline packs have an intentionally conservative ceiling.  A route above this
@@ -10,7 +11,7 @@ export const MAX_ROUTE_PACK_COORDINATES = 100_000;
 export const MAX_ROUTE_PACK_BYTES = 16 * 1024 * 1024;
 export const MAX_ROUTE_PACK_GPX_BYTES = 2 * 1024 * 1024;
 export const MAX_ELEVATION_PROFILE_POINTS = 2_048;
-export const ROUTE_PACK_VERSION = 4;
+export const ROUTE_PACK_VERSION = 3;
 export const ROUTE_PACK_DB_VERSION = 4;
 
 export interface RoutePack {
@@ -33,6 +34,7 @@ export interface RoutePack {
   cumulativeDistancesMeters: number[];
   cachedAt: string;
   version: number;
+  weather?: PackWeather;
 }
 
 interface RoutePackAlias {
@@ -45,7 +47,6 @@ interface RoutePackDB extends DBSchema {
   aliases: { key: string; value: RoutePackAlias; indexes: { "by-canonical": string } };
   lastFix: {
     key: string;
-<<<<<<< HEAD
     value: {
       id: string;
       lat: number;
@@ -55,9 +56,6 @@ interface RoutePackDB extends DBSchema {
       altitude?: number;
       recordedAt: string;
     };
-=======
-    value: { id: string; lat: number; lng: number; accuracy?: number; heading?: number; recordedAt: string };
->>>>>>> origin/main
   };
 }
 
@@ -99,7 +97,7 @@ function coordinateLines(geometry: GeoJSON.LineString | GeoJSON.MultiLineString)
 
 function finitePosition(position: unknown): position is GeoJSON.Position {
   return Array.isArray(position) &&
-    position.length === 2 &&
+    position.length >= 2 &&
     Number.isFinite(position[0]) &&
     Number.isFinite(position[1]) &&
     Number(position[0]) >= -180 && Number(position[0]) <= 180 &&
@@ -141,6 +139,20 @@ export function cumulativeDistancesForGeometry(
   return cumulative;
 }
 
+function validPackWeather(weather: unknown): weather is PackWeather {
+  if (!weather || typeof weather !== "object") return false;
+  const candidate = weather as PackWeather;
+  if (candidate.source !== "open-meteo" && candidate.source !== "manual") return false;
+  if (typeof candidate.cachedAt !== "string") return false;
+  const cachedAt = Date.parse(candidate.cachedAt);
+  if (!Number.isFinite(cachedAt)) return false;
+  if (candidate.tempC !== undefined && !Number.isFinite(candidate.tempC)) return false;
+  if (candidate.windKph !== undefined && !Number.isFinite(candidate.windKph)) return false;
+  if (candidate.rhPct !== undefined && !Number.isFinite(candidate.rhPct)) return false;
+  if (candidate.note !== undefined && typeof candidate.note !== "string") return false;
+  return true;
+}
+
 function validationError(pack: RoutePack | null | undefined): string | null {
   if (!pack || typeof pack !== "object") return "Saved route pack is missing.";
   if (!validId(pack.id) || pack.canonicalId !== pack.id) return "Saved route identity is invalid.";
@@ -171,6 +183,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   }
   if (pack.gpx !== undefined && (typeof pack.gpx !== "string" || new TextEncoder().encode(pack.gpx).byteLength > MAX_ROUTE_PACK_GPX_BYTES)) {
     return "Saved route export data is too large.";
+  }
+  if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
+    return "Saved route weather snapshot is invalid.";
   }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
@@ -258,6 +273,7 @@ export function buildRoutePack(input: {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
+  weather?: PackWeather;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -279,6 +295,7 @@ export function buildRoutePack(input: {
     cumulativeDistancesMeters: cumulativeDistancesForGeometry(input.geometry),
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
+    weather: input.weather,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);
@@ -368,7 +385,6 @@ export async function hasRoutePack(id: string): Promise<boolean> {
   return (await getRoutePackStatus(id)).status === "ready";
 }
 
-<<<<<<< HEAD
 let lastFixWrite: Promise<void> = Promise.resolve();
 
 export async function saveLastFix(fix: {
@@ -384,6 +400,9 @@ export async function saveLastFix(fix: {
     .then(async () => {
       const db = await getDb();
       if (!db) return;
+      const recordedAt = fix.recordedAt ?? Date.now();
+      // Never persist a future or epoch fix as if it were a fresh position.
+      if (!Number.isFinite(recordedAt) || recordedAt < Date.UTC(2020, 0, 1) || recordedAt > Date.now() + 5 * 60_000) return;
       await db.put("lastFix", {
         id: "current",
         lat: fix.lat,
@@ -391,19 +410,10 @@ export async function saveLastFix(fix: {
         accuracy: fix.accuracy,
         heading: fix.heading,
         altitude: fix.altitude,
-        recordedAt: new Date(fix.recordedAt ?? Date.now()).toISOString(),
+        recordedAt: new Date(recordedAt).toISOString(),
       });
     });
   return lastFixWrite;
-=======
-export async function saveLastFix(fix: { lat: number; lng: number; accuracy?: number; heading?: number; recordedAt?: number }) {
-  const db = await getDb();
-  if (!db) return;
-  const recordedAt = fix.recordedAt ?? Date.now();
-  // Never persist a future or epoch fix as if it were a fresh position.
-  if (!Number.isFinite(recordedAt) || recordedAt < Date.UTC(2020, 0, 1) || recordedAt > Date.now() + 5 * 60_000) return;
-  await db.put("lastFix", { ...fix, id: "current", recordedAt: new Date(recordedAt).toISOString() });
->>>>>>> origin/main
 }
 
 export async function getLastFix() {

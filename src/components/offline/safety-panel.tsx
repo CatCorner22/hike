@@ -78,6 +78,8 @@ import {
   type PaceTerrain,
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
+import { buildPaperBackup } from "@/lib/safety/paper-backup";
+import type { PackWeather } from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -204,7 +206,6 @@ interface SafetyPanelProps {
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
   onDeniedPaceLen?: (paceLen: number) => void;
-  isDark?: boolean;
   positionSource?: PositionSource;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
@@ -215,6 +216,7 @@ interface SafetyPanelProps {
   onCommsAttempt?: () => void;
   lastCommsAt?: number | null;
   onCheckinLogged?: () => void;
+  packWeather?: PackWeather | null;
 }
 
 export function SafetyPanel({
@@ -246,7 +248,6 @@ export function SafetyPanel({
   onToggleGpsDenied,
   onDeniedPaces,
   onDeniedPaceLen,
-  isDark = false,
   positionSource,
   geometry,
   remainingMeters,
@@ -257,6 +258,7 @@ export function SafetyPanel({
   onCommsAttempt,
   lastCommsAt = null,
   onCheckinLogged,
+  packWeather,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -306,9 +308,11 @@ export function SafetyPanel({
   const [tsdSpeed, setTsdSpeed] = useState("4");
   const [tsdMin, setTsdMin] = useState("");
   const [flashSec, setFlashSec] = useState("30");
-  const [tempC, setTempC] = useState("5");
-  const [windKph, setWindKph] = useState("20");
-  const [rh, setRh] = useState("40");
+  const [tempC, setTempC] = useState(packWeather?.tempC != null ? String(packWeather.tempC) : "5");
+  const [windKph, setWindKph] = useState(
+    packWeather?.windKph != null ? String(packWeather.windKph) : "20",
+  );
+  const [rh, setRh] = useState(packWeather?.rhPct != null ? String(packWeather.rhPct) : "40");
   const [waterL, setWaterL] = useState("2");
   const [injured, setInjured] = useState("0");
   const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
@@ -368,6 +372,15 @@ export function SafetyPanel({
     void getCheckinSettings().then(setCheckinSettings);
     void listCheckins(packId).then(setCheckins);
   }, [packId]);
+
+  useEffect(() => {
+    if (!packWeather) return;
+    queueMicrotask(() => {
+      if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
+      if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
+      if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
+    });
+  }, [packWeather]);
 
   useEffect(() => {
     const tick = () => {
@@ -468,13 +481,10 @@ export function SafetyPanel({
   const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
   const declination = lat != null && lng != null ? magneticDeclination(lat, lng) : null;
   const imsafeNote = imsafeWarning(imsafe);
-<<<<<<< HEAD
-=======
   // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
   // happened to rank first — so "finish with a headlamp" read as darkness at midday,
   // and a GPS-denied or overdue warning read as daylight at midnight. It feeds
   // sereAssessment and casevacDecision, so it has to be the real value.
->>>>>>> origin/main
   const sereNote = sereAssessment({
     isDark,
     altitudeM,
@@ -878,6 +888,27 @@ export function SafetyPanel({
             >
               <Download className="mr-2 size-4" />
               {dossierStatus ?? "Safety dossier"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={!geometry}
+              onClick={async () => {
+                if (!geometry) return;
+                const text = buildPaperBackup({
+                  trailName,
+                  geometry,
+                  profile,
+                  returnAt: returnLocal ? new Date(returnLocal).toISOString() : null,
+                  checkins,
+                  packAge: packWeather?.cachedAt,
+                });
+                const ok = await copyEmergencyInfo(text);
+                if (!ok) downloadTextFile(`${safeFilename(trailName)}-paper.txt`, text, "text/plain");
+                setDossierStatus(ok ? "Paper backup copied" : "Paper backup downloaded");
+                window.setTimeout(() => setDossierStatus(null), 2500);
+              }}
+            >
+              Paper backup
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
@@ -1448,6 +1479,12 @@ export function SafetyPanel({
             >
               Copy route card
             </Button>
+            {packWeather && (
+              <p className="text-xs text-muted-foreground col-span-full">
+                Using pack-time snapshot ({packWeather.source}
+                {packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.
+              </p>
+            )}
             <div className="grid grid-cols-3 gap-2">
               <Input value={tempC} placeholder="°C" onChange={(e) => setTempC(e.target.value)} />
               <Input value={windKph} placeholder="wind km/h" onChange={(e) => setWindKph(e.target.value)} />

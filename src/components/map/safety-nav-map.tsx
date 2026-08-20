@@ -20,17 +20,14 @@ interface SafetyNavMapProps {
   search?: GeoJSON.LineString | null;
   showGrid?: boolean;
   nightMode?: "off" | "red" | "nvg";
-<<<<<<< HEAD
   gpsDenied?: boolean;
   uncertaintyM?: number;
-=======
   /**
    * Pixels of vertical space reserved at the top of the canvas for a page-level
    * header overlay. Orientation labels are drawn below this so they stay legible
    * when warning banners stack up in the header.
    */
   topInsetPx?: number;
->>>>>>> origin/main
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -66,12 +63,9 @@ export function SafetyNavMap({
   search = null,
   showGrid = true,
   nightMode = "off",
-<<<<<<< HEAD
   gpsDenied = false,
   uncertaintyM,
-=======
   topInsetPx = 0,
->>>>>>> origin/main
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
@@ -296,25 +290,14 @@ export function SafetyNavMap({
       }
 
       if (user) {
-<<<<<<< HEAD
-        const p = project(user.lng, user.lat, bbox, width, height, 28);
-        const [minLng, , maxLng] = bbox;
-        const metersPerDeg = 111320 * Math.cos((user.lat * Math.PI) / 180);
-        const pxPerMeter = (width - 56) / Math.max((maxLng - minLng) * metersPerDeg, 1);
+        const p = toPx(user.lng, user.lat);
         const ringM = gpsDenied ? uncertaintyM ?? user.accuracy : user.accuracy;
         if (ringM && ringM > 0) {
-          const r = Math.min(ringM * pxPerMeter, 110);
+          // Same scale as everything else, so the ring is the real accuracy / DR radius.
+          const r = Math.min(ringM * pxPerMetre, gpsDenied ? 110 : 80);
           ctx.fillStyle = gpsDenied ? "rgba(249, 115, 22, 0.16)" : "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
           ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
-=======
-        const p = toPx(user.lng, user.lat);
-        if (user.accuracy && user.accuracy > 0) {
-          // Same scale as everything else, so the ring is the real accuracy radius.
-          ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.min(user.accuracy * pxPerMetre, 80), 0, Math.PI * 2);
->>>>>>> origin/main
           ctx.fill();
           if (gpsDenied) {
             ctx.setLineDash([4, 4]);
@@ -365,11 +348,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-<<<<<<< HEAD
-  }, [backtrack, bbox, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, uncertaintyM, user, waypoints]);
-=======
-  }, [backtrack, bbox, endpoints, follow, ghost, goto, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, user, waypoints]);
->>>>>>> origin/main
+  }, [backtrack, bbox, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

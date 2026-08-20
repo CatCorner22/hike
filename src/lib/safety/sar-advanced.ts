@@ -99,11 +99,22 @@ export interface LitterEvacAdvice {
   message: string;
 }
 
+const MAX_LITTER_DISTANCE_M = 100_000;
+const MAX_LITTER_PARTY = 50;
+
+function isSaneLitterInput(distanceM: number, partySize: number): boolean {
+  return (
+    Number.isFinite(distanceM) &&
+    distanceM > 0 &&
+    distanceM <= MAX_LITTER_DISTANCE_M &&
+    Number.isFinite(partySize) &&
+    partySize >= 1 &&
+    partySize <= MAX_LITTER_PARTY
+  );
+}
+
 export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice | null {
-  // Boundary validation from the safety-invariants suite: non-finite or absurd inputs get
-  // null, never advice built on a garbage number.
-  if (!Number.isFinite(distanceM) || distanceM <= 0 || distanceM > 100_000) return null;
-  if (!Number.isFinite(partySize) || partySize < 1 || partySize > 50) return null;
+  if (!isSaneLitterInput(distanceM, partySize)) return null;
   const party = Math.floor(partySize);
   const metres = distanceM;
   // One casualty plus one attendant on the airway; everyone else can take a handle.

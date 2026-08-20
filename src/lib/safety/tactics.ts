@@ -34,12 +34,6 @@ export function solarHour(date: Date, lng: number): number {
 export function watchMethodHeading(
   hourSolar: number,
   hemisphere: "north" | "south",
-<<<<<<< HEAD
-): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } {
-  const h = ((hourLocal % 24) + 24) % 24;
-  const hourOn12 = ((h % 12) + (h % 1)) * 30; // 0° = 12 o'clock
-  const mid = hourOn12 / 2;
-=======
 ): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } | null {
   if (!Number.isFinite(hourSolar) || hourSolar < 0 || hourSolar > 24 || (hemisphere !== "north" && hemisphere !== "south")) return null;
   const h = ((hourSolar % 24) + 24) % 24;
@@ -47,8 +41,6 @@ export function watchMethodHeading(
   const mid = (hourOn12 / 2 + (hourOn12 > 180 ? 180 : 0)) % 360;
   const clock = `~${Math.round(mid)}° clockwise from the 12 mark`;
 
-
->>>>>>> origin/main
   if (hemisphere === "north") {
     return {
       toward: "S",
@@ -178,20 +170,19 @@ export function lostPersonQuery(input: {
   ]);
 }
 
-export function sunVsWatchCheck(date: Date, lat: number, lng: number): string | null {
+export function sunVsWatchCheck(date: Date, lat: number, lng: number, localHour?: number): string | null {
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   const hemi = lat >= 0 ? "north" : "south";
-<<<<<<< HEAD
-  const fractional = localHour + date.getMinutes() / 60 + date.getSeconds() / 3600;
-  const watch = watchMethodHeading(fractional, hemi);
-  return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
-=======
-  // Solar time, not the device clock: see `solarHour`.
-  const watch = watchMethodHeading(solarHour(date, lng), hemi);
+  // Solar time, not the device clock: see `solarHour`. An explicit hour is accepted
+  // for field checks; the dial angle is still not the same quantity as sun azimuth.
+  const hour =
+    localHour != null && Number.isFinite(localHour)
+      ? ((localHour % 24) + 24) % 24 + date.getMinutes() / 60 + date.getSeconds() / 3600
+      : solarHour(date, lng);
+  const watch = watchMethodHeading(hour, hemi);
   if (!watch) return null;
-  return `Watch method: ${watch.hint} Sun ephemeris ${Math.round(sun.azimuth)}° true — they should agree within ~20°.`;
->>>>>>> origin/main
+  return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
 }
 
 /** 9 beads × 100 m = 1 km. Returns how many km completed plus leftover beads. */

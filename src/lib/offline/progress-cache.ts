@@ -1,6 +1,7 @@
 import {
   remainingElevationGain,
   resolveRemaining,
+  stabilizeLoop,
   type LatLng,
   type TrailProgress,
   type TravelDirection,
@@ -22,6 +23,7 @@ export interface RouteProgressCache {
   segmentCells: Map<string, number[]>;
   hasUnindexedSegments: boolean;
   lastSegment: number | null;
+  lastTraveledMeters: number | null;
 }
 
 const LOCAL_SEGMENT_WINDOW = 512;
@@ -68,7 +70,7 @@ export function createRouteProgressCache(pack: RoutePack): RouteProgressCache {
     }
     coordinateIndex += line.length;
   }
-  return { packId: pack.id, totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null };
+  return { packId: pack.id, totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null, lastTraveledMeters: null };
 }
 
 function wrappedLongitudeDelta(lng: number): number {
@@ -115,13 +117,13 @@ function validPoint(point: LatLng): boolean {
 function emptyProgress(point: LatLng, totalMeters: number, valid: boolean): TrailProgress {
   return {
     nearest: point,
-    offsetMeters: 0,
+    offsetMeters: Number.NaN,
     traveledMeters: 0,
     remainingMeters: totalMeters,
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
-    bearingToTrail: 0,
+    bearingToTrail: Number.NaN,
     valid,
   };
 }
@@ -174,7 +176,7 @@ export function progressWithRouteCache(
     cache.totalMeters,
     direction,
   );
-  return {
+  const progress = stabilizeLoop({
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
@@ -188,5 +190,7 @@ export function progressWithRouteCache(
     remainingDirection: direction,
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
-  };
+  }, cache.lastTraveledMeters != null ? { traveledMeters: cache.lastTraveledMeters } : null);
+  cache.lastTraveledMeters = progress.traveledMeters;
+  return progress;
 }

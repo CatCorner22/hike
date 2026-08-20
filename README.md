@@ -1,86 +1,79 @@
 # Hike
 
-A bespoke hiking app for planning hikes, tracking activities, real-time trail navigation, AI-consolidated trail research, and discovering tent and backcountry camping at state and national parks.
+A hiking app for exploring OSM trails, preparing an offline route pack, navigating without tiles, recording an activity, and sending an honest SOS grid.
 
-## Features
+## What actually works
 
-- **Explore trails** — Search OpenStreetMap hiking routes with map, elevation profiles, and difficulty tags
-- **Plan hikes** — Create trip plans with dates, notes, GPX import/export, and camping stops
-- **Track activities** — Record GPS tracks with distance, elevation gain, pace, and duration
-- **Navigate live** — Full-screen map navigation with off-trail alerts and elevation progress
-- **Trail research** — AI-synthesized briefs from NPS data and web sources (season, hazards, parking, crowds)
-- **Camping** — Tent, RV, backcountry, and walk-in sites from NPS, Recreation.gov RIDB, and state park open data (CA, CO, WA)
-- **Offline** — PWA with service worker; cache trails and plans in IndexedDB for backcountry use
+- **Explore** — OpenStreetMap hiking routes, elevation, difficulty tags
+- **Plan** — Dates, notes, GPX import, camping stops, and named waypoints
+- **Prepare offline** — Saves a route pack to IndexedDB `hike-nav-packs` (not the unused `hike-offline` trail/plan stores)
+- **Navigate** — Self-contained canvas map. Works with no network and no map tiles once a pack is on the device. Off-trail: warn at **35 m**, critical at **80 m** (adjusted for GPS accuracy)
+- **SOS / ICE** — One `navFix` (live GPS, last-known, or pace/heading dead reckon) for SMS, dossier, and “walk this bearing”
+- **Activities** — Start/stop/pause work offline. Pause stops GPS. Points queue in IndexedDB and replay when you are back online
+- **Camping** — NPS / RIDB / state parks / OSM. Search does **not** auto-sync the world on an empty result; pass `?sync=true` to refresh
+- **Research** — Optional AI brief. Reservation and source links are **https only**
+
+## What it is not
+
+This is land-nav / SAR / wilderness support — not weapons or targeting. It is not a substitute for a paper map, compass, or official park guidance.
 
 ## Tech stack
 
 - Next.js 16 (App Router) + TypeScript
-- MapLibre GL JS + react-map-gl
-- Drizzle ORM + Neon Postgres
-- Vercel AI SDK + Tavily (trail research)
-- Serwist (PWA service worker)
-- Turf.js (geospatial)
-- shadcn/ui + Tailwind CSS
+- MapLibre GL JS + react-map-gl (online maps); canvas HUD when navigating offline
+- Drizzle ORM + Neon Postgres **optional** — plans and activities fall back to `data/store.json`
+- Vercel AI SDK + Tavily (optional research)
+- Serwist PWA — **off in `npm run dev`**. Use `npm run build && npm start` to exercise the service worker
+- Turf.js, shadcn/ui, Tailwind CSS
 
 ## Getting started
 
-### 1. Install dependencies
-
 ```bash
 npm install
-```
-
-### 2. Configure environment
-
-Copy `.env.example` to `.env.local` and fill in values:
-
-```bash
 cp .env.example .env.local
 ```
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | Yes* | Neon Postgres connection string |
+| `DATABASE_URL` | No | Neon Postgres. Without it, plans/activities use the local JSON file store |
+| `LOCAL_STORE_PATH` | No | Override path for the file store (default `data/store.json`) |
 | `SESSION_SECRET` | **Yes in production** | Signs the anonymous device-owner cookie that scopes plans, activities and GPS tracks. Generate with `openssl rand -base64 32`. Without it the server refuses user data rather than serving location history unscoped. (`OWNER_TOKEN_SECRET` is accepted as a legacy alias.) |
 | `NPS_API_KEY` | For NPS camping/research | [developer.nps.gov](https://developer.nps.gov/) |
 | `RIDB_API_KEY` | For federal camping | [ridb.recreation.gov/profile](https://ridb.recreation.gov/profile) |
-| `OPENAI_API_KEY` | For AI research | OpenAI or compatible provider |
-| `TAVILY_API_KEY` | For web research | [tavily.com](https://tavily.com/) |
+| `OPENAI_API_KEY` | For AI research | Optional |
+| `TAVILY_API_KEY` | For web research | Optional |
 | `NEXT_PUBLIC_MAPTILER_KEY` | Optional | MapTiler outdoor tiles (defaults to OpenFreeMap) |
 
-\*Plans, activities, and cached data require Postgres. Trail search and maps work without a database.
-
-### 3. Set up the database
+### Database (optional)
 
 ```bash
-# Push schema to Neon
 npm run db:push
-
-# Or run the SQL migration manually
+# or
 psql $DATABASE_URL -f drizzle/0000_init.sql
+psql $DATABASE_URL -f drizzle/0001_campground_external_unique.sql
+psql $DATABASE_URL -f drizzle/0002_owner_scoping.sql
 ```
 
-### 4. Run locally
+`campgrounds.external_id` is unique. Upserts use that key.
+
+### Run
 
 ```bash
-npm run dev
+npm run dev          # no service worker
+npm test
+npm run build        # webpack + Serwist
+npm start            # PWA / offline shell
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
-
-### 5. Build for production
-
-```bash
-npm run build
-npm start
-```
 
 ## Deploy to Vercel
 
 1. Push to GitHub and import the repo in Vercel
 2. Add environment variables from `.env.example`
 3. Connect a [Neon Postgres](https://neon.tech) database and set `DATABASE_URL`
-4. Deploy — the app builds with webpack for Serwist PWA support
+4. Set `OWNER_TOKEN_SECRET` / `SESSION_SECRET` before production
+5. Deploy — the app builds with webpack for Serwist PWA support
 
 ## API keys
 
@@ -133,15 +126,15 @@ save the route before you lose coverage.
 
 ## Offline navigation (life-safety)
 
-Navigation is designed to keep working after cell service drops. Do this **before** you leave coverage:
+Do this **before** you leave coverage:
 
-1. Open the trail or plan while you still have service. The app auto-saves a **route pack** (geometry, elevation, GPX) to IndexedDB on this device.
-2. Tap **Prepare offline** if you want to confirm or refresh the pack.
-3. Install the PWA (Add to Home Screen) so the navigate shell is cached.
-4. Open **Navigate**. The screen uses a self-contained trail map that does **not** need map tiles or the network.
-5. Keep the phone charged. The navigate screen requests a wake lock so it stays visible.
+1. Open the trail or plan on Wi‑Fi. The app writes a **route pack** to `hike-nav-packs`.
+2. Tap **Prepare offline** to confirm or refresh.
+3. Install the PWA from a production build (`build && start`), not from `npm run dev`.
+4. Open **Navigate**. The trail line stays up with no tiles and no network.
+5. Keep the phone charged. Wake lock is requested; self-check reports whether it is actually held.
 
-If you open Navigate with no pack and no network, you will see a clear error: download the route first. GPS loss does not close the map — the last fix is held and marked stale. Off-trail warnings start at 35 m from the route and escalate at 80 m, after allowing for half the reported GPS accuracy; they show the bearing back to the route.
+If you open Navigate with no pack and no network, you get a clear error. A stale GPS fix is display-only. SOS and the map use the same point and source. Off-trail warnings start at 35 m from the route and escalate at 80 m, after allowing for half the reported GPS accuracy; they show the bearing back to the route.
 
 This is a navigation aid, not a substitute for a paper map, compass, or official park guidance.
 
@@ -152,25 +145,20 @@ src/
 ├── app/              # Pages and API routes
 ├── components/       # UI, map, trails, activities, camping
 └── lib/
-    ├── db/           # Drizzle schema and connection
-    ├── osm/          # Overpass API trail queries
-    ├── nps/          # National Park Service API
-    ├── ridb/         # Recreation.gov RIDB API
-    ├── state-parks/  # CA, CO, WA GeoJSON ingest
-    ├── geo/          # Turf helpers, GPX, elevation
-    ├── research/     # AI trail research pipeline
-    └── offline/      # IndexedDB helpers
+    ├── db/           # Drizzle schema (optional Postgres)
+    ├── store/        # File-store fallback when DATABASE_URL is unset
+    ├── osm/          # Overpass trail queries
+    ├── geo/          # Segment-safe distance, GPX, elevation
+    ├── offline/      # Route packs (hike-nav-packs) + activity queue
+    └── safety/       # Land-nav, SOS, ICE, GPS quality
 ```
 
 ## Data sources
 
-- **Trails:** OpenStreetMap via Overpass API (`route=hiking`)
-- **Elevation:** Open-Elevation API
-- **National park camping:** NPS Data API
-- **Federal recreation:** Recreation.gov RIDB (facilities, permit entrances)
-- **State parks:** California CNRA, Colorado, Washington open GeoJSON/ArcGIS
-- **Backcountry camps:** OSM `tourism=camp_site` nodes
-- **Research:** NPS articles/alerts + Tavily web search + OpenAI synthesis
+- Trails: OpenStreetMap via Overpass (`route=hiking`)
+- Elevation: Open-Elevation
+- Camping: NPS, Recreation.gov RIDB, CA/CO/WA open data, OSM camp sites
+- Research: NPS + Tavily + OpenAI when keys are set
 
 ## License
 

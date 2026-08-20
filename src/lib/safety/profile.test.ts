@@ -23,10 +23,11 @@ describe("return-time resolution", () => {
     });
   });
 
-  it("does not label an invalid persisted deadline as overdue", () => {
+  it("fails closed on an invalid persisted deadline", () => {
     expect(overdueStatus("not-a-date")).toMatchObject({
-      overdue: false,
+      overdue: true,
       remainingMin: null,
     });
+    expect(overdueStatus("not-a-date").label).toMatch(/invalid/i);
   });
 });

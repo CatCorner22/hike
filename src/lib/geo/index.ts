@@ -17,7 +17,6 @@ export function lineLengthMeters(
   }, 0);
 }
 
-<<<<<<< HEAD
 export function distanceToTrailMeters(
   point: { lat: number; lng: number },
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
@@ -94,15 +93,11 @@ export function computeTrackStats(
     }
   }
 
-  const startTime = coordinates[0].elevation;
-  void startTime;
-
   return {
     distanceMeters,
     elevationGainMeters,
     durationSeconds: 0,
-    avgPaceMinPerKm:
-      distanceMeters > 0 ? (0 / (distanceMeters / 1000)) : 0,
+    avgPaceMinPerKm: 0,
   };
 }
 
@@ -134,8 +129,6 @@ export function computeTrackStatsWithTime(
   };
 }
 
-=======
->>>>>>> origin/main
 export function coordsToLineString(
   coordinates: Array<{ lat: number; lng: number }>,
 ): GeoJSON.LineString {
@@ -176,7 +169,17 @@ export function formatPace(minPerKm: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")} /mi`;
 }
 
-<<<<<<< HEAD
+const ELEVATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const elevationCache = new Map<string, {
+  expiresAt: number;
+  profile: Array<{ distanceMeters: number; elevation: number }>;
+}>();
+
+function cacheElevationProfile(key: string, profile: Array<{ distanceMeters: number; elevation: number }>) {
+  elevationCache.set(key, { expiresAt: Date.now() + ELEVATION_CACHE_TTL_MS, profile });
+  return profile;
+}
+
 function sampleAlongSegments(
   segments: GeoJSON.Position[][],
   samples: number,
@@ -204,43 +207,21 @@ function sampleAlongSegments(
     if (picked) points.push({ ...picked, distanceMeters: target });
   }
   return points;
-=======
-const ELEVATION_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
-const elevationCache = new Map<string, {
-  expiresAt: number;
-  profile: Array<{ distanceMeters: number; elevation: number }>;
-}>();
-
-function cacheElevationProfile(key: string, profile: Array<{ distanceMeters: number; elevation: number }>) {
-  elevationCache.set(key, { expiresAt: Date.now() + ELEVATION_CACHE_TTL_MS, profile });
-  return profile;
->>>>>>> origin/main
 }
 
 export async function fetchElevationProfile(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   samples: number = 50,
 ): Promise<Array<{ distanceMeters: number; elevation: number }>> {
-<<<<<<< HEAD
-  const segments = geometrySegments(geometry);
-  const points = sampleAlongSegments(segments, samples);
-  const length = points[points.length - 1]?.distanceMeters ?? 0;
-=======
   const cacheKey = JSON.stringify({ geometry, samples });
   const cached = elevationCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.profile;
   if (cached) elevationCache.delete(cacheKey);
 
-  const line = turf.lineString(
-    geometry.type === "LineString" ? geometry.coordinates : geometry.coordinates.flat(),
-  );
-  const length = turf.length(line, { units: "meters" });
-  const points: Array<{ lat: number; lng: number }> = [];
-  for (let i = 0; i <= samples; i++) {
-    const point = turf.along(line, (length * i) / samples, { units: "meters" });
-    points.push({ lat: point.geometry.coordinates[1], lng: point.geometry.coordinates[0] });
-  }
->>>>>>> origin/main
+  const segments = geometrySegments(geometry);
+  const points = sampleAlongSegments(segments, samples);
+  const length = points[points.length - 1]?.distanceMeters ?? 0;
+  if (!points.length) return cacheElevationProfile(cacheKey, []);
 
   try {
     const response = await fetch("https://api.open-elevation.com/api/v1/lookup", {
@@ -250,22 +231,13 @@ export async function fetchElevationProfile(
     });
     if (!response.ok) return cacheElevationProfile(cacheKey, []);
     const data = await response.json();
-<<<<<<< HEAD
-    return (data.results || []).map(
-      (r: { elevation: number }, i: number) => ({
-        distanceMeters: points[i]?.distanceMeters ?? (length * i) / samples,
-        elevation: r.elevation,
-      }),
-    );
-=======
     const profile = (data.results || [])
       .filter((result: { elevation?: unknown }) => typeof result.elevation === "number" && Number.isFinite(result.elevation))
       .map((result: { elevation: number }, index: number) => ({
-        distanceMeters: (length * index) / samples,
+        distanceMeters: points[index]?.distanceMeters ?? (length * index) / samples,
         elevation: result.elevation,
       }));
     return cacheElevationProfile(cacheKey, profile);
->>>>>>> origin/main
   } catch {
     return cacheElevationProfile(cacheKey, []);
   }
@@ -293,7 +265,6 @@ export function gpxFromLineString(
   name: string,
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): string {
-<<<<<<< HEAD
   const segments = geometrySegments(geometry);
   const segs = segments
     .map((coords) => {
@@ -304,23 +275,11 @@ export function gpxFromLineString(
     })
     .join("\n");
 
-=======
-  const segments = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
-  const trksegs = segments.map((coordinates) => `    <trkseg>
-${coordinates
-    .map(([lng, lat]) => `      <trkpt lat="${lat}" lon="${lng}"></trkpt>`)
-    .join("\n")}
-    </trkseg>`).join("\n");
->>>>>>> origin/main
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Hike App">
   <trk>
     <name>${escapeXml(name)}</name>
-<<<<<<< HEAD
 ${segs}
-=======
-${trksegs}
->>>>>>> origin/main
   </trk>
 </gpx>`;
 }
@@ -354,92 +313,41 @@ function escapeXml(str: string): string {
     .replace(/'/g, "&apos;");
 }
 
-<<<<<<< HEAD
 const GPX_MAX_CHARS = 5_000_000;
 const GPX_MAX_POINTS = 20_000;
-
-function parseTrkptAttrs(tag: string, body = ""): GeoJSON.Position | null {
-  const lat = /lat="([^"]+)"/.exec(tag)?.[1];
-  const lon = /lon="([^"]+)"/.exec(tag)?.[1];
-  if (lat == null || lon == null) return null;
-  const lng = Number(lon);
-  const la = Number(lat);
-  if (!Number.isFinite(lng) || !Number.isFinite(la)) return null;
-  const eleRaw = /<ele>\s*([^<]+)\s*<\/ele>/i.exec(body)?.[1];
-  const ele = eleRaw != null ? Number(eleRaw) : Number.NaN;
-  return Number.isFinite(ele) ? [lng, la, ele] : [lng, la];
-}
-
-export function parseGpx(
-  gpxContent: string,
-): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  if (!gpxContent || gpxContent.length > GPX_MAX_CHARS) return null;
-  const segRe = /<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi;
-  const ptRe = /<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>|<trkpt\b([^>]*)\/>/gi;
-  const segments: GeoJSON.Position[][] = [];
-  let total = 0;
-  let segMatch: RegExpExecArray | null;
-  while ((segMatch = segRe.exec(gpxContent)) !== null) {
-    const coords: GeoJSON.Position[] = [];
-    let pt: RegExpExecArray | null;
-    const body = segMatch[1];
-    ptRe.lastIndex = 0;
-    while ((pt = ptRe.exec(body)) !== null) {
-      const attrs = pt[1] ?? pt[3] ?? "";
-      const pos = parseTrkptAttrs(attrs, pt[2] ?? "");
-      if (!pos) continue;
-      coords.push(pos);
-      total += 1;
-      if (total > GPX_MAX_POINTS) return null;
-    }
-    if (coords.length >= 2) segments.push(coords);
-=======
 const STRICT_DECIMAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+
+function parseStrictDecimal(raw: string | undefined): number | null {
+  const normalized = raw?.trim();
+  if (!normalized || !STRICT_DECIMAL.test(normalized)) return null;
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
+}
 
 function parsePoints(xml: string, tag: "trkpt" | "rtept"): GeoJSON.Position[] | null {
   const points: GeoJSON.Position[] = [];
-  const tagRegex = new RegExp(`<${tag}\\b([^>]*)/?>`, "gi");
+  const tagRegex = new RegExp(`<${tag}\\b([^>]*?)\\s*(?:/>|>([\\s\\S]*?)</${tag}>)`, "gi");
   for (const match of xml.matchAll(tagRegex)) {
     const attributes = match[1];
+    const body = match[2] ?? "";
     const lat = attributes.match(/\blat\s*=\s*(["'])(.*?)\1/i)?.[2];
     const lng = attributes.match(/\blon\s*=\s*(["'])(.*?)\1/i)?.[2];
-    const normalizedLat = lat?.trim();
-    const normalizedLng = lng?.trim();
     // parseFloat accepts numeric prefixes (for example "12evil"). GPX
     // coordinates must be complete strict decimal values, never a best effort.
-    if (!normalizedLat || !normalizedLng || !STRICT_DECIMAL.test(normalizedLat) || !STRICT_DECIMAL.test(normalizedLng)) return null;
-    const parsedLat = Number(normalizedLat);
-    const parsedLng = Number(normalizedLng);
-    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng) || parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
-    points.push([parsedLng, parsedLat]);
->>>>>>> origin/main
+    const parsedLat = parseStrictDecimal(lat);
+    const parsedLng = parseStrictDecimal(lng);
+    if (parsedLat == null || parsedLng == null) return null;
+    if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) return null;
+    const eleRaw = /<ele>\s*([^<]+)\s*<\/ele>/i.exec(body)?.[1];
+    const ele = eleRaw != null ? Number(eleRaw.trim()) : Number.NaN;
+    points.push(Number.isFinite(ele) ? [parsedLng, parsedLat, ele] : [parsedLng, parsedLat]);
+    if (points.length > GPX_MAX_POINTS) return null;
   }
   return points;
 }
 
-<<<<<<< HEAD
-  if (segments.length === 0) {
-    const coords: GeoJSON.Position[] = [];
-    let pt: RegExpExecArray | null;
-    const all = /<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>|<trkpt\b([^>]*)\/>/gi;
-    while ((pt = all.exec(gpxContent)) !== null) {
-      const attrs = pt[1] ?? pt[3] ?? "";
-      const pos = parseTrkptAttrs(attrs, pt[2] ?? "");
-      if (!pos) continue;
-      coords.push(pos);
-      if (coords.length > GPX_MAX_POINTS) return null;
-    }
-    if (coords.length < 2) return null;
-    return { type: "LineString", coordinates: coords };
-  }
-
-  if (segments.length === 1) {
-    return { type: "LineString", coordinates: segments[0] };
-  }
-  return { type: "MultiLineString", coordinates: segments };
-=======
 export function parseGpx(gpxContent: string): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  if (typeof gpxContent !== "string") return null;
+  if (typeof gpxContent !== "string" || !gpxContent || gpxContent.length > GPX_MAX_CHARS) return null;
   const parsedSegments = [...gpxContent.matchAll(/<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi)]
     .map((match) => parsePoints(match[1], "trkpt"));
   if (parsedSegments.some((segment) => segment === null)) return null;
@@ -458,7 +366,21 @@ export function parseGpx(gpxContent: string): GeoJSON.LineString | GeoJSON.Multi
   return segments.length === 1
     ? { type: "LineString", coordinates: segments[0] }
     : { type: "MultiLineString", coordinates: segments };
->>>>>>> origin/main
+}
+
+function positionsFromGeometry(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+): GeoJSON.Position[] | null {
+  if (geometry.type === "LineString") {
+    return Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
+  }
+  if (geometry.type !== "MultiLineString" || !Array.isArray(geometry.coordinates)) return null;
+  const coords: GeoJSON.Position[] = [];
+  for (const line of geometry.coordinates) {
+    if (!Array.isArray(line)) return null;
+    for (const coordinate of line) coords.push(coordinate);
+  }
+  return coords;
 }
 
 export function bboxFromGeometry(
@@ -467,12 +389,7 @@ export function bboxFromGeometry(
 ): [number, number, number, number] | null {
   if (!Number.isFinite(padding) || padding < 0) return null;
   if (!geometry || typeof geometry !== "object") return null;
-  const coords =
-    geometry.type === "LineString"
-      ? Array.isArray(geometry.coordinates) ? geometry.coordinates : null
-      : geometry.type === "MultiLineString" && Array.isArray(geometry.coordinates)
-        ? geometry.coordinates.flat()
-        : null;
+  const coords = positionsFromGeometry(geometry);
   if (!coords) return null;
 
   let minLat = Infinity;

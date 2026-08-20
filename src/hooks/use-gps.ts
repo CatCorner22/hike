@@ -85,6 +85,7 @@ export function useGps() {
 
     const applyFix = (position: GeolocationPosition) => {
       lastCallbackRef.current = Date.now();
+      deniedRef.current = false;
       const lat = position.coords.latitude;
       const lng = position.coords.longitude;
       if (!isValidLatLng(lat, lng)) return;
@@ -141,19 +142,16 @@ export function useGps() {
       lastCallbackRef.current = Date.now();
       if (error.code === error.PERMISSION_DENIED) {
         deniedRef.current = true;
-<<<<<<< HEAD
+        deniedSinceRef.current = Date.now();
         if (lastFixRef.current) {
           lastFixRef.current = { ...lastFixRef.current, stale: true };
         }
-=======
-        deniedSinceRef.current = Date.now();
->>>>>>> origin/main
-        setState((prev) => ({
+        setState({
           fix: lastFixRef.current,
           status: "denied",
           message:
             "Location permission is off. Enable it in the browser to see your position. The downloaded route remains on the map.",
-        }));
+        });
         return;
       }
       if (lastFixRef.current) {

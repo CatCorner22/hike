@@ -253,35 +253,22 @@ export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
 }
 
 /**
- * Returns null for an unparseable time. An invalid stored value used to fall through
+ * Fail closed on an unparseable time. An invalid stored value used to fall through
  * to `NaN <= 0 === false`, which silently disabled the overdue alarm and rendered
  * "Return in NaN min" — the alarm looked armed while doing nothing.
  */
 export function overdueStatus(returnAt: string, now = Date.now()) {
-<<<<<<< HEAD
-  const parsed = Date.parse(returnAt);
-  if (!Number.isFinite(parsed)) {
+  const deadline = Date.parse(returnAt);
+  if (!Number.isFinite(deadline) || !Number.isFinite(now)) {
+    // Fail closed: an unreadable stored deadline is not a safe countdown.
+    // remainingMin is null (never NaN) so the UI cannot print "Return in NaN min".
     return {
       overdue: true,
-      remainingMin: Number.NaN,
+      remainingMin: null,
       label: "Return time is invalid — set it again or send SOS",
     };
   }
-  const remainingMin = Math.round((parsed - now) / 60000);
-=======
-  const deadline = Date.parse(returnAt);
-  if (!Number.isFinite(deadline) || !Number.isFinite(now)) {
-    // Return a shaped result rather than null: callers render `label` directly,
-    // and an unparseable stored deadline must read as "unknown", never as
-    // "overdue" (which would trigger a false alarm) and never as safe.
-    return {
-      overdue: false,
-      remainingMin: null,
-      label: "Return time invalid — set a real local time.",
-    };
-  }
   const remainingMin = Math.round((deadline - now) / 60000);
->>>>>>> origin/main
   if (remainingMin <= 0) {
     return {
       overdue: true,
