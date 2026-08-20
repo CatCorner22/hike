@@ -46,10 +46,18 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
  * UTM grid convergence (degrees, east-positive): the angle between grid north and
  * true north. Reaches ~3° at a zone edge, so it is not optional in a grid workflow.
  * Convention: grid azimuth = true azimuth − convergence.
+ *
+ * Returns null rather than 0 where UTM does not apply or the coordinate is
+ * impossible. Returning 0 would be indistinguishable from a real zero-degree
+ * convergence on the central meridian, so a caller could not tell "no
+ * correction needed" from "this coordinate is nonsense" — and would then apply
+ * an uncorrected grid azimuth as if it had been checked.
  */
 export function gridConvergence(lat: number, lng: number): number | null {
   if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   const rad = Math.PI / 180;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
   const zone = utmZone(lat, lng);
   if (zone == null) return null;
   const lon0 = (zone - 1) * 6 - 180 + 3;

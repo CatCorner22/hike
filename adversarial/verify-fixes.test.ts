@@ -99,7 +99,11 @@ describe("VERIFY: fail-closed on unknown enums and impossible physics", () => {
     expect(lightningRule(-5)).toBeNull();
     expect(boilTimeMinutes(-50000)).toBeNull();
     expect(radioHorizonKm(1e6)).toBeNull();
-    expect(litterEvacTime(-5, 2)).toBeNull();
+    // Main changed litterEvacTime to return an explicit refusal message rather
+    // than null. That is better than null, which renders as "—" and tells a
+    // party nothing. So assert the safety property -- no fictional ETA -- rather
+    // than the representation.
+    expect(litterEvacTime(-5, 2)).not.toMatch(/~\s*[\d.]+\s*(min|h)\b/);
   });
 });
 

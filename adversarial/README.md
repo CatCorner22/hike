@@ -51,13 +51,39 @@ OWNER_TOKEN_SECRET="$(openssl rand -base64 32)" \
 Regressions here are safety issues: `progressAlongTrail` runs on every GPS fix,
 and a 25-second stitch hangs the server.
 
+Reproduce with `npm run bench`, which writes `adversarial/perf-results.json`.
+Absolute numbers are machine-dependent; these are from a 2-vCPU Linux runner.
+
 | Operation | Before | After |
 | --- | --- | --- |
-| `relationToLineString`, 5k ways | 24,700 ms | 40 ms |
-| `progressAlongTrail`, 100k pts (per fix) | 477 ms | 0.2 ms steady |
+| `relationToLineString`, 5k disconnected ways | 24,700 ms | 41 ms |
+| `progressAlongTrail`, 100k pts (per fix) | 494 ms | 0.15 ms steady |
 | GPX persisted per 100k-pt pack | 6.79 MB | 0 B |
-| Local store write at 50k points | 727 ms | 0.33 ms |
 | `/navigate` client JS (gzip) | 148,744 B | 111,429 B |
+
+### Correction: local store write
+
+An earlier version of this table claimed the local store write at 50k points
+went from 727 ms to **0.33 ms**. That was wrong, and `npm run bench` could not
+have supported it because the script was misconfigured and silently ran nothing
+(`vitest` reported "No test suite found" for a plain script, and exited before
+executing it). Both are fixed: the bench now runs under `tsx`, and CI runs it.
+
+Measured append latency, after caching the parsed store in memory and dropping
+JSON indentation:
+
+| Existing points | Before | After |
+| --- | --- | --- |
+| 0 | 0.91 ms | 1.32 ms |
+| 10,000 | 21.8 ms | 16.4 ms |
+| 50,000 | 105.2 ms | 100.6 ms |
+
+The improvement is marginal because the cost is dominated by `JSON.stringify` of
+the whole store plus the file write, which is inherently O(n) per mutation. This
+path is the JSON fallback store, gated behind
+`ALLOW_LOCAL_STORE_IN_PRODUCTION`; Postgres is the real write path and is not
+affected. Treated as a documented limitation of the fallback rather than a
+claimed fix.
 
 ## A note on one assertion
 

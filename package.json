@@ -15,7 +15,10 @@
     "test:adversarial": "vitest run adversarial",
     "test:api-probe": "node adversarial/api-probe.mjs",
     "test:offline-probe": "node adversarial/offline-adversarial.mjs",
-    "bench": "vitest run adversarial/perf.bench.ts"
+    "bench": "tsx adversarial/perf.bench.ts",
+    "test:gps-probe": "node adversarial/gps-adversarial.mjs",
+    "test:csp": "node adversarial/csp-check.mjs",
+    "test:concurrency": "node adversarial/retest-concurrency.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.43",
@@ -54,6 +57,7 @@
     "fake-indexeddb": "^6.2.5",
     "playwright": "^1.62.1",
     "tailwindcss": "^4",
+    "tsx": "^4.19.2",
     "typescript": "^5",
     "vitest": "^4.1.11"
   }
