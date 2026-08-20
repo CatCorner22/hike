@@ -258,6 +258,17 @@ export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
  * "Return in NaN min" — the alarm looked armed while doing nothing.
  */
 export function overdueStatus(returnAt: string, now = Date.now()) {
+<<<<<<< HEAD
+  const parsed = Date.parse(returnAt);
+  if (!Number.isFinite(parsed)) {
+    return {
+      overdue: true,
+      remainingMin: Number.NaN,
+      label: "Return time is invalid — set it again or send SOS",
+    };
+  }
+  const remainingMin = Math.round((parsed - now) / 60000);
+=======
   const deadline = Date.parse(returnAt);
   if (!Number.isFinite(deadline) || !Number.isFinite(now)) {
     // Return a shaped result rather than null: callers render `label` directly,
@@ -270,6 +281,7 @@ export function overdueStatus(returnAt: string, now = Date.now()) {
     };
   }
   const remainingMin = Math.round((deadline - now) / 60000);
+>>>>>>> origin/main
   if (remainingMin <= 0) {
     return {
       overdue: true,

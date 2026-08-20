@@ -126,7 +126,7 @@ describe("progressAlongTrail empty geometry", () => {
     };
     const progress = progressAlongTrail({ lat: 37, lng: -119 }, empty);
     expect(progress.traveledMeters).toBe(0);
-    expect(progress.offsetMeters).toBe(0);
+    expect(Number.isFinite(progress.offsetMeters)).toBe(false);
   });
 });
 

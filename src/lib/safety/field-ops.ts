@@ -31,7 +31,11 @@ export function heatIndexC(tempC: number, rhPct: number): number | null {
     0.00122874 * t * t * r +
     0.00085282 * t * r * r -
     0.00000199 * t * t * r * r;
-  return Math.round((((hiF - 32) * 5) / 9) * 10) / 10;
+  const hiC = Math.round((((hiF - 32) * 5) / 9) * 10) / 10;
+  // Rothfusz undershoots at the 27 °C / 40 % edge — do not report a "heat index"
+  // cooler than the air as if it were a real heat hazard.
+  if (hiC <= tempC) return null;
+  return hiC;
 }
 
 export function heatWarning(tempC: number, rhPct: number): string | null {

@@ -24,10 +24,20 @@ describe("amsAssessment", () => {
     expect(r.warning).toBeNull();
   });
 
+<<<<<<< HEAD
+  it("does not treat fatigue at 1500 m as AMS", () => {
+    const r = amsAssessment({ altitudeM: 1500, symptoms: ["fatigue"] });
+    expect(r.level).toBe("none");
+    expect(r.warning).toBeNull();
+  });
+
+  it("warns on rapid gain at altitude", () => {
+=======
   // Regression: altitude and ascent rate were scored into the same total as symptoms, so
   // a well hiker at 3500 m after a fast climb was told they had "Moderate altitude
   // illness". Exposure must still warn, but it is not a diagnosis.
   it("warns on rapid gain at altitude without calling it illness", () => {
+>>>>>>> origin/main
     const r = amsAssessment({ altitudeM: 3000, gainLastHourM: 450, symptoms: [] });
     expect(r.level).toBe("none");
     expect(r.warning).toMatch(/altitude|Higher|fast|watch for/i);

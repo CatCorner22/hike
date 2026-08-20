@@ -1,3 +1,15 @@
+<<<<<<< HEAD
+type WakeLockSentinelLike = {
+  released?: boolean;
+  release: () => Promise<void>;
+  addEventListener?: (type: "release", listener: () => void) => void;
+  removeEventListener?: (type: "release", listener: () => void) => void;
+};
+
+let activeLock: { release: () => void } | null = null;
+let lockHeld = false;
+let sentinel: WakeLockSentinelLike | null = null;
+=======
 /**
  * Screen wake lock for the navigate screen.
  *
@@ -8,6 +20,7 @@
  * its own reasons (battery saver). Without listening for `release`, the flag stayed true
  * forever after the first successful acquire.
  */
+>>>>>>> origin/main
 
 interface WakeLockSentinel {
   release: () => Promise<void>;
@@ -39,7 +52,11 @@ export function subscribeWakeLock(listener: () => void): () => void {
 
 export async function requestWakeLock(): Promise<WakeLockHandle> {
   const nav = navigator as Navigator & {
+<<<<<<< HEAD
+    wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinelLike> };
+=======
     wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
+>>>>>>> origin/main
   };
 
   if (!nav.wakeLock) {
@@ -47,6 +64,11 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
     return { release() {} };
   }
 
+<<<<<<< HEAD
+  const onSentinelRelease = () => {
+    lockHeld = false;
+    sentinel = null;
+=======
   // Releasing any previous lock first stops its visibilitychange listener leaking when
   // this is called twice without an intervening release.
   activeLock?.release();
@@ -59,15 +81,22 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
       sentinel.removeEventListener?.("release", onSentinelRelease);
     }
     onSentinelRelease = null;
+>>>>>>> origin/main
   };
 
   const acquire = async () => {
     detachSentinel();
     try {
+      sentinel?.removeEventListener?.("release", onSentinelRelease);
       sentinel = await nav.wakeLock!.request("screen");
+<<<<<<< HEAD
+      lockHeld = sentinel != null && sentinel.released !== true;
+      sentinel?.addEventListener?.("release", onSentinelRelease);
+=======
       onSentinelRelease = () => setHeld(false);
       sentinel.addEventListener?.("release", onSentinelRelease);
       setHeld(sentinel != null);
+>>>>>>> origin/main
     } catch {
       sentinel = null;
       setHeld(false);
@@ -83,10 +112,17 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
   const lock: WakeLockHandle = {
     release() {
       document.removeEventListener("visibilitychange", onVisible);
+<<<<<<< HEAD
+      sentinel?.removeEventListener?.("release", onSentinelRelease);
+      void sentinel?.release();
+      lockHeld = false;
+      sentinel = null;
+=======
       detachSentinel();
       void sentinel?.release();
       sentinel = null;
       setHeld(false);
+>>>>>>> origin/main
       if (activeLock === lock) activeLock = null;
     },
   };
@@ -100,7 +136,7 @@ export async function requestWakeLock(): Promise<WakeLockHandle> {
 }
 
 export function isWakeLockHeld(): boolean {
-  return lockHeld && activeLock != null;
+  return lockHeld && activeLock != null && sentinel?.released !== true;
 }
 
 export async function releaseWakeLock() {
@@ -113,5 +149,9 @@ export async function releaseWakeLock() {
 export function __resetWakeLockForTests() {
   activeLock = null;
   lockHeld = false;
+<<<<<<< HEAD
+  sentinel = null;
+=======
   listeners.clear();
+>>>>>>> origin/main
 }

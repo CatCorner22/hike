@@ -30,7 +30,13 @@ export function nineLineMedevac(input: {
     "9-LINE MEDEVAC / SAR",
     `L1 LOCATION: ${reportField(loc)}`,
     "L2 FREQ/CALL: SMS/CELL — Hike app",
+<<<<<<< HEAD
+    `L3 PATIENTS BY PRECEDENCE: ${patients} ${prec} (${
+      prec === "A" ? "Urgent" : prec === "B" ? "Urgent Surgical" : "Priority"
+    })`,
+=======
     `L3 PATIENTS BY PRECEDENCE: ${reportField(patients)}${prec} (${prec === "A" ? "Urgent" : prec === "B" ? "Priority" : "Routine"})`,
+>>>>>>> origin/main
     "L4 SPECIAL EQUIPMENT: None stated",
     `L5 PATIENTS BY TYPE: ${reportField(litter)}L ${reportField(amb)}A`,
     "L6 SECURITY: N — civilian wilderness",

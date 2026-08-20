@@ -42,6 +42,9 @@ export function toTrueBearing(magneticBearing: number, declination: number): num
   return ((magneticBearing + declination) % 360 + 360) % 360;
 }
 
+<<<<<<< HEAD
+/** G-M card: grid → magnetic includes UTM convergence (true − grid). */
+=======
 /**
  * UTM grid convergence (degrees, east-positive): the angle between grid north and
  * true north. Reaches ~3° at a zone edge, so it is not optional in a grid workflow.
@@ -60,6 +63,7 @@ export function gridConvergence(lat: number, lng: number): number | null {
  * G-M card. The grid-magnetic angle is declination *minus* grid convergence — the app
  * plots on UTM/USNG, so converting straight from declination is wrong by up to ~3°.
  */
+>>>>>>> origin/main
 export function gmAngleCard(lat: number, lng: number): {
   declination: number;
   convergence: number;
@@ -70,20 +74,38 @@ export function gmAngleCard(lat: number, lng: number): {
   lars: string;
 } | null {
   const declination = magneticDeclination(lat, lng);
+<<<<<<< HEAD
+  if (declination == null) {
+    return {
+      declination: Number.NaN,
+      east: true,
+      gridToMagnetic: "Magnetic unavailable here — use true / grid only.",
+      magneticToGrid: "Magnetic unavailable — do not convert compass bearings.",
+      lars: "No G-M model outside the North America grid. Treat compass as unconverted.",
+    };
+  }
+  const zone = Math.floor((lng + 180) / 6) + 1;
+  const central = -183 + zone * 6;
+  const convergence = (lng - central) * Math.sin((lat * Math.PI) / 180);
+  const gm = declination - convergence;
+  const east = gm >= 0;
+  const abs = Math.abs(gm).toFixed(1);
+=======
   if (declination == null) return null;
   const convergence = gridConvergence(lat, lng);
   if (convergence == null) return null;
   const gmAngle = declination - convergence;
   const east = gmAngle >= 0;
   const abs = Math.abs(gmAngle).toFixed(1);
+>>>>>>> origin/main
   return {
     declination,
     convergence,
     gmAngle,
     east,
     gridToMagnetic: east
-      ? `Grid → mag: subtract ${abs}° (east is least)`
-      : `Grid → mag: add ${abs}° (west is best)`,
+      ? `Grid → mag: subtract ${abs}° (decl ${declination.toFixed(1)}° · conv ${convergence.toFixed(1)}°)`
+      : `Grid → mag: add ${abs}° (decl ${declination.toFixed(1)}° · conv ${convergence.toFixed(1)}°)`,
     magneticToGrid: east
       ? `Mag → grid: add ${abs}°`
       : `Mag → grid: subtract ${abs}°`,

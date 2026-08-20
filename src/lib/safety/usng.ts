@@ -164,12 +164,45 @@ export function utmToLatLng(u: {
   return { lat: (lat * 180) / Math.PI, lng: (lng * 180) / Math.PI };
 }
 
+function parseUtmText(compact: string): { lat: number; lng: number } | null {
+  const match = compact.match(/^(\d{1,2})([NS])(\d{11,14})$/);
+  if (!match) return null;
+  const zone = Number(match[1]);
+  const north = match[2] === "N";
+  const digits = match[3];
+  const eLen = digits.length >= 13 ? 6 : 6;
+  const easting = Number(digits.slice(0, eLen));
+  const northing = Number(digits.slice(eLen));
+  if (!Number.isFinite(easting) || !Number.isFinite(northing)) return null;
+  return utmToLatLng({ zone, easting, northing, north });
+}
+
+function bandLatRange(band: string): { min: number; max: number } | null {
+  const i = BANDS.indexOf(band);
+  if (i < 0) return null;
+  const min = -80 + i * 8;
+  return { min, max: min + 8 };
+}
+
+function northingCandidates(northingMod: number, north: boolean): number[] {
+  const out: number[] = [];
+  for (let k = 0; k <= 4; k++) {
+    const n = northingMod + k * 2_000_000;
+    if (north && n < 10_000_000) out.push(n);
+    if (!north && n < 10_000_000) out.push(n);
+  }
+  return out;
+}
+
 export function parseUsng(
   text: string | null | undefined,
   hint?: { lat: number; lng: number },
 ): { lat: number; lng: number } | null {
   if (typeof text !== "string") return null;
   const compact = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const utm = parseUtmText(compact);
+  if (utm) return utm;
+
   const match = compact.match(/^(\d{1,2})([C-HJ-NP-X])([A-Z]{2})(\d{2,10})$/);
   if (!match) return null;
   const zone = Number(match[1]);
@@ -192,8 +225,25 @@ export function parseUsng(
   const rowIndex = ROWS.indexOf(row);
   if (rowIndex < 0) return null;
   const northingMod = ((rowIndex - rowOffset + 20) % 20) * 100000 + Number(nPart);
-
   const north = band >= "N";
+<<<<<<< HEAD
+  const range = bandLatRange(band);
+  const hintUtm = hint && isValidHint(hint) ? latLngToUtm(hint.lat, hint.lng) : null;
+
+  const candidates = northingCandidates(northingMod, north).map((northing) =>
+    utmToLatLng({ zone, easting, northing, north }),
+  );
+  const inBand = range
+    ? candidates.filter((p) => p.lat >= range.min - 1 && p.lat <= range.max + 1)
+    : candidates;
+
+  if (hint && isValidHint(hint)) {
+    const hinted = inBand
+      .map((p) => ({ p, d: Math.abs(p.lat - hint.lat) + Math.abs(p.lng - hint.lng) }))
+      .sort((a, b) => a.d - b.d)[0];
+    if (hinted && hinted.d < 2 && (!hintUtm || hintUtm.zone === zone)) return hinted.p;
+    return null;
+=======
   const hintUtm = hint ? latLngToUtm(hint.lat, hint.lng) : null;
   let northing: number;
   if (hintUtm && hintUtm.zone === zone) {
@@ -210,9 +260,19 @@ export function parseUsng(
     const period = 2_000_000;
     const delta = (((northingMod - target) % period) + period) % period;
     northing = target + (delta >= period / 2 ? delta - period : delta);
+>>>>>>> origin/main
   }
 
-  return utmToLatLng({ zone, easting, northing, north });
+  if (inBand.length === 1) return inBand[0];
+  if (inBand.length > 1) {
+    const mid = range ? (range.min + range.max) / 2 : 0;
+    return [...inBand].sort((a, b) => Math.abs(a.lat - mid) - Math.abs(b.lat - mid))[0];
+  }
+  return inBand[0] ?? null;
+}
+
+function isValidHint(hint: { lat: number; lng: number }) {
+  return Number.isFinite(hint.lat) && Number.isFinite(hint.lng);
 }
 
 export function formatDms(lat: number, lng: number): string {

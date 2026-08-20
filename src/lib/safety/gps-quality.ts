@@ -28,17 +28,29 @@ function normaliseEpoch(timestamp: number | undefined | null): number | null {
 }
 
 /**
+<<<<<<< HEAD
+ * Phone GPS timestamps are sometimes 0, seconds-since-epoch, or clock-skewed.
+ * Ancient times must keep their age (never become “now”). Future skew is clamped.
+=======
  * Normalise the timestamp on a **live** position reading. Phone GPS timestamps are
  * sometimes 0, seconds-since-epoch, or clock-skewed; a reading that just arrived from
  * `watchPosition` is current by definition, so an implausible value becomes `now`.
  *
  * Never call this on a stored or replayed fix — stamping it `now` would promote an old
  * position to a live one with no staleness marker. Use `sanitizeStoredFixTimestamp`.
+>>>>>>> origin/main
  */
 export function sanitizeFixTimestamp(
   timestamp: number | undefined | null,
   now = Date.now(),
 ): number {
+<<<<<<< HEAD
+  if (timestamp == null || !Number.isFinite(timestamp) || timestamp <= 0) return now;
+  let t = timestamp;
+  // 10-digit values are seconds; 13-digit values are milliseconds.
+  if (t < 1e11) t *= 1000;
+  if (t > now) return now;
+=======
   const t = normaliseEpoch(timestamp);
   if (t == null) { lastTimestampDiagnostic = "invalid-replaced"; return now; }
   // Any future timestamp is untrustworthy; do not allow a grace period.
@@ -59,6 +71,7 @@ export function sanitizeStoredFixTimestamp(
 ): number | null {
   const t = normaliseEpoch(timestamp);
   if (t == null || t > now || now - t > DISPLAY_FIX_MS) return null;
+>>>>>>> origin/main
   return t;
 }
 
@@ -66,6 +79,12 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
   return Math.max(0, now - recordedAt);
 }
 
+<<<<<<< HEAD
+/** Stale / last-known / storage-hydrated fixes are display-only — never trusted. */
+export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
+  if (stale) return false;
+  return fixAgeMs(recordedAt, now) <= TRUSTED_FIX_MS;
+=======
 /**
  * A live fix is trusted for `TRUSTED_FIX_MS`. A fix the GPS layer has already flagged
  * as held-over is not being confirmed by the receiver, so it gets the shorter leash —
@@ -75,6 +94,7 @@ export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now(
   if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now) return false;
   const limit = stale ? TRUSTED_STALE_FIX_MS : TRUSTED_FIX_MS;
   return fixAgeMs(recordedAt, now) <= limit;
+>>>>>>> origin/main
 }
 
 export function isDisplayableFix(recordedAt: number, now = Date.now()): boolean {

@@ -21,9 +21,19 @@ describe("gps quality", () => {
     expect(isTrustedFix(now - 3 * 60 * 60 * 1000, true, now)).toBe(false);
   });
 
-  it("still trusts a briefly dropped GPS lock", () => {
-    expect(isTrustedFix(now - 45_000, true, now)).toBe(true);
+  it("does not trust a stale or last-known fix, even if recent", () => {
+    expect(isTrustedFix(now - 45_000, true, now)).toBe(false);
     expect(isTrustedFix(now - TRUSTED_FIX_MS - 1, true, now)).toBe(false);
+  });
+
+  it("does not re-stamp a day-old timestamp as now", () => {
+    const ancient = now - 48 * 60 * 60 * 1000;
+    expect(sanitizeFixTimestamp(ancient, now)).toBe(ancient);
+    expect(isTrustedFix(ancient, false, now)).toBe(false);
+  });
+
+  it("clamps a slightly-future GPS clock to now", () => {
+    expect(sanitizeFixTimestamp(now + 60_000, now)).toBe(now);
   });
 
   it("hides last-known positions older than a day", () => {

@@ -41,6 +41,7 @@ import {
   copyEmergencyInfo,
   emergencyMessage,
   formatCoords,
+  type PositionSource,
 } from "@/lib/safety/emergency";
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
@@ -202,6 +203,9 @@ interface SafetyPanelProps {
   gpsDenied?: boolean;
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
+  onDeniedPaceLen?: (paceLen: number) => void;
+  isDark?: boolean;
+  positionSource?: PositionSource;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
   remainingGainM?: number;
@@ -241,6 +245,9 @@ export function SafetyPanel({
   gpsDenied = false,
   onToggleGpsDenied,
   onDeniedPaces,
+  onDeniedPaceLen,
+  isDark = false,
+  positionSource,
   geometry,
   remainingMeters,
   remainingGainM,
@@ -404,8 +411,9 @@ export function SafetyPanel({
         stale,
         recordedAt,
         profile,
+        positionSource,
       }),
-    [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile],
+    [lat, lng, accuracyM, trailName, offTrailM, stale, recordedAt, profile, positionSource],
   );
 
   async function handleCopy() {
@@ -458,11 +466,15 @@ export function SafetyPanel({
 
   const moon = useMemo(() => moonPhase(), []);
   const gm = lat != null && lng != null ? gmAngleCard(lat, lng) : null;
+  const declination = lat != null && lng != null ? magneticDeclination(lat, lng) : null;
   const imsafeNote = imsafeWarning(imsafe);
+<<<<<<< HEAD
+=======
   // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
   // happened to rank first — so "finish with a headlamp" read as darkness at midday,
   // and a GPS-denied or overdue warning read as daylight at midnight. It feeds
   // sereAssessment and casevacDecision, so it has to be the real value.
+>>>>>>> origin/main
   const sereNote = sereAssessment({
     isDark,
     altitudeM,
@@ -847,6 +859,7 @@ export function SafetyPanel({
                   accuracyM,
                   stale,
                   recordedAt,
+                  positionSource,
                   offTrailM,
                   returnAt: returnResolution?.instant.toISOString() ?? null,
                   checkins,
@@ -1078,7 +1091,15 @@ export function SafetyPanel({
               </div>
               <div>
                 <Label htmlFor="pace-len">Paces / 100 m</Label>
-                <Input id="pace-len" value={paceLen} onChange={(e) => setPaceLen(e.target.value)} />
+                <Input
+                  id="pace-len"
+                  value={paceLen}
+                  onChange={(e) => {
+                    setPaceLen(e.target.value);
+                    const n = Number(e.target.value);
+                    if (Number.isFinite(n) && n > 0) onDeniedPaceLen?.(n);
+                  }}
+                />
               </div>
             </div>
             <div>
@@ -1122,11 +1143,15 @@ export function SafetyPanel({
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Resection / offset / box / mils
             </p>
+            <p className="text-xs text-muted-foreground">
+              Resection: bearing FROM you TO each known point. Intersection: bearing FROM each
+              observer TO the unknown.
+            </p>
             <div className="grid grid-cols-2 gap-2">
               <Input value={gridA} placeholder="Known A grid" onChange={(e) => setGridA(e.target.value)} />
-              <Input value={brgA} placeholder="Bearing to A" onChange={(e) => setBrgA(e.target.value)} />
+              <Input value={brgA} placeholder="Bearing FROM observer A" onChange={(e) => setBrgA(e.target.value)} />
               <Input value={gridB} placeholder="Known B grid" onChange={(e) => setGridB(e.target.value)} />
-              <Input value={brgB} placeholder="Bearing to B" onChange={(e) => setBrgB(e.target.value)} />
+              <Input value={brgB} placeholder="Bearing FROM observer B" onChange={(e) => setBrgB(e.target.value)} />
             </div>
             <label className="flex items-center gap-2 text-xs text-muted-foreground">
               <input
@@ -1136,6 +1161,11 @@ export function SafetyPanel({
               />
               Bearings are magnetic
             </label>
+            {bearingsMag && declination == null && (
+              <p className="text-xs text-destructive">
+                Magnetic unavailable here — enter true bearings. Do not treat compass as already converted.
+              </p>
+            )}
             <Button
               variant="outline"
               onClick={() => {
@@ -1151,12 +1181,13 @@ export function SafetyPanel({
                   setResectInfo("Bearings must be numbers.");
                   return;
                 }
-                if (bearingsMag && lat != null && lng != null) {
-                  const dec = magneticDeclination(lat, lng);
-                  if (dec != null) {
-                    azA = toTrueBearing(azA, dec);
-                    azB = toTrueBearing(azB, dec);
+                if (bearingsMag) {
+                  if (declination == null) {
+                    setResectInfo("Magnetic unavailable here — enter true bearings or uncheck magnetic.");
+                    return;
                   }
+                  azA = toTrueBearing(azA, declination);
+                  azB = toTrueBearing(azB, declination);
                 }
                 const fix = resection(a, azA, b, azB);
                 if (!fix) {
@@ -1173,7 +1204,7 @@ export function SafetyPanel({
             </Button>
             <div className="grid grid-cols-2 gap-2">
               <Input value={gridC} placeholder="Known C (3-pt)" onChange={(e) => setGridC(e.target.value)} />
-              <Input value={brgC} placeholder="Bearing to C" onChange={(e) => setBrgC(e.target.value)} />
+              <Input value={brgC} placeholder="Bearing FROM observer C" onChange={(e) => setBrgC(e.target.value)} />
             </div>
             <Button
               variant="outline"
@@ -1186,11 +1217,11 @@ export function SafetyPanel({
                   return;
                 }
                 const toTrue = (raw: string) => {
-                  let az = Number(raw);
+                  const az = Number(raw);
                   if (!Number.isFinite(az)) return null;
-                  if (bearingsMag && lat != null && lng != null) {
-                    const dec = magneticDeclination(lat, lng);
-                    if (dec != null) az = toTrueBearing(az, dec);
+                  if (bearingsMag) {
+                    if (declination == null) return null;
+                    return toTrueBearing(az, declination);
                   }
                   return az;
                 };
@@ -1198,7 +1229,11 @@ export function SafetyPanel({
                 const azB = toTrue(brgB);
                 const azC = toTrue(brgC);
                 if (azA == null || azB == null || azC == null) {
-                  setResectInfo("All three bearings must be numbers.");
+                  setResectInfo(
+                    bearingsMag && declination == null
+                      ? "Magnetic unavailable here — enter true bearings or uncheck magnetic."
+                      : "All three bearings must be numbers.",
+                  );
                   return;
                 }
                 const fix = resection3([
@@ -1233,12 +1268,13 @@ export function SafetyPanel({
                   setResectInfo("Bearings must be numbers.");
                   return;
                 }
-                if (bearingsMag && lat != null && lng != null) {
-                  const dec = magneticDeclination(lat, lng);
-                  if (dec != null) {
-                    azA = toTrueBearing(azA, dec);
-                    azB = toTrueBearing(azB, dec);
+                if (bearingsMag) {
+                  if (declination == null) {
+                    setResectInfo("Magnetic unavailable here — enter true bearings or uncheck magnetic.");
+                    return;
                   }
+                  azA = toTrueBearing(azA, declination);
+                  azB = toTrueBearing(azB, declination);
                 }
                 const hit = intersection(a, azA, b, azB);
                 if (!hit) {
