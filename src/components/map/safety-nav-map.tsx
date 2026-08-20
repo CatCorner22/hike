@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { safeBbox, type LatLng } from "@/lib/geo/navigation";
+import { createProjector, followWindow } from "@/lib/geo/project";
 import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 
 interface SafetyNavMapProps {
@@ -30,31 +31,6 @@ function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
   return geometry.type === "LineString"
     ? [geometry.coordinates]
     : geometry.coordinates;
-}
-
-function followWindow(user: LatLng, radiusDeg = 0.003): [number, number, number, number] {
-  return [
-    user.lng - radiusDeg,
-    user.lat - radiusDeg,
-    user.lng + radiusDeg,
-    user.lat + radiusDeg,
-  ];
-}
-
-function project(
-  lng: number,
-  lat: number,
-  bbox: [number, number, number, number],
-  width: number,
-  height: number,
-  padding: number,
-) {
-  const [minLng, minLat, maxLng, maxLat] = bbox;
-  const xSpan = Math.max(maxLng - minLng, 0.0001);
-  const ySpan = Math.max(maxLat - minLat, 0.0001);
-  const x = padding + ((lng - minLng) / xSpan) * (width - padding * 2);
-  const y = padding + (1 - (lat - minLat) / ySpan) * (height - padding * 2);
-  return { x, y };
 }
 
 const WAYPOINT_COLORS: Record<string, string> = {
@@ -100,9 +76,12 @@ export function SafetyNavMap({
   }, [lines]);
 
   const bbox = useMemo(() => {
-    if (follow && user) return followWindow(user);
+    // Include the point the user is being sent to. A fixed window around the user alone
+    // dropped the route off the canvas at a few hundred metres — while the off-trail
+    // banner was still telling them to walk back to it.
+    if (follow && user) return followWindow(user, [nearest, goto]);
     return safeBbox(geometry, user ?? undefined);
-  }, [geometry, follow, user]);
+  }, [geometry, follow, user, nearest, goto]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -123,9 +102,8 @@ export function SafetyNavMap({
         nightMode === "red" ? "#140303" : nightMode === "nvg" ? "#03140a" : "#0b1220";
       ctx.fillRect(0, 0, width, height);
 
-      const userPx = user
-        ? project(user.lng, user.lat, bbox, width, height, 28)
-        : { x: width / 2, y: height / 2 };
+      const { toPx, pxPerMetre } = createProjector(bbox, width, height, 28);
+      const userPx = user ? toPx(user.lng, user.lat) : { x: width / 2, y: height / 2 };
 
       const rotation =
         headingUp && user?.heading != null ? (user.heading * Math.PI) / 180 : 0;
@@ -149,7 +127,7 @@ export function SafetyNavMap({
           ctx.beginPath();
           for (let n = startN, i = 0; n <= startN + reach * 2; n += step, i++) {
             const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = project(geo.lng, geo.lat, bbox, width, height, 28);
+            const p = toPx(geo.lng, geo.lat);
             if (i === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
@@ -159,7 +137,7 @@ export function SafetyNavMap({
           ctx.beginPath();
           for (let e = startE, i = 0; e <= startE + reach * 2; e += step, i++) {
             const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = project(geo.lng, geo.lat, bbox, width, height, 28);
+            const p = toPx(geo.lng, geo.lat);
             if (i === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
           }
@@ -186,7 +164,7 @@ export function SafetyNavMap({
         if (line.length < 2) continue;
         ctx.beginPath();
         line.forEach(([lng, lat], index) => {
-          const p = project(lng, lat, bbox, width, height, 28);
+          const p = toPx(lng, lat);
           if (index === 0) ctx.moveTo(p.x, p.y);
           else ctx.lineTo(p.x, p.y);
         });
@@ -194,8 +172,8 @@ export function SafetyNavMap({
       }
 
       if (endpoints) {
-        const start = project(endpoints.start.lng, endpoints.start.lat, bbox, width, height, 28);
-        const end = project(endpoints.end.lng, endpoints.end.lat, bbox, width, height, 28);
+        const start = toPx(endpoints.start.lng, endpoints.start.lat);
+        const end = toPx(endpoints.end.lng, endpoints.end.lat);
         ctx.fillStyle = "#22c55e";
         ctx.beginPath();
         ctx.arc(start.x, start.y, 6, 0, Math.PI * 2);
@@ -212,7 +190,7 @@ export function SafetyNavMap({
         ctx.lineWidth = 2;
         ctx.beginPath();
         search.coordinates.forEach(([lng, lat], index) => {
-          const p = project(lng, lat, bbox, width, height, 28);
+          const p = toPx(lng, lat);
           if (index === 0) ctx.moveTo(p.x, p.y);
           else ctx.lineTo(p.x, p.y);
         });
@@ -226,7 +204,7 @@ export function SafetyNavMap({
         ctx.lineWidth = 3;
         ctx.beginPath();
         backtrack.coordinates.forEach(([lng, lat], index) => {
-          const p = project(lng, lat, bbox, width, height, 28);
+          const p = toPx(lng, lat);
           if (index === 0) ctx.moveTo(p.x, p.y);
           else ctx.lineTo(p.x, p.y);
         });
@@ -235,7 +213,7 @@ export function SafetyNavMap({
       }
 
       for (const wp of waypoints) {
-        const p = project(wp.lng, wp.lat, bbox, width, height, 28);
+        const p = toPx(wp.lng, wp.lat);
         ctx.fillStyle = WAYPOINT_COLORS[wp.kind] ?? "#e5e7eb";
         ctx.beginPath();
         ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
@@ -243,7 +221,7 @@ export function SafetyNavMap({
       }
 
       if (goto) {
-        const p = project(goto.lng, goto.lat, bbox, width, height, 28);
+        const p = toPx(goto.lng, goto.lat);
         ctx.strokeStyle = "#facc15";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -253,7 +231,7 @@ export function SafetyNavMap({
         ctx.lineTo(p.x, p.y + 8);
         ctx.stroke();
         if (user) {
-          const from = project(user.lng, user.lat, bbox, width, height, 28);
+          const from = toPx(user.lng, user.lat);
           ctx.setLineDash([3, 5]);
           ctx.beginPath();
           ctx.moveTo(from.x, from.y);
@@ -264,8 +242,8 @@ export function SafetyNavMap({
       }
 
       if (user && nearest) {
-        const from = project(user.lng, user.lat, bbox, width, height, 28);
-        const to = project(nearest.lng, nearest.lat, bbox, width, height, 28);
+        const from = toPx(user.lng, user.lat);
+        const to = toPx(nearest.lng, nearest.lat);
         ctx.setLineDash([6, 6]);
         ctx.strokeStyle = "#f97316";
         ctx.lineWidth = 2;
@@ -281,7 +259,7 @@ export function SafetyNavMap({
       }
 
       if (ghost) {
-        const g = project(ghost.lng, ghost.lat, bbox, width, height, 28);
+        const g = toPx(ghost.lng, ghost.lat);
         ctx.strokeStyle = "#64748b";
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -290,14 +268,12 @@ export function SafetyNavMap({
       }
 
       if (user) {
-        const p = project(user.lng, user.lat, bbox, width, height, 28);
+        const p = toPx(user.lng, user.lat);
         if (user.accuracy && user.accuracy > 0) {
-          const [minLng, , maxLng] = bbox;
-          const metersPerDeg = 111320 * Math.cos((user.lat * Math.PI) / 180);
-          const pxPerMeter = (width - 56) / Math.max((maxLng - minLng) * metersPerDeg, 1);
+          // Same scale as everything else, so the ring is the real accuracy radius.
           ctx.fillStyle = "rgba(37, 99, 235, 0.18)";
           ctx.beginPath();
-          ctx.arc(p.x, p.y, Math.min(user.accuracy * pxPerMeter, 80), 0, Math.PI * 2);
+          ctx.arc(p.x, p.y, Math.min(user.accuracy * pxPerMetre, 80), 0, Math.PI * 2);
           ctx.fill();
         }
         ctx.fillStyle = "#2563eb";

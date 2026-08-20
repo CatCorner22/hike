@@ -167,6 +167,55 @@ test the capability they actually need.
 
 ---
 
+## Fourth pass — the offline map itself
+
+`SafetyNavMap` is the map you look at when you are lost and there is no cell service. It
+had two defects, both measured against the real `project()` on a 390x700 phone canvas.
+
+### M1. Every bearing read off the map was wrong, by up to 15°
+
+`project()` mapped longitude straight to x and latitude straight to y, stretched to fill
+the canvas. Two errors compounded: no `cos(latitude)` correction, and a bbox square in
+degrees forced into a canvas that is not square.
+
+A **true 45° (north-east) bearing** rendered as:
+
+```
+lat 25.0  ->  29.7° on screen   (error -15.3°)
+lat 37.7  ->  33.2° on screen   (error -11.8°)
+lat 45.0  ->  36.2° on screen   (error  -8.8°)
+lat 50.0  ->  38.9° on screen   (error  -6.1°)
+lat 61.0  ->  46.9° on screen   (error  +1.9°)
+```
+
+The near-miss at 61° is coincidence — the two errors happen to cancel there — not
+correctness. At 37.7°N a 100 m × 100 m patch of ground rendered at a **0.65 aspect**,
+which also skewed the 100 m UTM grid the SAR readouts beside it assume is square.
+
+The numeric "Walk 214° true" text was always right; it comes from turf. But the map is
+what you orient yourself with, and a 12° error over 500 m puts you a hundred metres wide
+of where you meant to be.
+
+Replaced with `createProjector` in `src/lib/geo/project.ts`: one scale in pixels-per-metre
+for both axes, longitude corrected by `cos(latitude)`, bbox letterboxed into the canvas
+rather than stretched. Tests assert that true bearings render at the same angle at six
+latitudes including the southern hemisphere, that a square of ground renders square, and
+that 100 m UTM squares — built from the real `latLngToUtm`/`utmToLatLng` — render square.
+
+### M2. The route left the screen exactly when it mattered
+
+Follow mode used a fixed ±0.003° window around the user and ignored the route entirely.
+That is ±264 m east-west at 37.7°N and only **±162 m at 61°N**, while the off-trail alert
+escalates to critical at 80 m. Between roughly 160 m and 260 m off-route, the banner said
+`OFF TRAIL — walk 214° back` over a canvas showing the user alone in an empty grid, with
+the route and the dashed bearing line both off-canvas.
+
+`followWindow` now takes the points the user is being sent to — the nearest point on the
+route, and any go-to target — and expands to keep them on screen with a 25% margin, never
+zooming tighter than the old minimum.
+
+---
+
 ## Second pass — the safety decision aids
 
 The first pass covered navigation, time, GPS and the API. A second pass over the ~2,000
