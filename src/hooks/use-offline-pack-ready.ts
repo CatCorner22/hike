@@ -7,36 +7,27 @@ export function useOfflinePackReady(packId: string | null) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!packId) {
-      setReady(false);
-      return;
-    }
-
     let cancelled = false;
 
     async function check() {
-      for (let i = 0; i < 40; i++) {
-        const exists = await hasRoutePack(packId!);
-        if (cancelled) return;
-        if (exists) {
-          setReady(true);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      if (!packId) {
+        await Promise.resolve();
+        if (!cancelled) setReady(false);
+        return;
       }
-
-      while (!cancelled) {
-        const exists = await hasRoutePack(packId!);
+      // The persistence call normally completes immediately. A bounded,
+      // increasing retry window covers IndexedDB startup without keeping the
+      // plan page alive forever.
+      const delays = [0, 100, 250, 500, 1_000, 2_000, 4_000];
+      for (const delay of delays) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        const exists = await hasRoutePack(packId);
         if (cancelled) return;
-        if (exists) {
-          setReady(true);
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        setReady(exists);
+        if (exists) return;
       }
     }
 
-    setReady(false);
     void check();
     return () => {
       cancelled = true;

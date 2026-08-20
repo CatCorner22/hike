@@ -26,6 +26,7 @@ import {
   persistRoutePack,
   withNetworkTimeout,
 } from "@/lib/offline/load-route-pack";
+import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
 import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
@@ -43,6 +44,8 @@ import {
   lastCheckin,
 } from "@/lib/safety/checkin";
 import { moonPhase } from "@/lib/safety/astro";
+import { altitudeFromProfile } from "@/lib/safety/altitude";
+import { slopeAnglesFromProfile } from "@/lib/safety/avalanche";
 import { formatWalkBearing, gmAngleCard, isFixNearRouteBbox, turnaroundWarning } from "@/lib/safety/declination";
 import { daylightStatus } from "@/lib/safety/daylight";
 import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
@@ -106,7 +109,9 @@ export default function NavigatePage() {
     at: number;
   } | null>(null);
   const [deniedPaces, setDeniedPaces] = useState(0);
-  const [deniedTick, setDeniedTick] = useState(0);
+  const [deniedNow, setDeniedNow] = useState(0);
+  const headerRef = useRef<HTMLDivElement | null>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -125,6 +130,26 @@ export default function NavigatePage() {
     const id = window.setInterval(() => setZulu(formatZulu()), 15000);
     return () => window.clearInterval(id);
   }, []);
+
+  // The header overlay grows and shrinks as warning banners appear, so measure
+  // it and let the map inset its orientation labels below it.
+  useEffect(() => {
+    const node = headerRef.current;
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      // Use the border box (contentRect excludes the header's padding, which is
+      // substantial here) and add a small gap so labels clear the banner edge.
+      const height =
+        entry?.borderBoxSize?.[0]?.blockSize ?? node.offsetHeight ?? 0;
+      if (Number.isFinite(height) && height > 0) {
+        const next = Math.round(height) + 8;
+        setHeaderHeight((prev) => (Math.abs(prev - next) > 1 ? next : prev));
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadState.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -147,12 +172,12 @@ export default function NavigatePage() {
       const raw = sessionStorage.getItem(`hike-drink-${navId}`);
       if (raw) {
         const t = Number(raw);
-        if (Number.isFinite(t)) setLastDrinkAt(t);
+        if (Number.isFinite(t)) queueMicrotask(() => setLastDrinkAt(t));
       }
       const comms = sessionStorage.getItem(`hike-comms-${navId}`);
       if (comms) {
         const t = Number(comms);
-        if (Number.isFinite(t)) setLastCommsAt(t);
+        if (Number.isFinite(t)) queueMicrotask(() => setLastCommsAt(t));
       }
     } catch {
       /* private mode */
@@ -163,20 +188,24 @@ export default function NavigatePage() {
 
   useEffect(() => {
     if (!gpsDenied) return;
-    const id = window.setInterval(() => setDeniedTick((n) => n + 1), 5000);
-    return () => window.clearInterval(id);
+    const refresh = () => setDeniedNow(Date.now());
+    const initial = window.setTimeout(refresh, 0);
+    const id = window.setInterval(refresh, 5000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(id);
+    };
   }, [gpsDenied]);
 
   const drFix = useMemo(() => {
     if (!gpsDenied || !deniedAnchor) return null;
-    void deniedTick;
     const meters =
       deniedPaces > 0
         ? distanceFromPaces(deniedPaces, 65)
-        : Math.max(0, ((Date.now() - deniedAnchor.at) / 1000) * 1.15);
+        : Math.max(0, ((deniedNow - deniedAnchor.at) / 1000) * 1.15);
     const point = deadReckon(deniedAnchor, deniedAnchor.heading, meters);
     return { ...point, heading: deniedAnchor.heading, meters };
-  }, [gpsDenied, deniedAnchor, deniedPaces, deniedTick]);
+  }, [gpsDenied, deniedAnchor, deniedPaces, deniedNow]);
 
   const trusted = gpsDenied ? Boolean(drFix) : gpsTrusted;
   const navFix = gpsDenied && drFix ? drFix : gps.fix;
@@ -247,8 +276,16 @@ export default function NavigatePage() {
   }, [navId]);
 
   useEffect(() => {
-    void loadPack();
+    const initialLoad = window.setTimeout(() => void loadPack(), 0);
+    return () => window.clearTimeout(initialLoad);
   }, [loadPack]);
+
+  // This covers a first online navigation visit before the newly registered
+  // service worker has controlled the document. It is intentionally
+  // best-effort; Prepare offline remains the pre-departure guarantee.
+  useEffect(() => {
+    if (navigator.onLine) void warmNavigateShell(navId);
+  }, [navId]);
 
   useEffect(() => {
     void requestWakeLock();
@@ -259,7 +296,7 @@ export default function NavigatePage() {
 
   useEffect(() => {
     if (loadState.status !== "ready" || !navFix || !trusted) {
-      if (!trusted) setProgress(null);
+      if (!trusted) queueMicrotask(() => setProgress(null));
       return;
     }
     const p = progressAlongTrail(
@@ -267,7 +304,7 @@ export default function NavigatePage() {
       loadState.pack.geometry,
       loadState.pack.elevationProfile,
     );
-    setProgress(p);
+    queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted]);
 
   useEffect(() => {
@@ -379,7 +416,7 @@ export default function NavigatePage() {
   const fallWarning = gpsTrusted ? suddenStopWarning(trackPoints) : null;
   const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
   const hydrateWarning = waterReminder(lastDrinkAt, hikeStartedAt);
-  const moon = useMemo(() => moonPhase(), [zulu]);
+  const moon = useMemo(() => { void zulu; return moonPhase(); }, [zulu]);
   const moonWarning = daylight?.isDark ? moon.nightNav : null;
   const deniedWarning = gpsDenied
     ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : ""} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}. SOS still uses a live GPS fix if one exists.`
@@ -399,6 +436,23 @@ export default function NavigatePage() {
       ? slopeFromProfile(loadState.pack.elevationProfile, progress.traveledMeters)
       : null;
   const slopeWarn = slopePct != null ? slopeWarning(slopePct) : null;
+  const routeProfileWarnings = useMemo(() => {
+    if (loadState.status !== "ready") return { altitude: null, avalanche: null };
+    const altitude = altitudeFromProfile(loadState.pack.elevationProfile);
+    const slopes = slopeAnglesFromProfile(loadState.pack.elevationProfile);
+    return {
+      altitude:
+        altitude == null || altitude.maxElevationM < 2500
+          ? null
+          : altitude.crosses3000
+            ? `Route altitude screen: profile crosses 3,000 m (maximum ${Math.round(altitude.maxElevationM)} m). Plan acclimatization and do not ascend with symptoms.`
+            : `Route altitude screen: profile reaches ${Math.round(altitude.maxElevationM)} m, crossing 2,500 m. Watch for altitude symptoms and allow time to acclimatize.`,
+      avalanche:
+        slopes != null && slopes.maxAngleDeg >= 30 && slopes.maxAngleDeg <= 45
+          ? `Avalanche-terrain screen: steepest sustained along-track gradient is ${slopes.maxAngleDeg}° near ${Math.round(slopes.atMeters)} m. This is in the 30–45° starting-slope band, but a route profile under-reads true avalanche terrain because it only measures along-track gradient.`
+          : null,
+    };
+  }, [loadState]);
   const checkinOverdue =
     checkinStatus(lastCheckinAt, checkinSettings)?.overdue === true
       ? checkinStatus(lastCheckinAt, checkinSettings)?.label
@@ -422,6 +476,8 @@ export default function NavigatePage() {
     amsWarn ??
     avyWarn ??
     buddyWarn ??
+    routeProfileWarnings.altitude ??
+    routeProfileWarnings.avalanche ??
     slopeWarn ??
     commsWarn ??
     stillWarning ??
@@ -570,10 +626,14 @@ export default function NavigatePage() {
           search={searchOverlay}
           showGrid
           nightMode={nightMode}
+          topInsetPx={headerHeight}
           className="absolute inset-0 h-full w-full"
         />
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8">
+        <div
+          ref={headerRef}
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-gradient-to-b from-background/95 to-transparent p-3 pb-8"
+        >
           <div className="pointer-events-auto flex items-start justify-between gap-2">
             <Button
               variant="secondary"

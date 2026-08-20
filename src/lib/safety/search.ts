@@ -62,7 +62,7 @@ export function sectorSearchLine(
   spokes = 3,
 ): GeoJSON.LineString {
   const coords: GeoJSON.Position[] = [[center.lng, center.lat]];
-  let here = center;
+  const here = center;
   for (const leg of sectorSearchLegs(legM, baseHeading, spokes)) {
     const tip = deadReckon(here, leg.headingTrue, leg.meters);
     coords.push([tip.lng, tip.lat]);

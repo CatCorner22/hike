@@ -1,3 +1,5 @@
+import { toSouthWestNorthEast, type BboxLngLat } from "@/lib/geo/bbox";
+
 export interface OverpassElement {
   type: "node" | "way" | "relation";
   id: number;
@@ -41,9 +43,15 @@ const OVERPASS_URLS = [
   "https://overpass.kumi.systems/api/interpreter",
 ];
 
-async function runOverpass(query: string): Promise<OverpassResponse> {
-  let lastError: Error | null = null;
+const OVERPASS_CACHE_TTL_MS = 60 * 60 * 1000;
+const overpassCache = new Map<string, { expiresAt: number; data: OverpassResponse }>();
 
+async function runOverpass(query: string): Promise<OverpassResponse> {
+  const cached = overpassCache.get(query);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+  if (cached) overpassCache.delete(query);
+
+  let lastError: Error | null = null;
   for (const url of OVERPASS_URLS) {
     try {
       const response = await fetch(url, {
@@ -53,21 +61,28 @@ async function runOverpass(query: string): Promise<OverpassResponse> {
           "User-Agent": "HikeApp/1.0 (bespoke hiking planner)",
         },
         body: `data=${encodeURIComponent(query)}`,
-        next: { revalidate: 3600 },
       });
-
       if (!response.ok) {
         lastError = new Error(`Overpass API error: ${response.status}`);
         continue;
       }
-
-      return response.json();
+      const data = await response.json() as OverpassResponse;
+      overpassCache.set(query, { expiresAt: Date.now() + OVERPASS_CACHE_TTL_MS, data });
+      return data;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error("Overpass request failed");
     }
   }
-
   throw lastError ?? new Error("Overpass API unavailable");
+}
+
+/** Escapes an untrusted literal before embedding it in an Overpass regular expression. */
+export function escapeOverpassRegex(value: string): string {
+  return value
+    .slice(0, 64)
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/[.^$*+?()[\]{}|]/g, "\\$&");
 }
 
 function getCenter(element: OverpassElement): { lat: number; lng: number } | null {
@@ -108,13 +123,10 @@ function toWikipediaUrl(tags?: Record<string, string>): string | undefined {
 
 export async function searchTrails(
   query: string,
-  bbox?: [number, number, number, number],
+  bbox?: BboxLngLat,
 ): Promise<TrailSearchResult[]> {
-  const escaped = query.replace(/"/g, '\\"');
-  const bboxFilter = bbox
-    ? `(${bbox[0]},${bbox[1]},${bbox[2]},${bbox[3]})`
-    : "";
-
+  const escaped = escapeOverpassRegex(query);
+  const bboxFilter = bbox ? `(${toSouthWestNorthEast(bbox).join(",")})` : "";
   const overpassQuery = `
     [out:json][timeout:30];
     (
@@ -123,85 +135,85 @@ export async function searchTrails(
     );
     out center tags;
   `;
-
   const data = await runOverpass(overpassQuery);
   const results: TrailSearchResult[] = [];
-
   for (const element of data.elements) {
     if (element.type !== "relation" || !element.tags?.name) continue;
     const center = getCenter(element);
     if (!center) continue;
-
     results.push({
-      osmId: String(element.id),
-      osmType: "relation",
-      name: element.tags.name,
-      center,
-      lengthMeters: parseLength(element.tags),
-      difficulty: element.tags.difficulty,
-      sacScale: element.tags.sac_scale,
-      network: element.tags.network,
-      wikipediaUrl: toWikipediaUrl(element.tags),
-      tags: element.tags,
+      osmId: String(element.id), osmType: "relation", name: element.tags.name, center,
+      lengthMeters: parseLength(element.tags), difficulty: element.tags.difficulty,
+      sacScale: element.tags.sac_scale, network: element.tags.network,
+      wikipediaUrl: toWikipediaUrl(element.tags), tags: element.tags,
     });
   }
-
   return results.slice(0, 25);
 }
 
-export async function searchTrailsByBbox(
-  bbox: [number, number, number, number],
-): Promise<TrailSearchResult[]> {
-  const [south, west, north, east] = bbox;
-  const overpassQuery = `
-    [out:json][timeout:30];
-    (
-      relation["route"="hiking"](${south},${west},${north},${east});
-      relation["route"="foot"](${south},${west},${north},${east});
-    );
-    out center tags;
-  `;
-
-  const data = await runOverpass(overpassQuery);
-  const results: TrailSearchResult[] = [];
-
-  for (const element of data.elements) {
-    if (element.type !== "relation" || !element.tags?.name) continue;
-    const center = getCenter(element);
-    if (!center) continue;
-
-    results.push({
-      osmId: String(element.id),
-      osmType: "relation",
-      name: element.tags.name,
-      center,
-      lengthMeters: parseLength(element.tags),
-      difficulty: element.tags.difficulty,
-      sacScale: element.tags.sac_scale,
-      network: element.tags.network,
-      wikipediaUrl: toWikipediaUrl(element.tags),
-      tags: element.tags,
-    });
-  }
-
-  return results;
+function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
+  const earthRadius = 6_371_000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRadians(b[1] - a[1]);
+  const dLng = toRadians(b[0] - a[0]);
+  const latA = toRadians(a[1]);
+  const latB = toRadians(b[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
 }
 
-function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
-  const relation = elements.find((e) => e.type === "relation");
-  const ways = elements.filter((e) => e.type === "way" && e.geometry?.length);
+function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
+  return endpointDistanceMeters(a, b) <= 25;
+}
 
-  if (!ways.length) return null;
-
-  const lines: GeoJSON.Position[][] = ways.map((way) =>
-    (way.geometry || []).map((p) => [p.lon, p.lat]),
-  );
-
-  if (lines.length === 1) {
-    return { type: "LineString", coordinates: lines[0] };
+/** Greedily joins relation member ways at matching endpoints, reversing ways when needed. */
+export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Position[][] {
+  const remaining = lines.filter((line) => line.length >= 2).map((line) => [...line]);
+  const chains: GeoJSON.Position[][] = [];
+  while (remaining.length > 0) {
+    let chain = remaining.shift()!;
+    let joined = true;
+    while (joined) {
+      joined = false;
+      for (let index = 0; index < remaining.length; index++) {
+        const candidate = remaining[index];
+        const first = chain[0];
+        const last = chain[chain.length - 1];
+        const candidateFirst = candidate[0];
+        const candidateLast = candidate[candidate.length - 1];
+        if (endpointsMatch(last, candidateFirst)) {
+          chain = [...chain, ...candidate.slice(1)];
+        } else if (endpointsMatch(last, candidateLast)) {
+          chain = [...chain, ...candidate.slice(0, -1).reverse()];
+        } else if (endpointsMatch(first, candidateLast)) {
+          chain = [...candidate.slice(0, -1), ...chain];
+        } else if (endpointsMatch(first, candidateFirst)) {
+          chain = [...candidate.slice(1).reverse(), ...chain];
+        } else {
+          continue;
+        }
+        remaining.splice(index, 1);
+        joined = true;
+        break;
+      }
+    }
+    const first = chain[0];
+    const last = chain[chain.length - 1];
+    if (first[0] > last[0] || (first[0] === last[0] && first[1] > last[1])) chain = [...chain].reverse();
+    chains.push(chain);
   }
+  return chains;
+}
 
-  return { type: "MultiLineString", coordinates: lines };
+export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
+  const lines = elements
+    .filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
+    .map((way) => way.geometry!.map((point) => [point.lon, point.lat] as GeoJSON.Position));
+  if (!lines.length) return null;
+  const chains = stitchRelationWays(lines);
+  return chains.length === 1
+    ? { type: "LineString", coordinates: chains[0] }
+    : { type: "MultiLineString", coordinates: chains };
 }
 
 function computeBbox(geometry: GeoJSON.LineString | GeoJSON.MultiLineString): [number, number, number, number] {

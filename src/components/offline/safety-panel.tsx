@@ -18,6 +18,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { CapabilityTabs } from "@/components/safety/capability-tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -317,7 +318,13 @@ export function SafetyPanel({
   const [dossierStatus, setDossierStatus] = useState<string | null>(null);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
-  profileRef.current = profile;
+
+  // Mirror the latest profile into a ref so the unmount cleanup below can flush
+  // a pending debounced save. Syncing in an effect rather than during render
+  // keeps this off the render path.
+  useEffect(() => {
+    profileRef.current = profile;
+  }, [profile]);
 
   useEffect(() => {
     void getIceProfile().then(setProfile);
@@ -1886,6 +1893,8 @@ export function SafetyPanel({
               onChange={(e) => void persistProfile({ ...profile, medical: e.target.value })}
             />
           </div>
+
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
 
           <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Tell 911 / SAR</p>

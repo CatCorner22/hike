@@ -5,6 +5,9 @@ import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { warmNavigateShell } from "@/lib/offline/navigate-shell";
+import { requestPersistentStorage } from "@/lib/offline/storage";
+import { OfflineReadiness } from "@/components/offline/offline-readiness";
 
 interface PrepareOfflineProps {
   packId: string;
@@ -42,6 +45,9 @@ export function PrepareOffline({
     }
     setSaving(true);
     setMessage(null);
+    // Start while this click still has user activation. Chromium uses that
+    // signal when deciding whether an origin may receive persistent storage.
+    const persistentStorageRequest = requestPersistentStorage();
     try {
       const pack: RoutePack = buildRoutePack({
         id: packId,
@@ -53,8 +59,23 @@ export function PrepareOffline({
       });
       await persistRoutePack(pack);
       setReady(true);
+      const [persistent, shell] = await Promise.all([
+        persistentStorageRequest,
+        warmNavigateShell(packId),
+      ]);
+      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
+      const warnings = [
+        !shell.ok
+          ? shell.error ?? "Navigation screen was not cached."
+          : null,
+        !persistent
+          ? "Browser storage is not persistent, so this pack may be evicted under storage pressure."
+          : null,
+      ].filter(Boolean);
       setMessage(
-        "Route saved on this device. Navigation will work without cell service.",
+        warnings.length
+          ? `Route saved. ${warnings.join(" ")}`
+          : "Route and navigation screen saved. Navigation will work without cell service.",
       );
     } catch (error) {
       setMessage(
@@ -93,6 +114,7 @@ export function PrepareOffline({
       {message && (
         <p className="mt-2 text-xs text-muted-foreground">{message}</p>
       )}
+      {!compact && <OfflineReadiness packId={packId} />}
     </div>
   );
 }

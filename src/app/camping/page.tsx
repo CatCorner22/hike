@@ -71,7 +71,8 @@ export default function CampingPage() {
   }, [query, filters]);
 
   useEffect(() => {
-    search();
+    const initialSearch = window.setTimeout(() => void search(), 0);
+    return () => window.clearTimeout(initialSearch);
   }, [search]);
 
   return (

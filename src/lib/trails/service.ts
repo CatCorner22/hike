@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trails } from "@/lib/db/schema";
 import { osmTrailId } from "@/lib/ids";
@@ -27,12 +27,12 @@ export async function findOrCreateTrail(
 
   const db = getDb();
   const existing = await db.query.trails.findFirst({
-    where: eq(trails.osmId, osmId),
+    where: and(eq(trails.osmId, osmId), eq(trails.osmType, osmType)),
   });
 
   const lengthMeters = detail.lengthMeters ?? lineLengthMeters(detail.geometry);
   const profile = await fetchElevationProfile(detail.geometry);
-  const elevationGainMeters = computeElevationGain(profile);
+  const elevationGainMeters = profile.length > 0 ? computeElevationGain(profile) : undefined;
 
   if (existing) {
     await db
@@ -41,7 +41,7 @@ export async function findOrCreateTrail(
         name: detail.name,
         geometry: detail.geometry,
         lengthMeters,
-        elevationGainMeters,
+        ...(elevationGainMeters !== undefined ? { elevationGainMeters } : {}),
         difficulty: detail.difficulty,
         sacScale: detail.sacScale,
         network: detail.network,
@@ -52,7 +52,10 @@ export async function findOrCreateTrail(
       })
       .where(eq(trails.id, existing.id));
 
-    return { id: existing.id, detail: { ...detail, lengthMeters, elevationGainMeters } };
+    return {
+      id: existing.id,
+      detail: { ...detail, lengthMeters, elevationGainMeters: elevationGainMeters ?? existing.elevationGainMeters ?? undefined },
+    };
   }
 
   const [inserted] = await db
@@ -89,10 +92,12 @@ export async function getTrailById(trailId: string) {
   return db.query.trails.findFirst({ where: eq(trails.id, trailId) });
 }
 
-export async function getTrailByOsmId(osmId: string) {
+export async function getTrailByOsmId(osmId: string, osmType: string = "relation") {
   if (!hasDatabase()) return null;
   const db = getDb();
-  return db.query.trails.findFirst({ where: eq(trails.osmId, osmId) });
+  return db.query.trails.findFirst({
+    where: and(eq(trails.osmId, osmId), eq(trails.osmType, osmType)),
+  });
 }
 
 export async function listRecentTrails(limit = 10) {
