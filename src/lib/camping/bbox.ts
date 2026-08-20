@@ -7,11 +7,9 @@ export type Bbox = [
 
 export function parseBbox(value: string | null): Bbox | null {
   if (!value) return null;
-  const parts = value.split(",");
-  if (parts.some((part) => part.trim() === "")) return null;
-  const coordinates = parts.map(Number);
-  if (coordinates.length !== 4 || !coordinates.every(Number.isFinite)) return null;
-  const [west, south, east, north] = coordinates;
+  const parts = value.split(",").map(Number);
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) return null;
+  const [west, south, east, north] = parts;
   if (
     west < -180 ||
     east > 180 ||

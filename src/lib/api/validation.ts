@@ -1,67 +1,85 @@
-import { z } from "zod";
-import { isValidGeometry } from "@/lib/geo/navigation";
+import { NextResponse } from "next/server";
+import { z, type ZodType } from "zod";
 
-export const dateString = z
-  .string()
-  .refine((value) => !Number.isNaN(Date.parse(value)), "Invalid date");
+const finiteNumber = z.number().refine(Number.isFinite, "Must be a finite number");
 
-export const routeGeometry = z.custom<
-  GeoJSON.LineString | GeoJSON.MultiLineString
->(isValidGeometry, "Invalid route geometry");
-
-const planFields = {
-  name: z.string().trim().min(1).max(200),
-  trailId: z.string().max(200).nullable(),
-  plannedDate: dateString.nullable(),
-  notes: z.string().max(50_000).nullable(),
-  waypoints: z.unknown(),
-  campgroundIds: z.array(z.string().max(200)).max(500),
-  customGeometry: routeGeometry.nullable(),
-};
-
-export const createPlanSchema = z.object({
-  name: planFields.name,
-  trailId: planFields.trailId.optional(),
-  plannedDate: planFields.plannedDate.optional(),
-  notes: planFields.notes.optional(),
-  waypoints: planFields.waypoints.optional(),
-  campgroundIds: planFields.campgroundIds.optional(),
-  customGeometry: planFields.customGeometry.optional(),
+export const latLngPointSchema = z.object({
+  lat: finiteNumber.min(-90).max(90),
+  lng: finiteNumber.min(-180).max(180),
 });
 
-export const updatePlanSchema = z.object(planFields).partial();
+export const isoDatetimeSchema = z.string().refine(
+  (value) => {
+    const isIsoDatetime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+    const timestamp = Date.parse(value);
+    return isIsoDatetime && Number.isFinite(timestamp) && !Number.isNaN(timestamp);
+  },
+  "Must be a valid ISO date-time string",
+);
 
-export const updateActivitySchema = z.object({
-  endedAt: dateString.nullable().optional(),
-  stats: z.record(z.string(), z.number().finite()).nullable().optional(),
-  notes: z.string().max(50_000).nullable().optional(),
+const positionSchema = z
+  .array(finiteNumber)
+  .min(2)
+  .max(3)
+  .superRefine((position, ctx) => {
+    if (position[0] < -180 || position[0] > 180) {
+      ctx.addIssue({ code: "custom", message: "Longitude must be between -180 and 180", path: [0] });
+    }
+    if (position[1] < -90 || position[1] > 90) {
+      ctx.addIssue({ code: "custom", message: "Latitude must be between -90 and 90", path: [1] });
+    }
+  });
+
+const lineCoordinatesSchema = z.array(positionSchema).min(2);
+
+export const geoJsonLineStringSchema = z.object({
+  type: z.literal("LineString"),
+  coordinates: lineCoordinatesSchema,
 });
 
-export async function parseJson<T>(
+export const geoJsonMultiLineStringSchema = z.object({
+  type: z.literal("MultiLineString"),
+  coordinates: z.array(lineCoordinatesSchema).min(1),
+});
+
+export const geoJsonLineOrMultiLineStringSchema = z.union([
+  geoJsonLineStringSchema,
+  geoJsonMultiLineStringSchema,
+]);
+
+export async function parseJsonBody<T>(
   request: Request,
-  schema: z.ZodType<T>,
-): Promise<
-  | { success: true; data: T }
-  | { success: false; response: Response }
-> {
-  let body: unknown;
+  schema: ZodType<T>,
+): Promise<{ ok: true; data: T } | { ok: false; response: NextResponse }> {
+  let raw: unknown;
   try {
-    body = await request.json();
+    raw = await request.json();
   } catch {
     return {
-      success: false,
-      response: Response.json({ error: "Invalid JSON body" }, { status: 400 }),
-    };
-  }
-  const parsed = schema.safeParse(body);
-  if (!parsed.success) {
-    return {
-      success: false,
-      response: Response.json(
-        { error: "Invalid request", issues: parsed.error.issues },
+      ok: false,
+      response: NextResponse.json(
+        { error: "Invalid JSON body", issues: [{ path: [], message: "Request body must be valid JSON" }] },
         { status: 400 },
       ),
     };
   }
-  return { success: true, data: parsed.data };
+
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: "Invalid request body",
+          issues: parsed.error.issues.map((issue) => ({
+            path: issue.path,
+            message: issue.message,
+          })),
+        },
+        { status: 400 },
+      ),
+    };
+  }
+
+  return { ok: true, data: parsed.data };
 }

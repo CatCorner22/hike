@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,7 @@ interface TrailData {
 
 export default function PlanDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const planId = params.id as string;
 
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -95,7 +96,7 @@ export default function PlanDetailPage() {
   async function deletePlan() {
     if (!confirm("Delete this plan?")) return;
     await fetch(`/api/plans/${planId}`, { method: "DELETE" });
-    window.location.href = "/plan";
+    router.push("/plan");
   }
 
   async function importGpx() {

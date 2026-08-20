@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -47,6 +46,7 @@ interface TrailData {
 
 export default function TrailDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const trailId = params.id as string;
 
   const [trail, setTrail] = useState<TrailData | null>(null);
@@ -79,7 +79,7 @@ export default function TrailDetailPage() {
     load();
   }, [trailId]);
 
-  async function loadResearch(refresh = false) {
+  const loadResearch = useCallback(async (refresh = false) => {
     setResearchLoading(true);
     try {
       const response = await fetch(
@@ -90,11 +90,13 @@ export default function TrailDetailPage() {
     } finally {
       setResearchLoading(false);
     }
-  }
+  }, [trailId]);
 
   useEffect(() => {
-    if (trail) loadResearch();
-  }, [trail?.id]);
+    if (!trail?.id) return;
+    const initialResearch = window.setTimeout(() => void loadResearch(), 0);
+    return () => window.clearTimeout(initialResearch);
+  }, [trail?.id, loadResearch]);
 
   async function createPlan() {
     if (!trail) return;
@@ -108,7 +110,7 @@ export default function TrailDetailPage() {
     });
     if (response.ok) {
       const plan = await response.json();
-      window.location.href = `/plan/${plan.id}`;
+      router.push(`/plan/${plan.id}`);
     }
   }
 
