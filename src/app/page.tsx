@@ -15,7 +15,7 @@ type HomeActivity = {
   id: string;
   name: string | null;
   startedAt: Date | string;
-  stats: { distanceMeters?: number; durationSeconds?: number } | null;
+  stats: unknown;
 };
 
 export default async function HomePage() {
@@ -131,7 +131,7 @@ export default async function HomePage() {
             ) : (
               <ul className="space-y-3">
                 {recentActivities.map((activity) => {
-                  const stats = activity.stats as {
+                  const stats = (activity.stats ?? null) as {
                     distanceMeters?: number;
                     durationSeconds?: number;
                   } | null;

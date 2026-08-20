@@ -17,7 +17,7 @@ export interface LocalActivity {
 }
 
 export interface QueuedPoint {
-  activityId: string;
+  activityId?: string;
   lat: number;
   lng: number;
   elevation?: number;
