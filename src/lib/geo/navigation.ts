@@ -16,6 +16,10 @@ export interface TrailProgress {
   bearingToTrail: number;
 }
 
+export interface SnapHint {
+  traveledMeters: number;
+}
+
 /** First usable segment only — never flatten MultiLineString (that invents connectors). */
 export function toLineString(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
@@ -73,33 +77,63 @@ function progressOnSegment(
   };
 }
 
+function pickContinuous(candidates: TrailProgress[], hint?: SnapHint | null): TrailProgress {
+  const ranked = [...candidates].sort((a, b) => a.offsetMeters - b.offsetMeters);
+  const best = ranked[0];
+  if (!hint || ranked.length === 1) return stabilizeLoop(best, hint);
+  const near = ranked.filter((c) => c.offsetMeters <= best.offsetMeters + 25);
+  const forward = near.filter((c) => hint.traveledMeters - c.traveledMeters < 150);
+  const pool = forward.length ? forward : near;
+  pool.sort(
+    (a, b) =>
+      Math.abs(a.traveledMeters - hint.traveledMeters) -
+      Math.abs(b.traveledMeters - hint.traveledMeters),
+  );
+  return stabilizeLoop(pool[0], hint);
+}
+
+/** Keep a loop from snapping remaining-m back to the start vertex. */
+export function stabilizeLoop(progress: TrailProgress, hint?: SnapHint | null): TrailProgress {
+  if (!hint || !Number.isFinite(progress.traveledMeters)) return progress;
+  const total = progress.totalMeters;
+  if (total < 200) return progress;
+  const jumpedToStart =
+    hint.traveledMeters > total - 120 && progress.traveledMeters < 80;
+  if (!jumpedToStart) return progress;
+  return {
+    ...progress,
+    traveledMeters: total,
+    remainingMeters: 0,
+  };
+}
+
 export function progressAlongTrail(
   point: LatLng,
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   elevationProfile: Array<{ distanceMeters: number; elevation: number }> = [],
+  hint?: SnapHint | null,
 ): TrailProgress {
   const totalMeters = trailLengthMeters(geometry);
 
   if (geometry.type === "MultiLineString") {
-    let best: TrailProgress | null = null;
+    const candidates: TrailProgress[] = [];
     let cumulative = 0;
 
     for (const coords of geometry.coordinates) {
       if (coords.length < 2 || !coords.every(isFinitePosition)) continue;
-      const progress = progressOnSegment(
-        point,
-        coords,
-        elevationProfile,
-        cumulative,
-        totalMeters,
+      candidates.push(
+        progressOnSegment(
+          point,
+          coords,
+          elevationProfile,
+          cumulative,
+          totalMeters,
+        ),
       );
-      if (!best || progress.offsetMeters < best.offsetMeters) {
-        best = progress;
-      }
       cumulative += turf.length(turf.lineString(coords), { units: "meters" });
     }
 
-    if (best) return best;
+    if (candidates.length) return pickContinuous(candidates, hint);
     return emptyProgress(point, totalMeters);
   }
 
@@ -108,7 +142,10 @@ export function progressAlongTrail(
     return emptyProgress(point, totalMeters);
   }
 
-  return progressOnSegment(point, coords, elevationProfile, 0, totalMeters);
+  return stabilizeLoop(
+    progressOnSegment(point, coords, elevationProfile, 0, totalMeters),
+    hint,
+  );
 }
 
 function emptyProgress(point: LatLng, totalMeters: number): TrailProgress {

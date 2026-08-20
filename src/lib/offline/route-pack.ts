@@ -1,8 +1,9 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry, gpxFromLineString } from "@/lib/geo";
 import { isValidGeometry, trailLengthMeters } from "@/lib/geo/navigation";
+import type { PackWeather } from "@/lib/offline/pack-weather";
 
-export const ROUTE_PACK_VERSION = 2;
+export const ROUTE_PACK_VERSION = 3;
 
 export interface RoutePack {
   id: string;
@@ -15,6 +16,7 @@ export interface RoutePack {
   lengthMeters: number;
   cachedAt: string;
   version: number;
+  weather?: PackWeather;
 }
 
 interface RoutePackDB extends DBSchema {
@@ -64,6 +66,7 @@ export function buildRoutePack(input: {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
+  weather?: PackWeather;
 }): RoutePack {
   const aliases = Array.from(new Set([input.id, ...(input.aliases ?? [])]));
   return {
@@ -77,6 +80,7 @@ export function buildRoutePack(input: {
     lengthMeters: trailLengthMeters(input.geometry),
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
+    weather: input.weather,
   };
 }
 

@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
+import { ReadinessGate } from "@/components/offline/readiness-gate";
 import { SosBeacon } from "@/components/offline/sos-beacon";
+import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatElevation } from "@/lib/geo";
@@ -29,7 +31,9 @@ import {
 } from "@/lib/offline/load-route-pack";
 import { appendNavPoint, getNavSession, startNavSession } from "@/lib/offline/nav-track";
 import type { RoutePack } from "@/lib/offline/route-pack";
-import { requestWakeLock, releaseWakeLock } from "@/lib/offline/wake-lock";
+import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { hikeReadiness } from "@/lib/safety/readiness";
+import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
   backtrackProgress,
@@ -48,6 +52,7 @@ import { formatWalkBearing, gmAngleCard, isFixNearRouteBbox, turnaroundWarning }
 import { daylightStatus } from "@/lib/safety/daylight";
 import { formatFixAge, isTrustedFix } from "@/lib/safety/gps-quality";
 import {
+  getIceProfile,
   getOverdueAlarm,
   listWaypoints,
   overdueStatus,
@@ -111,6 +116,9 @@ export default function NavigatePage() {
   const [deniedPaceLen, setDeniedPaceLen] = useState(65);
   const [deniedHeadingText, setDeniedHeadingText] = useState("");
   const [deniedNeedHeading, setDeniedNeedHeading] = useState(false);
+  const [navUnlocked, setNavUnlocked] = useState(false);
+  const [wakeHeld, setWakeHeld] = useState(false);
+  const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const lastAlertRef = useRef<number | null>(null);
   const pendingPointsRef = useRef<
@@ -163,6 +171,7 @@ export default function NavigatePage() {
     }
   }, [navId]);
   const batteryWarning = useBatteryWarning();
+  const battery = useBatteryStatus();
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
 
   const drFix = useMemo(() => {
@@ -291,9 +300,24 @@ export default function NavigatePage() {
 
   useEffect(() => {
     void requestWakeLock();
+    const id = window.setInterval(() => setWakeHeld(isWakeLockHeld()), 4000);
+    setWakeHeld(isWakeLockHeld());
     return () => {
+      window.clearInterval(id);
       void releaseWakeLock();
     };
+  }, []);
+
+  const unlockIfReady = useCallback(() => {
+    void (async () => {
+      const [profile, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
+      const result = hikeReadiness({
+        packReady: true,
+        profile,
+        returnAt: alarm?.returnAt ?? null,
+      });
+      if (result.ok) setNavUnlocked(true);
+    })();
   }, []);
 
   useEffect(() => {
@@ -305,7 +329,11 @@ export default function NavigatePage() {
       { lat: navFix.lat, lng: navFix.lng },
       loadState.pack.geometry,
       loadState.pack.elevationProfile,
+      snapHintRef.current,
     );
+    if (Number.isFinite(p.traveledMeters)) {
+      snapHintRef.current = { traveledMeters: p.traveledMeters };
+    }
     setProgress(p);
   }, [navFix, loadState, trusted]);
 
@@ -574,6 +602,12 @@ export default function NavigatePage() {
     );
   }
 
+  if (loadState.status === "ready" && !navUnlocked) {
+    return (
+      <ReadinessGate packReady onReady={unlockIfReady} />
+    );
+  }
+
   if (loadState.status === "error") {
     return (
       <div className="mx-auto max-w-lg space-y-4 p-6">
@@ -712,6 +746,7 @@ export default function NavigatePage() {
                 onToggleGpsDenied={() => (gpsDenied ? exitGpsDenied() : enterGpsDenied())}
                 onDeniedPaces={setDeniedPaces}
                 onDeniedPaceLen={setDeniedPaceLen}
+                packWeather={pack.weather}
                 onDrank={() => {
                   const t = Date.now();
                   setLastDrinkAt(t);
@@ -874,6 +909,61 @@ export default function NavigatePage() {
                   : "—"
             }
           />
+        </div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
+          <p>
+            {positionSource === "deadReckon"
+              ? "DR"
+              : positionSource === "gps"
+                ? "GPS live"
+                : "Last known"}
+            {" · "}
+            pack {formatFixAge(Date.parse(pack.cachedAt))}
+            {" · "}
+            {battery.available
+              ? `battery ${Math.round((battery.level ?? 0) * 100)}%${battery.charging ? " charging" : ""}`
+              : "battery API unavailable"}
+            {" · "}
+            {checkinSettings.enabled
+              ? lastCheckinAt
+                ? `check-in ${formatFixAge(Date.parse(lastCheckinAt))}`
+                : "no check-in yet"
+              : "check-in off"}
+            {" · "}
+            wake lock {wakeHeld ? "held" : "not held"}
+          </p>
+          {checkinOverdue && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => {
+                const text = emergencyMessage({
+                  lat: navFix?.lat,
+                  lng: navFix?.lng,
+                  accuracyM: gpsDenied ? drUncertainty : gps.fix?.accuracy,
+                  trailName: pack.name,
+                  offTrailM: progress?.offsetMeters,
+                  stale: positionSource !== "gps",
+                  recordedAt: gpsDenied ? deniedAnchor?.at : gps.fix?.recordedAt,
+                  positionSource,
+                  partyNote: "I'm late for my check-in. This is my grid.",
+                });
+                void (async () => {
+                  if (navigator.share) {
+                    try {
+                      await navigator.share({ title: "I'm late — hiking grid", text });
+                      return;
+                    } catch {
+                      /* fall through */
+                    }
+                  }
+                  await copyEmergencyInfo(text);
+                })();
+              }}
+            >
+              I'm late — send grid
+            </Button>
+          )}
         </div>
       </div>
     </div>

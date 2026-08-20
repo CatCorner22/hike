@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 
 interface PrepareOfflineProps {
@@ -43,6 +44,14 @@ export function PrepareOffline({
     setSaving(true);
     setMessage(null);
     try {
+      const first =
+        geometry.type === "LineString"
+          ? geometry.coordinates[0]
+          : geometry.coordinates.find((line) => line.length >= 1)?.[0];
+      const center = bbox
+        ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
+        : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
+      const weather = await fetchPackWeather(center.lat, center.lng);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -50,11 +59,14 @@ export function PrepareOffline({
         geometry,
         bbox,
         elevationProfile,
+        weather: weather ?? undefined,
       });
       await persistRoutePack(pack);
       setReady(true);
       setMessage(
-        "Route saved on this device. Navigation will work without cell service.",
+        weather
+          ? `Route saved. Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
+          : "Route saved on this device. Navigation will work without cell service. Type temp/wind in Safety if you want field weather.",
       );
     } catch (error) {
       setMessage(
