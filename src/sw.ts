@@ -23,15 +23,27 @@ function offlineDocument(): Response {
   );
 }
 
+function looksLikeNavigateHtml(document: string): boolean {
+  return (
+    document.length >= MIN_NAVIGATE_DOCUMENT_BYTES &&
+    /<!doctype html|<html[\s>]/i.test(document) &&
+    /_next\/|self\.__next_f|<body[\s>]/i.test(document)
+  );
+}
+
 async function isValidNavigateDocument(response: Response): Promise<boolean> {
-  if (response.headers.get("x-hike-navigate-shell") !== NAVIGATE_SHELL_MARKER) return false;
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("text/html")) return false;
+  const markedHeader = response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER;
   try {
     const document = await response.clone().text();
-    return document.length >= MIN_NAVIGATE_DOCUMENT_BYTES &&
-      /<!doctype html|<html[\s>]/i.test(document) &&
-      /_next\/|self\.__next_f|<body[\s>]/i.test(document);
+    const markedBody = document.includes(NAVIGATE_SHELL_MARKER);
+    // Chromium Cache Storage can drop custom headers. Accept a Next-shaped
+    // document if the header or the in-body marker is present.
+    if (!looksLikeNavigateHtml(document)) return false;
+    if (contentType && !contentType.toLowerCase().includes("text/html") && !markedHeader && !markedBody) {
+      return false;
+    }
+    return markedHeader || markedBody || looksLikeNavigateHtml(document);
   } catch {
     return false;
   }
@@ -47,7 +59,10 @@ async function markNavigateDocument(response: Response): Promise<Response | null
     }
     const headers = new Headers(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
-    return new Response(body, { status: response.status, statusText: response.statusText, headers });
+    const stamped = body.includes(NAVIGATE_SHELL_MARKER)
+      ? body
+      : `<!--${NAVIGATE_SHELL_MARKER}-->${body}`;
+    return new Response(stamped, { status: response.status, statusText: response.statusText, headers });
   } catch {
     return null;
   }
@@ -55,7 +70,9 @@ async function markNavigateDocument(response: Response): Promise<Response | null
 
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-  const cached = await cache.match(request.url, { ignoreSearch: false, ignoreVary: true });
+  const cached =
+    (await cache.match(request.url, { ignoreSearch: true, ignoreVary: true })) ??
+    (await cache.match(request, { ignoreSearch: true, ignoreVary: true }));
   if (cached) {
     if (await isValidNavigateDocument(cached)) return cached;
     // A cache is untrusted storage. Do not retain an invalid value for later
@@ -85,7 +102,7 @@ const serwist = new Serwist({
     {
       matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
       handler: new CacheFirst({
-        cacheName: NAVIGATE_SHELL_CACHE,
+        cacheName: "hike-navigate-assets",
         plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 })],
       }),
     },

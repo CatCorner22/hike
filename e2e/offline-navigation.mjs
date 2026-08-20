@@ -299,7 +299,12 @@ async function run() {
       shellCached = await page.evaluate(async (url) => {
         try {
           const cache = await caches.open("hike-navigate-shell");
-          return Boolean(await cache.match(url, { ignoreVary: true }));
+          const response = await cache.match(url, { ignoreSearch: true, ignoreVary: true });
+          if (!response) return false;
+          const marked =
+            response.headers.get("x-hike-navigate-shell") === "hike-navigate-shell-v2";
+          const html = await response.clone().text();
+          return marked || html.includes("hike-navigate-shell-v2");
         } catch {
           return false;
         }

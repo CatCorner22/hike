@@ -24,7 +24,10 @@ function ownMarkedDocument(response: Response, html: string): Response | null {
     !/<!doctype html|<html[\s>]/i.test(html) || !/_next\/|self\.__next_f|<body[\s>]/i.test(html)) return null;
   const headers = new Headers(response.headers);
   headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
-  return new Response(html, { status: response.status, statusText: response.statusText, headers });
+  const stamped = html.includes(NAVIGATE_SHELL_MARKER)
+    ? html
+    : `<!--${NAVIGATE_SHELL_MARKER}-->${html}`;
+  return new Response(stamped, { status: response.status, statusText: response.statusText, headers });
 }
 
 /** Warm only an app-shaped, explicitly marked navigation document. */
@@ -67,7 +70,15 @@ export async function isNavigateShellCached(navId: string): Promise<boolean> {
   const url = navigateUrl(navId);
   if (!url || typeof caches === "undefined") return false;
   const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-  const response = await cache.match(url.toString(), { ignoreVary: true });
-  return response?.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER &&
-    Boolean(response.headers.get("content-type")?.toLowerCase().includes("text/html"));
+  const response = await cache.match(url.toString(), { ignoreSearch: true, ignoreVary: true });
+  if (!response) return false;
+  const markedHeader = response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType && !contentType.toLowerCase().includes("text/html") && !markedHeader) return false;
+  try {
+    const html = await response.clone().text();
+    return markedHeader || html.includes(NAVIGATE_SHELL_MARKER);
+  } catch {
+    return false;
+  }
 }
