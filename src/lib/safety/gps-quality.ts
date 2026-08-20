@@ -30,10 +30,6 @@ function normaliseEpoch(timestamp: number | undefined | null): number | null {
 /**
  * Phone GPS timestamps are sometimes 0, seconds-since-epoch, or clock-skewed.
  * Ancient times must keep their age (never become “now”). Future skew is clamped.
- *
- * Never call this on a stored or replayed fix — stamping an implausible live
- * reading `now` is only safe because `watchPosition` just delivered it.
- * Use `sanitizeStoredFixTimestamp` for IDB / last-known positions.
  */
 export function sanitizeFixTimestamp(
   timestamp: number | undefined | null,
@@ -41,6 +37,7 @@ export function sanitizeFixTimestamp(
 ): number {
   const t = normaliseEpoch(timestamp);
   if (t == null) { lastTimestampDiagnostic = "invalid-replaced"; return now; }
+  // Any future timestamp is untrustworthy; do not allow a grace period.
   if (t > now) { lastTimestampDiagnostic = "future-clamped"; return now; }
   lastTimestampDiagnostic = null;
   return t;
@@ -49,7 +46,7 @@ export function sanitizeFixTimestamp(
 /**
  * Normalise the timestamp on a fix read back from storage. Unlike a live reading there
  * is no ground truth to fall back on, so anything implausible is rejected rather than
- * being made to look recent. Display-only — never trusted as a live fix.
+ * being made to look recent.
  */
 export function sanitizeStoredFixTimestamp(
   timestamp: number | undefined | null,
@@ -66,8 +63,7 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
 
 /** Stale / last-known / storage-hydrated fixes are display-only — never trusted. */
 export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
-  if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now) return false;
-  if (stale) return false;
+  if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now || stale) return false;
   return fixAgeMs(recordedAt, now) <= TRUSTED_FIX_MS;
 }
 

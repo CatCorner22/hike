@@ -95,3 +95,30 @@ describe("buildPaperBackup", () => {
     expect(text).toMatch(/Start USNG/);
   });
 });
+
+/**
+ * The checklist must never be the only path to the map.
+ *
+ * hikeReadiness is advisory: it lists what is missing. Whether that BLOCKS
+ * navigation is a UI decision, and blocking it on a pack that is already
+ * downloaded and valid is unsafe -- someone already out, disoriented, on a
+ * dying battery cannot fill in a form. These assertions pin the distinction so
+ * a future change cannot quietly turn the advisory list back into a hard gate.
+ */
+describe("readiness is advisory, not a lock", () => {
+  const emptyProfile = { name: "", iceName: "", icePhone: "", medical: "", partySize: 1 };
+
+  it("reports missing items without claiming the route is unusable", () => {
+    const result = hikeReadiness({ packReady: true, profile: emptyProfile, returnAt: null });
+    expect(result.ok).toBe(false);
+    expect(result.missing.length).toBeGreaterThan(0);
+    // The pack is present, so "no offline route pack" must NOT be among them:
+    // that is the only item that genuinely makes navigation impossible.
+    expect(result.missing.join(" ")).not.toMatch(/route pack/i);
+  });
+
+  it("flags the one condition that really does prevent navigating", () => {
+    const result = hikeReadiness({ packReady: false, profile: emptyProfile, returnAt: null });
+    expect(result.missing.join(" ")).toMatch(/route pack/i);
+  });
+});

@@ -168,7 +168,19 @@ function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): numbe
 }
 
 function wayPositions(way: OverpassElement): GeoJSON.Position[] {
-  return (way.geometry || []).map((p) => [p.lon, p.lat] as GeoJSON.Position);
+  const positions = (way.geometry || []).map((point) => [point.lon, point.lat] as GeoJSON.Position);
+  return positions.length >= 2 &&
+    positions.every(
+      (position) =>
+        Number.isFinite(position[0]) &&
+        Number.isFinite(position[1]) &&
+        position[0] >= -180 &&
+        position[0] <= 180 &&
+        position[1] >= -90 &&
+        position[1] <= 90,
+    )
+    ? positions
+    : [];
 }
 
 function endpointsMatch(a: GeoJSON.Position, b: GeoJSON.Position): boolean {
@@ -260,35 +272,24 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
 }
 
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
+  const relation = elements.find((element) => element.type === "relation");
   const waysById = new Map(
-    elements.filter((element) => element.type === "way" && element.geometry && element.geometry.length >= 2)
+    elements
+      .filter((element) => element.type === "way")
       .map((way) => [way.id, way]),
   );
-  const relation = elements.find((element) => element.type === "relation");
-  const members = relation?.members?.filter((member) => member.type === "way") ?? [];
-  const ordered: GeoJSON.Position[][] = [];
-  const used = new Set<number>();
-
-  if (members.length > 0) {
-    for (const member of members) {
+  const memberWays = relation?.members?.filter((member) => member.type === "way") ?? [];
+  const lines = memberWays.length > 0
+    ? memberWays.flatMap((member) => {
       const way = waysById.get(member.ref);
-      if (!way) continue;
-      let coords = wayPositions(way);
-      if (coords.length < 2) continue;
-      if (member.role === "backward") coords = [...coords].reverse();
-      ordered.push(coords);
-      used.add(way.id);
-    }
-  }
-
-  for (const way of waysById.values()) {
-    if (used.has(way.id)) continue;
-    const coords = wayPositions(way);
-    if (coords.length >= 2) ordered.push(coords);
-  }
-
-  if (!ordered.length) return null;
-  const chains = stitchRelationWays(ordered);
+      if (!way) return [];
+      const positions = wayPositions(way);
+      if (positions.length < 2) return [];
+      return [member.role === "backward" ? [...positions].reverse() : positions];
+    })
+    : [...waysById.values()].map(wayPositions).filter((positions) => positions.length >= 2);
+  if (!lines.length) return null;
+  const chains = stitchRelationWays(lines);
   return chains.length === 1
     ? { type: "LineString", coordinates: chains[0] }
     : { type: "MultiLineString", coordinates: chains };

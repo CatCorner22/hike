@@ -130,6 +130,9 @@ export default function NavigatePage() {
   const [deniedHeadingText, setDeniedHeadingText] = useState("");
   const [deniedNeedHeading, setDeniedNeedHeading] = useState(false);
   const [navUnlocked, setNavUnlocked] = useState(false);
+  // Items the hiker chose to skip on the pre-hike checklist, kept so navigation
+  // can keep showing them. Skipping must not silently drop the safety net.
+  const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
   const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
   const [deniedError, setDeniedError] = useState<string | null>(null);
@@ -182,7 +185,11 @@ export default function NavigatePage() {
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [loadState.status]);
+    // navUnlocked matters: the header does not mount while the readiness
+    // checklist is showing, so with only loadState.status the ref was still null
+    // when the effect ran and the header was never measured. headerHeight stayed
+    // 0, silently disabling both the map label inset and the banner offset.
+  }, [loadState.status, navUnlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -637,6 +644,15 @@ export default function NavigatePage() {
     hudBanners.push({ key: "checkin", tone: "critical", text: checkinOverdue });
   }
   if (fallWarning) hudBanners.push({ key: "fall", tone: "critical", text: fallWarning });
+  // Persistent and not dismissible: the hiker skipped these, so the honest thing
+  // is to keep saying which parts of the safety net are not set up.
+  if (readinessSkipped.length > 0) {
+    hudBanners.push({
+      key: "readiness",
+      tone: "warn",
+      text: `Not set up: ${readinessSkipped.join(", ")}. Nobody is expecting you back at a known time.`,
+    });
+  }
   if (exposureWarning) hudBanners.push({ key: "exposure", tone: "warn", text: exposureWarning });
   if (amsWarn) hudBanners.push({ key: "ams", tone: "warn", text: amsWarn });
   for (const [key, text] of [
@@ -727,7 +743,19 @@ export default function NavigatePage() {
 
   if (loadState.status === "ready" && !navUnlocked) {
     return (
-      <ReadinessGate packReady onReady={unlockIfReady} />
+      <ReadinessGate
+        packReady
+        onReady={unlockIfReady}
+        onProceedAnyway={() => {
+          void (async () => {
+            const [profile, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
+            setReadinessSkipped(
+              hikeReadiness({ packReady: true, profile, returnAt: alarm?.returnAt ?? null })
+                .missing,
+            );
+          })().finally(() => setNavUnlocked(true));
+        }}
+      />
     );
   }
 
@@ -957,7 +985,13 @@ export default function NavigatePage() {
         </div>
 
         {hudBanners.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-3 top-16 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto">
+          <div
+            // Offset by the measured header rather than a fixed top-16. The header
+            // card carries the USNG grid reference -- the line you read aloud to a
+            // rescuer -- and a banner sat on top of it.
+            className="pointer-events-none absolute inset-x-3 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto"
+            style={{ top: (headerHeight || 64) + 8 }}
+          >
             {hudBanners.map((banner) => (
               <div
                 key={banner.key}

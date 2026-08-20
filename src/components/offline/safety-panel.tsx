@@ -399,12 +399,10 @@ export function SafetyPanel({
         setOverdue(false);
         return;
       }
+      // overdueStatus always returns a shaped result; an invalid deadline comes
+      // back with valid: false and a label that says the alarm is not armed.
+      // The label is rendered unconditionally, so that state stays visible.
       const status = overdueStatus(returnResolution.instant.toISOString());
-      if (!status) {
-        setOverdueLabel("Return time is invalid — set a new local return time.");
-        setOverdue(false);
-        return;
-      }
       setOverdueLabel(status.label);
       setOverdue(status.overdue);
     };

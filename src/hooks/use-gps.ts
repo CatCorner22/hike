@@ -142,10 +142,11 @@ export function useGps() {
       lastCallbackRef.current = Date.now();
       if (error.code === error.PERMISSION_DENIED) {
         deniedRef.current = true;
-        deniedSinceRef.current = Date.now();
         if (lastFixRef.current) {
+          // A hiker must not see the last coordinate as a current GPS position after permission is revoked.
           lastFixRef.current = { ...lastFixRef.current, stale: true };
         }
+        deniedSinceRef.current = Date.now();
         setState({
           fix: lastFixRef.current,
           status: "denied",

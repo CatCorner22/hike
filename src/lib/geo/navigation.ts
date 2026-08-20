@@ -270,6 +270,8 @@ function emptyProgress(point: LatLng, totalMeters: number, valid = true): TrailP
     totalMeters,
     remainingElevationMeters: 0,
     remainingDirection: "unknown",
+    // No route position is known. A numeric bearing would tell a hiker to walk
+    // somewhere despite invalid data, so consumers must see this as unavailable.
     bearingToTrail: Number.NaN,
     valid,
   };
