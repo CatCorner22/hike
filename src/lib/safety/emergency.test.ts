@@ -15,7 +15,7 @@ describe("emergency helpers", () => {
       trailName: "Test Trail",
       offTrailM: 55,
     });
-    expect(msg).toContain("HIKING EMERGENCY LOCATION");
+    expect(msg).toContain("SOS / EMERGENCY LOCATION");
     expect(msg).toContain("Test Trail");
     expect(msg).toContain("maps.google.com");
     expect(msg).toContain("USNG 8-digit");

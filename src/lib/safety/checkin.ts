@@ -62,7 +62,15 @@ export function checkinStatus(
       dueInMin: settings.intervalMin,
     };
   }
-  const elapsedMin = Math.round((now - Date.parse(lastAt)) / 60000);
+  const lastMs = Date.parse(lastAt);
+  if (!Number.isFinite(lastMs)) {
+    return {
+      overdue: true,
+      label: "Check-in time is invalid — tap I'm OK or send SOS",
+      dueInMin: Number.NaN,
+    };
+  }
+  const elapsedMin = Math.round((now - lastMs) / 60000);
   const dueInMin = settings.intervalMin - elapsedMin;
   if (dueInMin <= 0) {
     return {

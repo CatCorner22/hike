@@ -24,6 +24,12 @@ describe("amsAssessment", () => {
     expect(r.warning).toBeNull();
   });
 
+  it("does not treat fatigue at 1500 m as AMS", () => {
+    const r = amsAssessment({ altitudeM: 1500, symptoms: ["fatigue"] });
+    expect(r.level).toBe("none");
+    expect(r.warning).toBeNull();
+  });
+
   it("warns on rapid gain at altitude", () => {
     const r = amsAssessment({ altitudeM: 3000, gainLastHourM: 450, symptoms: [] });
     expect(r.level).not.toBe("none");

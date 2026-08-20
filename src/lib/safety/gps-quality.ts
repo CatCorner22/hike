@@ -1,4 +1,4 @@
-/** A live or briefly dropped GPS fix is trusted for off-trail alerts and follow-mode. */
+/** A live GPS fix is trusted for off-trail alerts and follow-mode. */
 export const TRUSTED_FIX_MS = 2 * 60 * 1000;
 
 /** Older last-known positions may still be shown, but never as current location. */
@@ -17,7 +17,7 @@ export function isValidLatLng(lat: number, lng: number): boolean {
 
 /**
  * Phone GPS timestamps are sometimes 0, seconds-since-epoch, or clock-skewed.
- * Those must not become “epoch” or a future time — both break trust/stale logic.
+ * Ancient times must keep their age (never become “now”). Future skew is clamped.
  */
 export function sanitizeFixTimestamp(
   timestamp: number | undefined | null,
@@ -27,8 +27,7 @@ export function sanitizeFixTimestamp(
   let t = timestamp;
   // 10-digit values are seconds; 13-digit values are milliseconds.
   if (t < 1e11) t *= 1000;
-  if (t > now + 120_000) return now;
-  if (now - t > DISPLAY_FIX_MS) return now;
+  if (t > now) return now;
   return t;
 }
 
@@ -36,8 +35,9 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
   return Math.max(0, now - recordedAt);
 }
 
+/** Stale / last-known / storage-hydrated fixes are display-only — never trusted. */
 export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
-  if (stale && fixAgeMs(recordedAt, now) > TRUSTED_FIX_MS) return false;
+  if (stale) return false;
   return fixAgeMs(recordedAt, now) <= TRUSTED_FIX_MS;
 }
 

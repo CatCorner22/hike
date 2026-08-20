@@ -140,7 +140,15 @@ export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
 }
 
 export function overdueStatus(returnAt: string, now = Date.now()) {
-  const remainingMin = Math.round((Date.parse(returnAt) - now) / 60000);
+  const parsed = Date.parse(returnAt);
+  if (!Number.isFinite(parsed)) {
+    return {
+      overdue: true,
+      remainingMin: Number.NaN,
+      label: "Return time is invalid — set it again or send SOS",
+    };
+  }
+  const remainingMin = Math.round((parsed - now) / 60000);
   if (remainingMin <= 0) {
     return {
       overdue: true,

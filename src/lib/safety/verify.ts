@@ -24,12 +24,15 @@ export function verifyRegroup(input: {
     return { ok: false, message: "Set a night challenge and password in ICE first." };
   }
 
-  if (challenge && !verifyChallenge(input.challengeResponse, challenge)) {
-    return { ok: false, message: "Challenge word does not match." };
+  if (password) {
+    if (!verifyPassword(input.passwordResponse, password)) {
+      return { ok: false, message: "Password reply does not match." };
+    }
+    return { ok: true, message: "Regroup verified — party identity confirmed." };
   }
 
-  if (password && !verifyPassword(input.passwordResponse, password)) {
-    return { ok: false, message: "Password reply does not match." };
+  if (challenge && !verifyChallenge(input.challengeResponse, challenge)) {
+    return { ok: false, message: "Challenge word does not match." };
   }
 
   return { ok: true, message: "Regroup verified — party identity confirmed." };

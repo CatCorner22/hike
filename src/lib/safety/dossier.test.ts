@@ -21,7 +21,7 @@ describe("buildSafetyDossier", () => {
     expect(text).toMatch(/Alex/);
     expect(text).toMatch(/Sam/);
     expect(text).toMatch(/Half Dome/);
-    expect(text).toMatch(/HIKING EMERGENCY/);
+    expect(text).toMatch(/SOS \/ EMERGENCY LOCATION/);
     expect(text).toMatch(/USNG/);
   });
 });

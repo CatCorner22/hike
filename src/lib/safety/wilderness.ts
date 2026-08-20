@@ -46,9 +46,10 @@ export function amsAssessment(input: {
   }
 
   let level: AmsLevel = "none";
+  const highEnough = alt >= 2500 || (alt >= 2000 && gain >= 300);
   if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-  else if (score >= 5) level = "moderate";
-  else if (score >= 2 || input.symptoms.length > 0) level = "mild";
+  else if (highEnough && score >= 5) level = "moderate";
+  else if (highEnough && (score >= 2 || input.symptoms.length > 0)) level = "mild";
 
   const actions: string[] = [];
   let warning: string | null = null;
@@ -94,9 +95,7 @@ export function avalancheTerrainWarning(input: {
   if (!snow || slope < 30) return null;
 
   const aspect = input.aspectDeg;
-  const leeward =
-    aspect != null &&
-    ((aspect >= 135 && aspect <= 225) || (aspect >= 315 || aspect <= 45));
+  const leeward = aspect != null && aspect >= 135 && aspect <= 225;
 
   if (slope >= 30 && leeward) {
     return `~${slope}% leeward slope in snow season — classic avalanche start zone. Check forecast, carry beacon/probe/shovel, one at a time.`;

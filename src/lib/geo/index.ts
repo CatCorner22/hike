@@ -1,10 +1,19 @@
 import * as turf from "@turf/turf";
 
+function geometrySegments(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+): GeoJSON.Position[][] {
+  if (geometry.type === "LineString") return [geometry.coordinates];
+  return geometry.coordinates.filter((line) => line.length >= 2);
+}
+
 export function lineLengthMeters(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
-  const feature = turf.feature(geometry);
-  return turf.length(feature, { units: "meters" });
+  return geometrySegments(geometry).reduce((sum, coords) => {
+    if (coords.length < 2) return sum;
+    return sum + turf.length(turf.lineString(coords), { units: "meters" });
+  }, 0);
 }
 
 export function distanceToTrailMeters(
@@ -12,12 +21,13 @@ export function distanceToTrailMeters(
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
   const pt = turf.point([point.lng, point.lat]);
-  const lineCoords =
-    trail.type === "LineString"
-      ? trail.coordinates
-      : trail.coordinates.flat();
-  const line = turf.lineString(lineCoords);
-  return turf.pointToLineDistance(pt, line, { units: "meters" });
+  let best = Infinity;
+  for (const coords of geometrySegments(trail)) {
+    if (coords.length < 2) continue;
+    const d = turf.pointToLineDistance(pt, turf.lineString(coords), { units: "meters" });
+    if (d < best) best = d;
+  }
+  return Number.isFinite(best) ? best : Number.NaN;
 }
 
 export function nearestPointOnTrail(
@@ -25,20 +35,23 @@ export function nearestPointOnTrail(
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): { lat: number; lng: number; distanceMeters: number; index: number } {
   const pt = turf.point([point.lng, point.lat]);
-  const lineCoords =
-    trail.type === "LineString"
-      ? trail.coordinates
-      : trail.coordinates.flat();
-  const line = turf.lineString(lineCoords);
-  const snapped = turf.nearestPointOnLine(line, pt, { units: "meters" });
-  const coords = snapped.geometry.coordinates;
-
-  return {
-    lng: coords[0],
-    lat: coords[1],
-    distanceMeters: snapped.properties.dist ?? 0,
-    index: snapped.properties.index ?? 0,
-  };
+  let best: { lat: number; lng: number; distanceMeters: number; index: number } | null = null;
+  let indexOffset = 0;
+  for (const coords of geometrySegments(trail)) {
+    if (coords.length < 2) continue;
+    const snapped = turf.nearestPointOnLine(turf.lineString(coords), pt, { units: "meters" });
+    const d = snapped.properties.dist ?? Infinity;
+    if (!best || d < best.distanceMeters) {
+      best = {
+        lng: snapped.geometry.coordinates[0],
+        lat: snapped.geometry.coordinates[1],
+        distanceMeters: d,
+        index: indexOffset + (snapped.properties.index ?? 0),
+      };
+    }
+    indexOffset += coords.length;
+  }
+  return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0 };
 }
 
 export function computeTrackStats(
@@ -155,23 +168,42 @@ export function formatPace(minPerKm: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")} /mi`;
 }
 
+function sampleAlongSegments(
+  segments: GeoJSON.Position[][],
+  samples: number,
+): Array<{ lat: number; lng: number; distanceMeters: number }> {
+  const lengths = segments.map((coords) =>
+    coords.length >= 2 ? turf.length(turf.lineString(coords), { units: "meters" }) : 0,
+  );
+  const total = lengths.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return [];
+  const points: Array<{ lat: number; lng: number; distanceMeters: number }> = [];
+  for (let i = 0; i <= samples; i++) {
+    const target = (total * i) / samples;
+    let walked = 0;
+    let picked: { lat: number; lng: number } | null = null;
+    for (let s = 0; s < segments.length; s++) {
+      const segLen = lengths[s];
+      if (target <= walked + segLen || s === segments.length - 1) {
+        const along = Math.min(Math.max(target - walked, 0), segLen);
+        const pt = turf.along(turf.lineString(segments[s]), along, { units: "meters" });
+        picked = { lat: pt.geometry.coordinates[1], lng: pt.geometry.coordinates[0] };
+        break;
+      }
+      walked += segLen;
+    }
+    if (picked) points.push({ ...picked, distanceMeters: target });
+  }
+  return points;
+}
+
 export async function fetchElevationProfile(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   samples: number = 50,
 ): Promise<Array<{ distanceMeters: number; elevation: number }>> {
-  const line = turf.lineString(
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat(),
-  );
-  const length = turf.length(line, { units: "meters" });
-  const points: Array<{ lat: number; lng: number }> = [];
-
-  for (let i = 0; i <= samples; i++) {
-    const dist = (length * i) / samples;
-    const pt = turf.along(line, dist, { units: "meters" });
-    points.push({ lat: pt.geometry.coordinates[1], lng: pt.geometry.coordinates[0] });
-  }
+  const segments = geometrySegments(geometry);
+  const points = sampleAlongSegments(segments, samples);
+  const length = points[points.length - 1]?.distanceMeters ?? 0;
 
   try {
     const response = await fetch("https://api.open-elevation.com/api/v1/lookup", {
@@ -186,7 +218,7 @@ export async function fetchElevationProfile(
     const data = await response.json();
     return (data.results || []).map(
       (r: { elevation: number }, i: number) => ({
-        distanceMeters: (length * i) / samples,
+        distanceMeters: points[i]?.distanceMeters ?? (length * i) / samples,
         elevation: r.elevation,
       }),
     );
@@ -217,25 +249,21 @@ export function gpxFromLineString(
   name: string,
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): string {
-  const coords =
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
-
-  const trkpts = coords
-    .map(
-      ([lng, lat]) =>
-        `      <trkpt lat="${lat}" lon="${lng}"></trkpt>`,
-    )
+  const segments = geometrySegments(geometry);
+  const segs = segments
+    .map((coords) => {
+      const trkpts = coords
+        .map(([lng, lat]) => `      <trkpt lat="${lat}" lon="${lng}"></trkpt>`)
+        .join("\n");
+      return `    <trkseg>\n${trkpts}\n    </trkseg>`;
+    })
     .join("\n");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Hike App">
   <trk>
     <name>${escapeXml(name)}</name>
-    <trkseg>
-${trkpts}
-    </trkseg>
+${segs}
   </trk>
 </gpx>`;
 }
@@ -273,17 +301,65 @@ function escapeXml(str: string): string {
     .replace(/"/g, "&quot;");
 }
 
-export function parseGpx(gpxContent: string): GeoJSON.LineString | null {
-  const trkptRegex = /<trkpt[^>]*lat="([^"]+)"[^>]*lon="([^"]+)"[^>]*>/g;
-  const coordinates: GeoJSON.Position[] = [];
-  let match;
+const GPX_MAX_CHARS = 5_000_000;
+const GPX_MAX_POINTS = 20_000;
 
-  while ((match = trkptRegex.exec(gpxContent)) !== null) {
-    coordinates.push([parseFloat(match[2]), parseFloat(match[1])]);
+function parseTrkptAttrs(tag: string, body = ""): GeoJSON.Position | null {
+  const lat = /lat="([^"]+)"/.exec(tag)?.[1];
+  const lon = /lon="([^"]+)"/.exec(tag)?.[1];
+  if (lat == null || lon == null) return null;
+  const lng = Number(lon);
+  const la = Number(lat);
+  if (!Number.isFinite(lng) || !Number.isFinite(la)) return null;
+  const eleRaw = /<ele>\s*([^<]+)\s*<\/ele>/i.exec(body)?.[1];
+  const ele = eleRaw != null ? Number(eleRaw) : Number.NaN;
+  return Number.isFinite(ele) ? [lng, la, ele] : [lng, la];
+}
+
+export function parseGpx(
+  gpxContent: string,
+): GeoJSON.LineString | GeoJSON.MultiLineString | null {
+  if (!gpxContent || gpxContent.length > GPX_MAX_CHARS) return null;
+  const segRe = /<trkseg\b[^>]*>([\s\S]*?)<\/trkseg>/gi;
+  const ptRe = /<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>|<trkpt\b([^>]*)\/>/gi;
+  const segments: GeoJSON.Position[][] = [];
+  let total = 0;
+  let segMatch: RegExpExecArray | null;
+  while ((segMatch = segRe.exec(gpxContent)) !== null) {
+    const coords: GeoJSON.Position[] = [];
+    let pt: RegExpExecArray | null;
+    const body = segMatch[1];
+    ptRe.lastIndex = 0;
+    while ((pt = ptRe.exec(body)) !== null) {
+      const attrs = pt[1] ?? pt[3] ?? "";
+      const pos = parseTrkptAttrs(attrs, pt[2] ?? "");
+      if (!pos) continue;
+      coords.push(pos);
+      total += 1;
+      if (total > GPX_MAX_POINTS) return null;
+    }
+    if (coords.length >= 2) segments.push(coords);
   }
 
-  if (coordinates.length < 2) return null;
-  return { type: "LineString", coordinates };
+  if (segments.length === 0) {
+    const coords: GeoJSON.Position[] = [];
+    let pt: RegExpExecArray | null;
+    const all = /<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>|<trkpt\b([^>]*)\/>/gi;
+    while ((pt = all.exec(gpxContent)) !== null) {
+      const attrs = pt[1] ?? pt[3] ?? "";
+      const pos = parseTrkptAttrs(attrs, pt[2] ?? "");
+      if (!pos) continue;
+      coords.push(pos);
+      if (coords.length > GPX_MAX_POINTS) return null;
+    }
+    if (coords.length < 2) return null;
+    return { type: "LineString", coordinates: coords };
+  }
+
+  if (segments.length === 1) {
+    return { type: "LineString", coordinates: segments[0] };
+  }
+  return { type: "MultiLineString", coordinates: segments };
 }
 
 export function bboxFromGeometry(

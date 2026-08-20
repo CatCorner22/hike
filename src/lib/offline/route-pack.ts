@@ -31,6 +31,7 @@ interface RoutePackDB extends DBSchema {
       lng: number;
       accuracy?: number;
       heading?: number;
+      altitude?: number;
       recordedAt: string;
     };
   };
@@ -130,23 +131,32 @@ export async function hasRoutePack(id: string): Promise<boolean> {
   return Boolean(await getRoutePack(id));
 }
 
+let lastFixWrite: Promise<void> = Promise.resolve();
+
 export async function saveLastFix(fix: {
   lat: number;
   lng: number;
   accuracy?: number;
   heading?: number;
+  altitude?: number;
   recordedAt?: number;
 }) {
-  const db = await getDb();
-  if (!db) return;
-  await db.put("lastFix", {
-    id: "current",
-    lat: fix.lat,
-    lng: fix.lng,
-    accuracy: fix.accuracy,
-    heading: fix.heading,
-    recordedAt: new Date(fix.recordedAt ?? Date.now()).toISOString(),
-  });
+  lastFixWrite = lastFixWrite
+    .catch(() => undefined)
+    .then(async () => {
+      const db = await getDb();
+      if (!db) return;
+      await db.put("lastFix", {
+        id: "current",
+        lat: fix.lat,
+        lng: fix.lng,
+        accuracy: fix.accuracy,
+        heading: fix.heading,
+        altitude: fix.altitude,
+        recordedAt: new Date(fix.recordedAt ?? Date.now()).toISOString(),
+      });
+    });
+  return lastFixWrite;
 }
 
 export async function getLastFix() {

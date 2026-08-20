@@ -1,5 +1,4 @@
 import * as turf from "@turf/turf";
-import { toLineString } from "@/lib/geo/navigation";
 import { formatRangeAzimuth, rangeAzimuth } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 
@@ -13,44 +12,48 @@ export interface RouteCardLeg {
   grid: string;
 }
 
-/** Sample the route into walkable legs for a field route card (max ~25 legs). */
+function segments(geometry: GeoJSON.LineString | GeoJSON.MultiLineString): GeoJSON.Position[][] {
+  return geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+}
+
+/** Sample the route into walkable legs using path distance, not flattened chords. */
 export function routeCardLegs(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   targetLegM = 250,
   maxLegs = 25,
 ): RouteCardLeg[] {
-  const line = toLineString(geometry);
-  const coords = line.coordinates.filter(
-    (c) => Number.isFinite(c[0]) && Number.isFinite(c[1]),
-  );
-  if (coords.length < 2) return [];
-
   const legs: RouteCardLeg[] = [];
   let cum = 0;
-  let legStart = coords[0];
-  let legStartIdx = 0;
+  let pathSinceLeg = 0;
+  let legStart: GeoJSON.Position | null = null;
 
-  for (let i = 1; i < coords.length && legs.length < maxLegs; i++) {
-    const segLen = turf.distance(turf.point(legStart), turf.point(coords[i]), {
-      units: "meters",
-    });
-    cum += segLen;
-    if (cum - (legs[legs.length - 1]?.cumMeters ?? 0) >= targetLegM || i === coords.length - 1) {
-      const from = { lng: legStart[0], lat: legStart[1] };
-      const to = { lng: coords[i][0], lat: coords[i][1] };
-      const ra = rangeAzimuth(from, to);
-      legs.push({
-        index: legs.length + 1,
-        from,
-        to,
-        meters: ra.meters,
-        cumMeters: cum,
-        trueDeg: ra.trueDeg,
-        grid: formatUsng(to.lat, to.lng),
+  for (const coords of segments(geometry)) {
+    const clean = coords.filter((c) => Number.isFinite(c[0]) && Number.isFinite(c[1]));
+    if (clean.length < 2) continue;
+    if (!legStart) legStart = clean[0];
+
+    for (let i = 1; i < clean.length && legs.length < maxLegs; i++) {
+      const step = turf.distance(turf.point(clean[i - 1]), turf.point(clean[i]), {
+        units: "meters",
       });
-      legStart = coords[i];
-      legStartIdx = i;
-      void legStartIdx;
+      cum += step;
+      pathSinceLeg += step;
+      if (pathSinceLeg >= targetLegM || (i === clean.length - 1 && coords === segments(geometry).at(-1))) {
+        const from = { lng: legStart[0], lat: legStart[1] };
+        const to = { lng: clean[i][0], lat: clean[i][1] };
+        const ra = rangeAzimuth(from, to);
+        legs.push({
+          index: legs.length + 1,
+          from,
+          to,
+          meters: pathSinceLeg,
+          cumMeters: cum,
+          trueDeg: ra.trueDeg,
+          grid: formatUsng(to.lat, to.lng),
+        });
+        legStart = clean[i];
+        pathSinceLeg = 0;
+      }
     }
   }
   return legs;
@@ -60,10 +63,10 @@ export function formatRouteCard(trailName: string, legs: RouteCardLeg[]): string
   if (legs.length === 0) return "ROUTE CARD — no geometry";
   return [
     `ROUTE CARD — ${trailName}`,
-    `Total ~${Math.round(legs[legs.length - 1].cumMeters)} m · ${legs.length} legs`,
+    `Total ~${Math.round(legs[legs.length - 1].cumMeters)} m · ${legs.length} legs · bearings are TRUE`,
     ...legs.map(
       (l) =>
-        `L${l.index}  ${Math.round(l.trueDeg)}° / ${Math.round(l.meters)} m  cum ${Math.round(l.cumMeters)} m  ${l.grid}`,
+        `L${l.index}  ${Math.round(l.trueDeg)}° true / ${Math.round(l.meters)} m  cum ${Math.round(l.cumMeters)} m  ${l.grid}`,
     ),
     "At each leg: confirm terrain handrail, pace count, and time.",
   ].join("\n");

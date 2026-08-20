@@ -1,5 +1,5 @@
 import { formatZulu } from "@/lib/safety/landnav";
-import { formatCoords, emergencyMessage } from "@/lib/safety/emergency";
+import { formatCoords, emergencyMessage, type PositionSource } from "@/lib/safety/emergency";
 import { formatCheckinLog, type CheckinEntry } from "@/lib/safety/checkin";
 import { formatNavLog, type NavLeg } from "@/lib/safety/navlog";
 import type { IceProfile, SafetyWaypoint } from "@/lib/safety/profile";
@@ -21,6 +21,7 @@ export function buildSafetyDossier(input: {
   navLegs?: NavLeg[];
   waypoints?: SafetyWaypoint[];
   extraNotes?: string[];
+  positionSource?: PositionSource;
 }): string {
   const lines: string[] = [
     "=== HIKE SAFETY DOSSIER ===",
@@ -39,7 +40,11 @@ export function buildSafetyDossier(input: {
 
   if (input.lat != null && input.lng != null) {
     lines.push("--- LAST POSITION ---");
-    if (input.stale) lines.push("STATUS: last known — GPS not live");
+    if (input.positionSource === "deadReckon") {
+      lines.push("STATUS: dead reckon — GPS denied; pace/heading estimate");
+    } else if (input.stale || input.positionSource === "lastKnown") {
+      lines.push("STATUS: last known — GPS not live");
+    }
     lines.push(formatCoords(input.lat, input.lng, input.accuracyM));
     lines.push(`USNG: ${formatUsng(input.lat, input.lng)}`);
     lines.push(`MGRS10: ${formatMgrs10(input.lat, input.lng)}`);
@@ -47,7 +52,11 @@ export function buildSafetyDossier(input: {
       lines.push(`Fix time: ${new Date(input.recordedAt).toISOString()}`);
     }
     if (input.offTrailM != null && input.offTrailM > 20) {
-      lines.push(`Off route: ~${Math.round(input.offTrailM)} m`);
+      lines.push(
+        input.stale
+          ? `LAST KNOWN was ~${Math.round(input.offTrailM)} m off marked route`
+          : `Off route: ~${Math.round(input.offTrailM)} m`,
+      );
     }
     lines.push("");
   }
@@ -100,6 +109,7 @@ export function buildSafetyDossier(input: {
       stale: input.stale,
       recordedAt: input.recordedAt,
       profile: input.profile,
+      positionSource: input.positionSource,
     }),
   );
 

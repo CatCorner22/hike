@@ -25,7 +25,9 @@ export function nineLineMedevac(input: {
     "9-LINE MEDEVAC / SAR",
     `L1 LOCATION: ${loc}`,
     "L2 FREQ/CALL: SMS/CELL — Hike app",
-    `L3 PATIENTS BY PRECEDENCE: ${patients}${prec} (${prec === "A" ? "Urgent" : prec === "B" ? "Priority" : "Routine"})`,
+    `L3 PATIENTS BY PRECEDENCE: ${patients} ${prec} (${
+      prec === "A" ? "Urgent" : prec === "B" ? "Urgent Surgical" : "Priority"
+    })`,
     "L4 SPECIAL EQUIPMENT: None stated",
     `L5 PATIENTS BY TYPE: ${litter}L ${amb}A`,
     "L6 SECURITY: N — civilian wilderness",

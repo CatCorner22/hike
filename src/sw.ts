@@ -1,6 +1,6 @@
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
-import { ExpirationPlugin, NetworkFirst, Serwist } from "serwist";
+import { ExpirationPlugin, NetworkFirst, NetworkOnly, Serwist } from "serwist";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -35,16 +35,7 @@ const serwist = new Serwist({
       matcher: ({ url }) =>
         url.pathname.startsWith("/api/trails/") ||
         url.pathname.startsWith("/api/plans/"),
-      handler: new NetworkFirst({
-        cacheName: "hike-route-api",
-        networkTimeoutSeconds: 3,
-        plugins: [
-          new ExpirationPlugin({
-            maxEntries: 50,
-            maxAgeSeconds: 60 * 60 * 24 * 14,
-          }),
-        ],
-      }),
+      handler: new NetworkOnly(),
     },
     ...defaultCache,
   ],

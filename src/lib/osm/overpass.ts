@@ -187,20 +187,66 @@ export async function searchTrailsByBbox(
   return results;
 }
 
+function wayPositions(way: OverpassElement): GeoJSON.Position[] {
+  return (way.geometry || []).map((p) => [p.lon, p.lat]);
+}
+
+function pointsClose(a: GeoJSON.Position | undefined, b: GeoJSON.Position | undefined, eps = 1e-5) {
+  if (!a || !b) return false;
+  return Math.abs(a[0] - b[0]) < eps && Math.abs(a[1] - b[1]) < eps;
+}
+
 function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
   const relation = elements.find((e) => e.type === "relation");
-  const ways = elements.filter((e) => e.type === "way" && e.geometry?.length);
-
-  if (!ways.length) return null;
-
-  const lines: GeoJSON.Position[][] = ways.map((way) =>
-    (way.geometry || []).map((p) => [p.lon, p.lat]),
+  const waysById = new Map(
+    elements.filter((e) => e.type === "way" && e.geometry?.length).map((w) => [w.id, w]),
   );
+
+  const ordered: GeoJSON.Position[][] = [];
+  const members = relation?.members?.filter((m) => m.type === "way") ?? [];
+
+  if (members.length > 0) {
+    for (const member of members) {
+      const way = waysById.get(member.ref);
+      if (!way) continue;
+      let coords = wayPositions(way);
+      if (coords.length < 2) continue;
+      if (member.role === "backward") coords = [...coords].reverse();
+      ordered.push(coords);
+    }
+  }
+
+  if (ordered.length === 0) {
+    for (const way of waysById.values()) {
+      const coords = wayPositions(way);
+      if (coords.length >= 2) ordered.push(coords);
+    }
+  }
+
+  if (ordered.length === 0) return null;
+
+  const lines: GeoJSON.Position[][] = [];
+  for (const raw of ordered) {
+    let coords = raw;
+    const last = lines[lines.length - 1];
+    if (last) {
+      const lastEnd = last[last.length - 1];
+      if (pointsClose(lastEnd, coords[0])) {
+        last.push(...coords.slice(1));
+        continue;
+      }
+      if (pointsClose(lastEnd, coords[coords.length - 1])) {
+        coords = [...coords].reverse();
+        last.push(...coords.slice(1));
+        continue;
+      }
+    }
+    lines.push([...coords]);
+  }
 
   if (lines.length === 1) {
     return { type: "LineString", coordinates: lines[0] };
   }
-
   return { type: "MultiLineString", coordinates: lines };
 }
 

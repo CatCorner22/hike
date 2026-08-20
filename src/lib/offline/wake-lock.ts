@@ -1,21 +1,34 @@
+type WakeLockSentinelLike = {
+  released?: boolean;
+  release: () => Promise<void>;
+  addEventListener?: (type: "release", listener: () => void) => void;
+  removeEventListener?: (type: "release", listener: () => void) => void;
+};
+
 let activeLock: { release: () => void } | null = null;
 let lockHeld = false;
+let sentinel: WakeLockSentinelLike | null = null;
 
 export async function requestWakeLock(): Promise<{ release: () => void }> {
   const nav = navigator as Navigator & {
-    wakeLock?: { request: (type: "screen") => Promise<{ release: () => Promise<void> }> };
+    wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinelLike> };
   };
 
   if (!nav.wakeLock) {
     return { release() {} };
   }
 
-  let sentinel: { release: () => Promise<void> } | null = null;
+  const onSentinelRelease = () => {
+    lockHeld = false;
+    sentinel = null;
+  };
 
   const acquire = async () => {
     try {
+      sentinel?.removeEventListener?.("release", onSentinelRelease);
       sentinel = await nav.wakeLock!.request("screen");
-      lockHeld = sentinel != null;
+      lockHeld = sentinel != null && sentinel.released !== true;
+      sentinel?.addEventListener?.("release", onSentinelRelease);
     } catch {
       sentinel = null;
       lockHeld = false;
@@ -32,8 +45,10 @@ export async function requestWakeLock(): Promise<{ release: () => void }> {
   const lock = {
     release() {
       document.removeEventListener("visibilitychange", onVisible);
+      sentinel?.removeEventListener?.("release", onSentinelRelease);
       void sentinel?.release();
       lockHeld = false;
+      sentinel = null;
       if (activeLock === lock) activeLock = null;
     },
   };
@@ -43,11 +58,12 @@ export async function requestWakeLock(): Promise<{ release: () => void }> {
 }
 
 export function isWakeLockHeld(): boolean {
-  return lockHeld && activeLock != null;
+  return lockHeld && activeLock != null && sentinel?.released !== true;
 }
 
 export async function releaseWakeLock() {
   activeLock?.release();
   activeLock = null;
   lockHeld = false;
+  sentinel = null;
 }

@@ -16,14 +16,13 @@ export interface TrailProgress {
   bearingToTrail: number;
 }
 
+/** First usable segment only — never flatten MultiLineString (that invents connectors). */
 export function toLineString(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): GeoJSON.LineString {
   if (geometry.type === "LineString") return geometry;
-  return {
-    type: "LineString",
-    coordinates: geometry.coordinates.flat(),
-  };
+  const first = geometry.coordinates.find((line) => line.length >= 2) ?? [];
+  return { type: "LineString", coordinates: first };
 }
 
 export function trailLengthMeters(
@@ -101,13 +100,10 @@ export function progressAlongTrail(
     }
 
     if (best) return best;
+    return emptyProgress(point, totalMeters);
   }
 
-  const coords =
-    geometry.type === "LineString"
-      ? geometry.coordinates
-      : geometry.coordinates.flat();
-
+  const coords = geometry.coordinates;
   if (coords.length < 2) {
     return emptyProgress(point, totalMeters);
   }
@@ -118,12 +114,12 @@ export function progressAlongTrail(
 function emptyProgress(point: LatLng, totalMeters: number): TrailProgress {
   return {
     nearest: point,
-    offsetMeters: 0,
+    offsetMeters: Number.NaN,
     traveledMeters: 0,
     remainingMeters: Math.max(totalMeters, 0),
     totalMeters,
     remainingElevationMeters: 0,
-    bearingToTrail: 0,
+    bearingToTrail: Number.NaN,
   };
 }
 

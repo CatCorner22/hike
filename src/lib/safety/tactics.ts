@@ -8,7 +8,7 @@ export function watchMethodHeading(
 ): { toward: "N" | "S"; clockAzimuthFrom12: number; hint: string } {
   const h = ((hourLocal % 24) + 24) % 24;
   const hourOn12 = ((h % 12) + (h % 1)) * 30; // 0° = 12 o'clock
-  const mid = hemisphere === "north" ? hourOn12 / 2 : (hourOn12 + 360) / 2;
+  const mid = hourOn12 / 2;
   if (hemisphere === "north") {
     return {
       toward: "S",
@@ -135,8 +135,9 @@ export function sunVsWatchCheck(
   const sun = sunPosition(date, lat, lng);
   if (!sun || sun.elevation < 8) return null;
   const hemi = lat >= 0 ? "north" : "south";
-  const watch = watchMethodHeading(localHour, hemi);
-  return `Watch method: ${watch.hint} Sun ephemeris ${Math.round(sun.azimuth)}° true — they should agree within ~20°.`;
+  const fractional = localHour + date.getMinutes() / 60 + date.getSeconds() / 3600;
+  const watch = watchMethodHeading(fractional, hemi);
+  return `Watch method: ${watch.hint} Sun azimuth ${Math.round(sun.azimuth)}° true (do not compare that number to the watch-dial angle).`;
 }
 
 /** 9 beads × 100 m = 1 km. Returns how many km completed plus leftover beads. */
