@@ -36,6 +36,6 @@ export async function GET(request: Request, { params }: { params: Promise<{ trai
       tags: (trail.tags as Record<string, string>) ?? undefined,
     });
     if (hasDatabase()) await getDb().insert(trailResearch).values({ trailId: resolvedId, brief });
-    return NextResponse.json({ brief, cached: false });
+    return NextResponse.json({ brief, cached: false, refreshed: refresh });
   } catch (error) { return errorResponse(error, "Research failed"); }
 }
