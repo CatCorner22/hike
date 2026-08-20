@@ -32,7 +32,7 @@ describe("tactics", () => {
     for (const hemisphere of ["north", "south"] as const) {
       for (const hour of [6.5, 8, 9, 10.5, 12, 13.5, 15, 16, 17.5]) {
         const heading = watchMethodHeading(hour, hemisphere);
-        expect(heading).not.toBeNull();
+        expect(heading, `${hemisphere} ${hour}h`).not.toBeNull();
         const { clockAzimuthFrom12, toward } = heading!;
         const hourOn12 = (hour % 12) * 30;
 

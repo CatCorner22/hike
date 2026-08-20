@@ -1,5 +1,6 @@
 import {
   remainingElevationGain,
+  resolveRemaining,
   stabilizeLoop,
   type LatLng,
   type TrailProgress,
@@ -168,19 +169,24 @@ export function progressWithRouteCache(
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
-  const toEnd = Math.max(cache.totalMeters - traveledMeters, 0);
-  const toStart = Math.max(traveledMeters, 0);
-  const remainingMeters =
-    direction === "backward" ? toStart : direction === "forward" ? toEnd : Math.min(toStart, toEnd);
-  const resolvedDirection: TravelDirection =
-    direction !== "unknown" ? direction : toStart <= toEnd ? "backward" : "forward";
+  // Same direction resolution as progressAlongTrail — this cache once re-derived
+  // "total - traveled" on its own and quietly re-introduced the backwards readout.
+  const { remainingMeters, resolvedDirection } = resolveRemaining(
+    traveledMeters,
+    cache.totalMeters,
+    direction,
+  );
   const progress = stabilizeLoop({
     nearest: best.nearest,
     offsetMeters: best.distanceMeters,
     traveledMeters,
     remainingMeters,
     totalMeters: cache.totalMeters,
-    remainingElevationMeters: remainingElevationGain(cache.elevationProfile, traveledMeters, resolvedDirection),
+    remainingElevationMeters: remainingElevationGain(
+      cache.elevationProfile,
+      traveledMeters,
+      resolvedDirection,
+    ),
     remainingDirection: direction,
     bearingToTrail: bearing(point, best.nearest),
     valid: true,

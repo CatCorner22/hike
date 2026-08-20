@@ -9,6 +9,7 @@ import {
   formatElevation,
   formatPace,
 } from "@/lib/geo";
+import { createGainTracker, type GainTracker } from "@/lib/geo/elevation-gain";
 import {
   beginActivity,
   finishActivity,
@@ -40,9 +41,6 @@ const EMPTY_STATS: LiveStats = {
   pointCount: 0,
 };
 
-/** Ignore sub-threshold GPS altitude jitter so we do not invent climb. */
-const MIN_ELEVATION_GAIN_M = 3;
-
 export function ActivityRecorder({
   trailId,
   planId,
@@ -63,6 +61,7 @@ export function ActivityRecorder({
   const statusRef = useRef(status);
   const activityIdRef = useRef<string | null>(null);
   const statsRef = useRef(stats);
+  const gainTrackerRef = useRef<GainTracker>(createGainTracker());
 
   useEffect(() => {
     statusRef.current = status;
@@ -125,23 +124,16 @@ export function ActivityRecorder({
           const elapsedMs = point.recordedAt.getTime() - previous.recordedAt.getTime();
           if (distance < 10 && elapsedMs < 30_000) return;
 
-          setStats((prev) => {
-            let elevGain = prev.elevationGainMeters;
-            if (
-              point.elevation != null &&
-              previous.elevation != null &&
-              point.elevation - previous.elevation >= MIN_ELEVATION_GAIN_M
-            ) {
-              elevGain += point.elevation - previous.elevation;
-            }
-            return {
-              distanceMeters: prev.distanceMeters + distance,
-              elevationGainMeters: elevGain,
-              durationSeconds: activeDurationSec(),
-              pointCount: prev.pointCount + 1,
-            };
-          });
+          // Two-stage filter (≥8 m hysteresis): never a raw positive-delta sum.
+          const elevationGainMeters = gainTrackerRef.current.add(point.elevation);
+          setStats((prev) => ({
+            distanceMeters: prev.distanceMeters + distance,
+            elevationGainMeters,
+            durationSeconds: activeDurationSec(),
+            pointCount: prev.pointCount + 1,
+          }));
         } else {
+          gainTrackerRef.current.add(point.elevation);
           setStats((prev) => ({
             ...prev,
             durationSeconds: activeDurationSec(),
@@ -200,6 +192,7 @@ export function ActivityRecorder({
     pauseAccumRef.current = 0;
     pausedAtRef.current = null;
     lastPointRef.current = null;
+    gainTrackerRef.current = createGainTracker();
     setStats(EMPTY_STATS);
     setStatus("recording");
     startWatch();

@@ -48,7 +48,7 @@ jobs:
         # can only be tested against a production build. Both env vars are
         # required because the server intentionally fails closed without them.
         env:
-          OWNER_TOKEN_SECRET: ci-only-owner-token-secret
+          SESSION_SECRET: ci-only-session-secret
           ALLOW_LOCAL_STORE_IN_PRODUCTION: "true"
         run: |
           npx next start --port 3111 &

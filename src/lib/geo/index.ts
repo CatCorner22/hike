@@ -326,7 +326,7 @@ function parseStrictDecimal(raw: string | undefined): number | null {
 
 function parsePoints(xml: string, tag: "trkpt" | "rtept"): GeoJSON.Position[] | null {
   const points: GeoJSON.Position[] = [];
-  const tagRegex = new RegExp(`<${tag}\\b([^>]*)(?:/>|>([\\s\\S]*?)</${tag}>)`, "gi");
+  const tagRegex = new RegExp(`<${tag}\\b([^>]*?)\\s*(?:/>|>([\\s\\S]*?)</${tag}>)`, "gi");
   for (const match of xml.matchAll(tagRegex)) {
     const attributes = match[1];
     const body = match[2] ?? "";

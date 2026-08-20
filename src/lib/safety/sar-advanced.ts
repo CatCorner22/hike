@@ -99,23 +99,24 @@ export interface LitterEvacAdvice {
   message: string;
 }
 
-const MAX_LITTER_DISTANCE_M = 1_000_000;
-const MAX_LITTER_PARTY = 200;
+const MAX_LITTER_DISTANCE_M = 100_000;
+const MAX_LITTER_PARTY = 50;
 
 function isSaneLitterInput(distanceM: number, partySize: number): boolean {
   return (
     Number.isFinite(distanceM) &&
-    distanceM >= 0 &&
+    distanceM > 0 &&
     distanceM <= MAX_LITTER_DISTANCE_M &&
     Number.isFinite(partySize) &&
-    partySize >= 2 &&
+    partySize >= 1 &&
     partySize <= MAX_LITTER_PARTY
   );
 }
 
-export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice {
-  const party = Number.isFinite(partySize) ? Math.max(0, Math.floor(partySize)) : 0;
-  const metres = Number.isFinite(distanceM) ? Math.max(0, distanceM) : 0;
+export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAdvice | null {
+  if (!isSaneLitterInput(distanceM, partySize)) return null;
+  const party = Math.floor(partySize);
+  const metres = distanceM;
   // One casualty plus one attendant on the airway; everyone else can take a handle.
   const carriers = Math.max(0, party - 2);
 
@@ -149,6 +150,5 @@ export function litterEvacAdvice(distanceM: number, partySize = 2): LitterEvacAd
 }
 
 export function litterEvacTime(distanceM: number, partySize = 2): string | null {
-  if (!isSaneLitterInput(distanceM, partySize)) return null;
-  return litterEvacAdvice(distanceM, partySize).message;
+  return litterEvacAdvice(distanceM, partySize)?.message ?? null;
 }
