@@ -5,6 +5,7 @@ import {
   lightningRule,
   naismithMinutes,
   slopePercent,
+  slopeWarning,
   windChillC,
 } from "./field-ops";
 
@@ -58,5 +59,29 @@ describe("gpsAnomalyWarning", () => {
         { lat: 37.0002, lng: -119.0, recordedAt: t0 + 16000 },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("slopeWarning", () => {
+  it("warns on a steep climb", () => {
+    expect(slopeWarning(45)).toMatch(/Class 3\/4/);
+    expect(slopeWarning(30)).toMatch(/steep/);
+    expect(slopeWarning(10)).toBeNull();
+  });
+
+  // Regression: slopeFromProfile returns a signed grade, and the thresholds only tested
+  // `percent >= n`, so every descent was silently rated safe — including the 45% ones
+  // where people actually fall.
+  it("warns on a steep descent just as loudly", () => {
+    expect(slopeWarning(-45)).toMatch(/Class 3\/4/);
+    expect(slopeWarning(-45)).toMatch(/descent/);
+    expect(slopeWarning(-30)).toMatch(/steep/);
+    expect(slopeWarning(-10)).toBeNull();
+  });
+
+  it("agrees on magnitude regardless of direction", () => {
+    for (const grade of [5, 20, 24, 25, 26, 44, 45, 46, 80]) {
+      expect(Boolean(slopeWarning(grade)), `${grade}%`).toBe(Boolean(slopeWarning(-grade)));
+    }
   });
 });

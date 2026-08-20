@@ -79,10 +79,14 @@ export function latLngToUtm(lat: number, lng: number): UtmCoord {
   };
 }
 
+/**
+ * UTM with the MGRS latitude band, not a hemisphere letter: `11S 384410 4048893`.
+ * A trailing "N"/"S" reads as a band letter to anyone plotting it (band S is 32-40 N),
+ * so it must not be used for the hemisphere.
+ */
 export function formatUtm(lat: number, lng: number): string {
   const u = latLngToUtm(lat, lng);
-  const hemi = u.north ? "N" : "S";
-  return `${u.zone}${hemi} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
+  return `${u.zone}${u.band} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
 }
 
 export function formatUsng(lat: number, lng: number, digits = 4): string {
@@ -149,10 +153,36 @@ export function utmToLatLng(u: {
   return { lat: (lat * 180) / Math.PI, lng: (lng * 180) / Math.PI };
 }
 
-export function parseUsng(
-  text: string,
-  hint?: { lat: number; lng: number },
-): { lat: number; lng: number } | null {
+/** Mean metres of meridian arc per degree of latitude — enough to pick a 2 000 km band. */
+const METRES_PER_DEGREE_LAT = 110_946;
+
+/** Northing repeats every 2 000 000 m; return the congruent value nearest `target`. */
+function nearestCongruent(target: number, residue: number, period = 2_000_000): number {
+  const delta = (((residue - target) % period) + period) % period;
+  return target + (delta >= period / 2 ? delta - period : delta);
+}
+
+/**
+ * Approximate northing at the centre of a latitude band. Bands are 8 deg tall
+ * (X is 12), so the true northing is always within ~450 km of this — far inside the
+ * 1 000 km half-period, which makes the band letter alone sufficient to resolve the
+ * 2 000 km northing ambiguity without a GPS hint.
+ */
+function bandTargetNorthing(band: string, north: boolean): number {
+  const index = BANDS.indexOf(band);
+  const centreLat = band === "X" ? 78 : index * 8 - 76;
+  const fromEquator = centreLat * METRES_PER_DEGREE_LAT;
+  return north ? fromEquator : fromEquator + 10_000_000;
+}
+
+/**
+ * Parse a USNG/MGRS grid.
+ *
+ * The latitude band carried in the grid resolves the 2 000 000 m northing ambiguity on
+ * its own, so this needs no GPS hint — which matters, because reading a grid off the
+ * radio is exactly what you do when your own position is unknown.
+ */
+export function parseUsng(text: string): { lat: number; lng: number } | null {
   const compact = text.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const match = compact.match(/^(\d{1,2})([C-HJ-NP-X])([A-Z]{2})(\d{2,10})$/);
   if (!match) return null;
@@ -177,20 +207,7 @@ export function parseUsng(
   const northingMod = ((rowIndex - rowOffset + 20) % 20) * 100000 + Number(nPart);
 
   const north = band >= "N";
-  const hintUtm = hint ? latLngToUtm(hint.lat, hint.lng) : null;
-  let northing = northingMod;
-  if (hintUtm && hintUtm.zone === zone) {
-    const base = Math.floor(hintUtm.northing / 2_000_000) * 2_000_000;
-    northing = base + northingMod;
-    if (Math.abs(northing - hintUtm.northing) > 1_000_000) {
-      northing = northingMod < hintUtm.northing ? base + 2_000_000 + northingMod : base - 2_000_000 + northingMod;
-    }
-  } else {
-    const bandMin = (BANDS.indexOf(band) * 8 - 80) * 111320;
-    northing = northingMod;
-    while (north && northing < bandMin - 500000) northing += 2_000_000;
-  }
-
+  const northing = nearestCongruent(bandTargetNorthing(band, north), northingMod);
   return utmToLatLng({ zone, easting, northing, north });
 }
 

@@ -191,16 +191,21 @@ export function timeSpeedDistance(input: {
   speedKph?: number;
   minutes?: number;
 }): { distanceM: number; speedKph: number; minutes: number } | null {
-  const { distanceM, speedKph, minutes } = input;
-  const have = [distanceM, speedKph, minutes].filter((v) => v != null && v > 0).length;
-  if (have < 2) return null;
-  if (distanceM != null && speedKph != null && speedKph > 0) {
+  // Only strictly positive values count as supplied — a zero must not be treated as
+  // "given" by one branch and "missing" by the gate, which silently discarded a real input.
+  const positive = (v: number | undefined) => (v != null && v > 0 ? v : null);
+  const distanceM = positive(input.distanceM);
+  const speedKph = positive(input.speedKph);
+  const minutes = positive(input.minutes);
+
+  if ([distanceM, speedKph, minutes].filter((v) => v != null).length < 2) return null;
+  if (distanceM != null && speedKph != null) {
     return { distanceM, speedKph, minutes: (distanceM / 1000 / speedKph) * 60 };
   }
-  if (distanceM != null && minutes != null && minutes > 0) {
+  if (distanceM != null && minutes != null) {
     return { distanceM, speedKph: distanceM / 1000 / (minutes / 60), minutes };
   }
-  if (speedKph != null && minutes != null && speedKph > 0) {
+  if (speedKph != null && minutes != null) {
     return { distanceM: speedKph * (minutes / 60) * 1000, speedKph, minutes };
   }
   return null;

@@ -1,6 +1,10 @@
 /**
  * Approximate sunrise/sunset using the Wikipedia sunrise equation
  * (NOAA-style mean anomaly + solar transit).
+ *
+ * All of these resolve the solar day at the caller's own longitude, so
+ * `minutesUntilSunset` goes negative after sunset rather than jumping to
+ * tomorrow's.
  */
 export function estimateSunsetUtc(
   date: Date,
@@ -75,7 +79,16 @@ function solarEventsUtc(
   lng: number,
 ): { sunrise: Date; sunset: Date } | "polar-night" | "midnight-sun" {
   const rad = Math.PI / 180;
-  const noon = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 12);
+  // Resolve the *local solar* day, not the UTC calendar day. West of Greenwich the
+  // local evening falls on the next UTC date, so keying off getUTCDate() returns
+  // tomorrow's sunrise/sunset and reports darkness hours before the sun actually sets.
+  const solarDay = new Date(date.getTime() + (lng / 15) * 3_600_000);
+  const noon = Date.UTC(
+    solarDay.getUTCFullYear(),
+    solarDay.getUTCMonth(),
+    solarDay.getUTCDate(),
+    12,
+  );
   const J = noon / 86400000 + 2440587.5;
   const lw = -lng;
   const n = Math.round(J - 2451545.0009 - lw / 360);

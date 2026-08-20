@@ -760,7 +760,7 @@ export function SafetyPanel({
             </Button>
             <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
               <CheckCircle2 className="mr-2 size-4" />
-              I'm OK
+              I&apos;m OK
             </Button>
             <Button
               variant="outline"
@@ -844,7 +844,7 @@ export function SafetyPanel({
               ))}
             </div>
             <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
-              Log I'm OK now
+              Log I&apos;m OK now
             </Button>
             {checkins.length > 0 && (
               <p className="whitespace-pre-wrap font-mono text-[10px] text-muted-foreground">
@@ -979,10 +979,7 @@ export function SafetyPanel({
                 variant="outline"
                 className="flex-1"
                 onClick={() => {
-                  const parsed = parseUsng(
-                    gotoGrid,
-                    lat != null && lng != null ? { lat, lng } : undefined,
-                  );
+                  const parsed = parseUsng(gotoGrid);
                   if (!parsed) {
                     setGotoInfo("Could not parse that USNG/MGRS grid.");
                     return;
@@ -1084,9 +1081,8 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
                 if (!a || !b) {
                   setResectInfo("Need two valid USNG/MGRS points.");
                   return;
@@ -1124,10 +1120,9 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
-                const c = parseUsng(gridC, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
+                const c = parseUsng(gridC);
                 if (!a || !b || !c) {
                   setResectInfo("Need three valid USNG/MGRS points for 3-pt.");
                   return;
@@ -1168,9 +1163,8 @@ export function SafetyPanel({
             <Button
               variant="outline"
               onClick={() => {
-                const hint = lat != null && lng != null ? { lat, lng } : undefined;
-                const a = parseUsng(gridA, hint);
-                const b = parseUsng(gridB, hint);
+                const a = parseUsng(gridA);
+                const b = parseUsng(gridB);
                 if (!a || !b) {
                   setResectInfo("Intersection needs two observer grids (A/B) and bearings toward the unknown.");
                   return;
@@ -1218,7 +1212,7 @@ export function SafetyPanel({
               disabled={lat == null || !gotoGrid}
               onClick={() => {
                 if (lat == null || lng == null) return;
-                const dest = parseUsng(gotoGrid, { lat, lng });
+                const dest = parseUsng(gotoGrid);
                 if (!dest) {
                   setGotoInfo("Plot or type a go-to grid first.");
                   return;

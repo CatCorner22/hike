@@ -5,7 +5,9 @@ import {
   isTrustedFix,
   isValidLatLng,
   sanitizeFixTimestamp,
+  sanitizeStoredFixTimestamp,
   TRUSTED_FIX_MS,
+  TRUSTED_STALE_FIX_MS,
 } from "./gps-quality";
 
 describe("gps quality", () => {
@@ -38,6 +40,24 @@ describe("gps quality", () => {
     expect(isValidLatLng(37, -119)).toBe(true);
     expect(isValidLatLng(Number.NaN, -119)).toBe(false);
     expect(isValidLatLng(91, -119)).toBe(false);
+  });
+
+  // Regression: `stale` was accepted and then ignored — the first line of isTrustedFix
+  // could never change the result, so it read as a safety check while being a no-op.
+  it("gives a held-over fix a shorter leash than a live one", () => {
+    const age = (TRUSTED_FIX_MS + TRUSTED_STALE_FIX_MS) / 2;
+    expect(isTrustedFix(now - age, false, now)).toBe(true);
+    expect(isTrustedFix(now - age, true, now)).toBe(false);
+  });
+
+  // Regression: an ancient stored fix used to be stamped with Date.now(), promoting a
+  // days-old position to a live one with no staleness marker.
+  it("rejects a stored fix that is too old instead of making it look new", () => {
+    expect(sanitizeStoredFixTimestamp(now - 3 * 86_400_000, now)).toBeNull();
+    expect(sanitizeStoredFixTimestamp(now + 10 * 60_000, now)).toBeNull();
+    expect(sanitizeStoredFixTimestamp(0, now)).toBeNull();
+    expect(sanitizeStoredFixTimestamp(now - 60_000, now)).toBe(now - 60_000);
+    expect(sanitizeStoredFixTimestamp((now - 60_000) / 1000, now)).toBe(now - 60_000);
   });
 
   it("sanitizes epoch, seconds, and future GPS timestamps", () => {

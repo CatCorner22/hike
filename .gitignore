@@ -37,6 +37,10 @@ yarn-error.log*
 # local no-db store
 /data/
 
+# generated service worker (Serwist writes this on every build)
+/public/sw.js
+/public/sw.js.map
+
 # vercel
 .vercel
 

@@ -2,10 +2,10 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
-import { activityPoints } from "@/lib/db/schema";
+import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, latLngPointSchema, parseJsonBody } from "@/lib/api/validation";
-import { addActivityPoint, listActivityPoints } from "@/lib/store/local";
+import { addActivityPoint, getActivity, listActivityPoints } from "@/lib/store/local";
 
 const pointSchema = latLngPointSchema.extend({
   elevation: z.number().finite().nullable().optional(),
@@ -53,14 +53,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   try {
+    // An unknown activity must 404 rather than return an empty array — "no points"
+    // reads as "the recording captured nothing", which is a different fact entirely.
     if (hasDatabase()) {
       const db = getDb();
       // TODO(auth): verify that the authenticated user owns this activity before reading points.
+      const activity = await db.query.activities.findFirst({ where: eq(activities.id, id) });
+      if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
       const points = await db.query.activityPoints.findMany({
         where: eq(activityPoints.activityId, id),
         orderBy: (p, { asc }) => [asc(p.recordedAt)],
       });
       return NextResponse.json({ points });
+    }
+    if (!(await getActivity(id))) {
+      return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     return NextResponse.json({ points: await listActivityPoints(id) });
   } catch (error) {

@@ -61,36 +61,29 @@ export function lightningRule(flashToBangSec: number): {
   return { km, miles, warning };
 }
 
-/**
- * Naismith + Langmuir-ish: 5 km/h + 1 h / 600 m climb + 10 min / 300 m steep descent.
- */
-export function naismithMinutes(
-  distanceM: number,
-  gainM = 0,
-  lossM = 0,
-): number {
-  if (!(distanceM > 0)) return 0;
-  const walk = (distanceM / 5000) * 60;
-  const climb = (Math.max(0, gainM) / 600) * 60;
-  const drop = lossM >= 300 ? (lossM / 300) * 10 : 0;
-  return Math.round(walk + climb + drop);
-}
-
-export function formatNaismith(minutes: number): string {
-  if (minutes < 60) return `Naismith ~${minutes} min`;
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `Naismith ~${h} h ${m} min`;
-}
+export { naismithMinutes, formatNaismith } from "@/lib/safety/pace";
 
 export function slopePercent(riseM: number, runM: number): number | null {
   if (!(runM > 0) || !Number.isFinite(riseM)) return null;
   return Math.round((riseM / runM) * 1000) / 10;
 }
 
+/**
+ * `slopeFromProfile` returns a signed grade, so this must judge on magnitude:
+ * a 45% descent is at least as hazardous as the climb, and is where falls happen.
+ */
 export function slopeWarning(percent: number): string | null {
-  if (percent >= 45) return `Slope ~${percent}% — Class 3/4; hands may be needed.`;
-  if (percent >= 25) return `Slope ~${percent}% — steep. Short-rope kids, use switchbacks.`;
+  if (!Number.isFinite(percent)) return null;
+  const grade = Math.abs(percent);
+  const way = percent < 0 ? "descent" : "climb";
+  if (grade >= 45) {
+    return `Slope ~${grade}% ${way} — Class 3/4; hands may be needed.`;
+  }
+  if (grade >= 25) {
+    return percent < 0
+      ? `Slope ~${grade}% descent — steep. Short steps, poles out; downhill is where people fall.`
+      : `Slope ~${grade}% — steep. Short-rope kids, use switchbacks.`;
+  }
   return null;
 }
 

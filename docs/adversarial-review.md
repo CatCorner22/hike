@@ -22,6 +22,31 @@ navigation math.
 
 ---
 
+## Status
+
+Findings **F1–F10 and F12–F23 are fixed**, each with a regression test that fails against
+the code described below. The prose is kept as the record of what was wrong and why.
+
+**F11 (unauthenticated API) is not fixed.** Every route is marked `TODO(auth)`, but
+closing it means deciding whether this is a single-user deployment behind platform auth
+or a multi-user one that needs an owner column on `hike_plans` / `activities` — a product
+decision, not a bug fix. Nothing else in this list is blocked on it.
+
+Two pre-existing failures on `main` that were not in the original review were also fixed,
+since they were red before any of this work started:
+
+- `parseBbox` accepted a blank coordinate, because `Number("")` is `0`. `?bbox=,0,1,2`
+  silently became a valid box off the coast of West Africa and the route answered 500
+  instead of 400.
+- `GET /api/activities/:id/points` returned `200 {"points": []}` for an activity that does
+  not exist. "No points recorded" and "no such activity" are different facts, and the
+  first one reads as a track that captured nothing.
+
+Verification after the fixes: `tsc --noEmit` clean, `eslint` clean, `vitest run` 283/283
+green (was 239 with 5 failing), `next build` succeeds, and `npm ci` installs.
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
