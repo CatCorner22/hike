@@ -3,6 +3,8 @@ import path from "node:path";
 
 export interface StoredPlan {
   id: string;
+  /** Null means the row predates owner scoping; it belongs to nobody and stays hidden. */
+  ownerId: string | null;
   name: string;
   trailId: string | null;
   plannedDate: string | null;
@@ -16,6 +18,7 @@ export interface StoredPlan {
 
 export interface StoredActivity {
   id: string;
+  ownerId: string | null;
   planId: string | null;
   trailId: string | null;
   name: string | null;
@@ -93,17 +96,23 @@ function mutateStore<T>(
   return result;
 }
 
-export async function listPlans() {
+// Owner is a required argument on every accessor below rather than an optional filter:
+// forgetting it is then a type error, not a silent data leak.
+
+export async function listPlans(ownerId: string) {
   const store = await readStore();
-  return store.plans.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  return store.plans
+    .filter((p) => p.ownerId === ownerId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function getPlan(id: string) {
+export async function getPlan(id: string, ownerId: string) {
   const store = await readStore();
-  return store.plans.find((p) => p.id === id) ?? null;
+  return store.plans.find((p) => p.id === id && p.ownerId === ownerId) ?? null;
 }
 
 export async function createPlan(input: {
+  ownerId: string;
   name: string;
   trailId?: string | null;
   plannedDate?: string | null;
@@ -116,6 +125,7 @@ export async function createPlan(input: {
     const now = new Date().toISOString();
     const plan: StoredPlan = {
       id: crypto.randomUUID(),
+      ownerId: input.ownerId,
       name: input.name,
       trailId: input.trailId ?? null,
       plannedDate: input.plannedDate ?? null,
@@ -131,37 +141,44 @@ export async function createPlan(input: {
   });
 }
 
-export async function updatePlan(id: string, updates: Partial<StoredPlan>) {
+export async function updatePlan(id: string, ownerId: string, updates: Partial<StoredPlan>) {
   return mutateStore((store) => {
-    const index = store.plans.findIndex((p) => p.id === id);
+    const index = store.plans.findIndex((p) => p.id === id && p.ownerId === ownerId);
     if (index < 0) return null;
     store.plans[index] = {
       ...store.plans[index],
       ...updates,
       id,
+      ownerId,
       updatedAt: new Date().toISOString(),
     };
     return store.plans[index];
   });
 }
 
-export async function deletePlan(id: string) {
+/** Returns false when the plan does not exist or belongs to someone else. */
+export async function deletePlan(id: string, ownerId: string) {
   return mutateStore((store) => {
-    store.plans = store.plans.filter((p) => p.id !== id);
+    const before = store.plans.length;
+    store.plans = store.plans.filter((p) => !(p.id === id && p.ownerId === ownerId));
+    return store.plans.length < before;
   });
 }
 
-export async function listActivities() {
+export async function listActivities(ownerId: string) {
   const store = await readStore();
-  return store.activities.sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+  return store.activities
+    .filter((a) => a.ownerId === ownerId)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
 }
 
-export async function getActivity(id: string) {
+export async function getActivity(id: string, ownerId: string) {
   const store = await readStore();
-  return store.activities.find((a) => a.id === id) ?? null;
+  return store.activities.find((a) => a.id === id && a.ownerId === ownerId) ?? null;
 }
 
 export async function createActivity(input: {
+  ownerId: string;
   trailId?: string | null;
   planId?: string | null;
   name?: string | null;
@@ -171,6 +188,7 @@ export async function createActivity(input: {
     const now = new Date().toISOString();
     const activity: StoredActivity = {
       id: crypto.randomUUID(),
+      ownerId: input.ownerId,
       planId: input.planId ?? null,
       trailId: input.trailId ?? null,
       name: input.name ?? null,
@@ -186,11 +204,15 @@ export async function createActivity(input: {
   });
 }
 
-export async function updateActivity(id: string, updates: Partial<StoredActivity>) {
+export async function updateActivity(
+  id: string,
+  ownerId: string,
+  updates: Partial<StoredActivity>,
+) {
   return mutateStore((store) => {
-    const index = store.activities.findIndex((a) => a.id === id);
+    const index = store.activities.findIndex((a) => a.id === id && a.ownerId === ownerId);
     if (index < 0) return null;
-    store.activities[index] = { ...store.activities[index], ...updates, id };
+    store.activities[index] = { ...store.activities[index], ...updates, id, ownerId };
     return store.activities[index];
   });
 }

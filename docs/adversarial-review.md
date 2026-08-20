@@ -27,10 +27,22 @@ navigation math.
 Findings **F1–F10 and F12–F23 are fixed**, each with a regression test that fails against
 the code described below. The prose is kept as the record of what was wrong and why.
 
-**F11 (unauthenticated API) is not fixed.** Every route is marked `TODO(auth)`, but
-closing it means deciding whether this is a single-user deployment behind platform auth
-or a multi-user one that needs an owner column on `hike_plans` / `activities` — a product
-decision, not a bug fix. Nothing else in this list is blocked on it.
+**F11 (unauthenticated API) is now fixed too**, as multi-user with an owner column.
+`hike_plans` and `activities` carry `owner_id`, and all eleven user-data handlers plus
+the home page — a Server Component that read the database directly and so bypassed the
+API entirely — constrain every query to the caller. A row belonging to someone else
+answers `404`, never `403`, because a `403` confirms the id exists.
+
+The column only means something if the server can trust who is asking, so it ships with
+the identity to match: an HttpOnly, HMAC-signed `hike_owner` cookie, minted by
+`src/proxy.ts` and re-verified inside each handler. It is deliberately not a login —
+identity is one browser on one device — and that limitation is written down in the
+README next to the feature. Swapping in a real identity provider means changing
+`resolveOwnerId` and nothing else.
+
+Two operational notes carried into the README and `drizzle/0002_owner_scoping.sql`:
+`SESSION_SECRET` is required in production (a missing one returns `503` rather than
+degrading to a single shared identity), and rotating it orphans every existing row.
 
 Two pre-existing failures on `main` that were not in the original review were also fixed,
 since they were red before any of this work started:
@@ -42,8 +54,8 @@ since they were red before any of this work started:
   not exist. "No points recorded" and "no such activity" are different facts, and the
   first one reads as a track that captured nothing.
 
-Verification after the fixes: `tsc --noEmit` clean, `eslint` clean, `vitest run` 283/283
-green (was 239 with 5 failing), `next build` succeeds, and `npm ci` installs.
+Verification after the fixes: `tsc --noEmit` clean, `eslint` clean, `vitest run` 328/328
+green (was 239 with 5 failing), `next build` succeeds warning-free, and `npm ci` installs.
 
 ---
 
