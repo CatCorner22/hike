@@ -20,4 +20,6 @@ export const CAMPING_TYPE_COLORS: Record<string, string> = {
   walk_in: "#a855f7",
 };
 
-export const OFF_TRAIL_THRESHOLD_METERS = 50;
+/** Live HUD thresholds — warn then critical. */
+export const OFF_TRAIL_WARN_METERS = 35;
+export const OFF_TRAIL_CRITICAL_METERS = 80;

@@ -136,13 +136,7 @@ export async function GET(request: Request) {
       limit: 200,
     });
 
-    if (rows.length === 0) {
-      await syncCampgrounds(q, state);
-      rows = await db.query.campgrounds.findMany({
-        where: conditions.length ? and(...conditions) : undefined,
-        limit: 200,
-      });
-    }
+    // Empty results stay empty unless the caller asked for ?sync=true.
 
     if (bboxParam) {
       const [west, south, east, north] = bboxParam.split(",").map(Number);

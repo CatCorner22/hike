@@ -55,8 +55,11 @@ export async function POST(request: Request) {
   const body = await request.json();
   const { gpx, name } = body;
 
-  if (!gpx) {
+  if (!gpx || typeof gpx !== "string") {
     return NextResponse.json({ error: "GPX content required" }, { status: 400 });
+  }
+  if (gpx.length > 5_000_000) {
+    return NextResponse.json({ error: "GPX too large" }, { status: 413 });
   }
 
   const { parseGpx } = await import("@/lib/geo");

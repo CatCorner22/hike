@@ -311,6 +311,7 @@ function parseTrkptAttrs(tag: string, body = ""): GeoJSON.Position | null {
   const lng = Number(lon);
   const la = Number(lat);
   if (!Number.isFinite(lng) || !Number.isFinite(la)) return null;
+  if (la < -90 || la > 90 || lng < -180 || lng > 180) return null;
   const eleRaw = /<ele>\s*([^<]+)\s*<\/ele>/i.exec(body)?.[1];
   const ele = eleRaw != null ? Number(eleRaw) : Number.NaN;
   return Number.isFinite(ele) ? [lng, la, ele] : [lng, la];

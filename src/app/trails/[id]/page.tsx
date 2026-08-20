@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ElevationChart } from "@/components/trails/elevation-chart";
 import { ResearchBrief } from "@/components/trails/research-brief";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
-import { formatDistance, formatElevation } from "@/lib/geo";
+import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
@@ -133,11 +133,22 @@ export default function TrailDetailPage() {
           <div className="mt-2 flex flex-wrap gap-2">
             {trail.network && <Badge variant="outline">{trail.network}</Badge>}
             {trail.sacScale && <Badge>SAC {trail.sacScale}</Badge>}
-            {trail.lengthMeters && (
-              <Badge variant="secondary">
-                {formatDistance(trail.lengthMeters)}
-              </Badge>
-            )}
+            {(() => {
+              const measured = lineLengthMeters(trail.geometry);
+              const tagged = trail.lengthMeters;
+              if (tagged && measured > 0 && Math.abs(tagged - measured) / measured > 0.08) {
+                return (
+                  <>
+                    <Badge variant="secondary">OSM {formatDistance(tagged)}</Badge>
+                    <Badge variant="outline">Measured {formatDistance(measured)}</Badge>
+                  </>
+                );
+              }
+              const shown = tagged || measured;
+              return shown ? (
+                <Badge variant="secondary">{formatDistance(shown)}</Badge>
+              ) : null;
+            })()}
             {trail.elevationGainMeters != null && trail.elevationGainMeters > 0 && (
               <Badge variant="secondary">
                 +{formatElevation(trail.elevationGainMeters)}

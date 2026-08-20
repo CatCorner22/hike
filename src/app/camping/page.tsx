@@ -11,6 +11,7 @@ import {
   type CampingFiltersState,
 } from "@/components/camping/camping-filters";
 import { CAMPING_TYPE_COLORS, CAMPING_TYPE_LABELS } from "@/lib/constants";
+import { httpsUrl } from "@/lib/urls";
 import { Search, Loader2, ExternalLink } from "lucide-react";
 
 const MapView = dynamic(
@@ -147,9 +148,9 @@ export default function CampingPage() {
                     Permit required
                   </Badge>
                 )}
-                {camp.reservationUrl && (
+                {httpsUrl(camp.reservationUrl) && (
                   <a
-                    href={camp.reservationUrl}
+                    href={httpsUrl(camp.reservationUrl)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="mt-2 inline-flex items-center text-primary hover:underline"

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Calendar, Car, Dog, Tent, Users } from "lucide-react";
 import type { TrailResearchBrief } from "@/lib/research/schema";
+import { httpsUrl } from "@/lib/urls";
 
 interface ResearchBriefProps {
   brief: TrailResearchBrief;
@@ -92,18 +93,22 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
           <div>
             <h4 className="mb-1 text-sm font-medium">Sources</h4>
             <ul className="space-y-1 text-sm">
-              {brief.sources.map((s) => (
-                <li key={s.url}>
-                  <a
-                    href={s.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    {s.title}
-                  </a>
-                </li>
-              ))}
+              {brief.sources.map((s) => {
+                const href = httpsUrl(s.url);
+                if (!href) return <li key={s.url}>{s.title}</li>;
+                return (
+                  <li key={href}>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {s.title}
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         )}

@@ -5,13 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listRecentTrails } from "@/lib/trails/service";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans, activities } from "@/lib/db/schema";
+import { listActivities, listPlans } from "@/lib/store/local";
 import { desc } from "drizzle-orm";
 import { formatDistance, formatDuration } from "@/lib/geo";
 import { Compass, Map, Tent } from "lucide-react";
 
+type HomePlan = { id: string; name: string; plannedDate: Date | string | null };
+type HomeActivity = {
+  id: string;
+  name: string | null;
+  startedAt: Date | string;
+  stats: { distanceMeters?: number; durationSeconds?: number } | null;
+};
+
 export default async function HomePage() {
-  let plans: Array<typeof hikePlans.$inferSelect> = [];
-  let recentActivities: Array<typeof activities.$inferSelect> = [];
+  let plans: HomePlan[] = [];
+  let recentActivities: HomeActivity[] = [];
   let recentTrails: Awaited<ReturnType<typeof listRecentTrails>> = [];
 
   if (hasDatabase()) {
@@ -27,6 +36,11 @@ export default async function HomePage() {
       }),
       listRecentTrails(5),
     ]);
+  } else {
+    const [localPlans, localActs] = await Promise.all([listPlans(), listActivities()]);
+    plans = localPlans.slice(0, 5);
+    recentActivities = localActs.slice(0, 5);
+    recentTrails = await listRecentTrails(5);
   }
 
   return (

@@ -96,7 +96,7 @@ export const activityPoints = pgTable("activity_points", {
 
 export const campgrounds = pgTable("campgrounds", {
   id: uuid("id").primaryKey().defaultRandom(),
-  externalId: text("external_id").notNull(),
+  externalId: text("external_id").notNull().unique(),
   name: text("name").notNull(),
   latitude: doublePrecision("latitude").notNull(),
   longitude: doublePrecision("longitude").notNull(),
