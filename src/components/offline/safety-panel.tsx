@@ -906,6 +906,11 @@ export function SafetyPanel({
                   })(),
                   checkins,
                   packAge: packWeather?.cachedAt,
+                  // The first breadcrumb is where this party actually set off, which the
+                  // stored line direction cannot tell us.
+                  startedFrom: trackPoints[0]
+                    ? { lat: trackPoints[0].lat, lng: trackPoints[0].lng }
+                    : null,
                 });
                 const ok = await copyEmergencyInfo(text);
                 if (!ok) downloadTextFile(`${safeFilename(trailName)}-paper.txt`, text, "text/plain");
