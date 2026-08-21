@@ -102,6 +102,61 @@ export function resolveRemaining(
   return { remainingMeters, resolvedDirection };
 }
 
+export interface RouteComponentRange {
+  startMeters: number;
+  endMeters: number;
+}
+
+/**
+ * On a MultiLineString, remaining toward the end of the *active component* —
+ * not the full route minus a global offset that spans an unrunnable gap.
+ */
+export function resolveComponentRemaining(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+  componentRanges: RouteComponentRange[],
+  componentIndex: number,
+): { remainingMeters: number; resolvedDirection: TravelDirection } {
+  if (componentRanges.length <= 1) {
+    return resolveRemaining(traveledMeters, totalMeters, direction);
+  }
+  const component = componentRanges[componentIndex] ?? componentRanges[0];
+  const componentLength = Math.max(component.endMeters - component.startMeters, 0);
+  const localTraveled = Math.max(
+    0,
+    Math.min(traveledMeters - component.startMeters, componentLength),
+  );
+  return resolveRemaining(localTraveled, componentLength, direction);
+}
+
+function componentRangesFromGeometry(
+  geometry: GeoJSON.MultiLineString,
+  cumulative?: number[],
+): RouteComponentRange[] {
+  const ranges: RouteComponentRange[] = [];
+  let offset = 0;
+  for (const coords of geometry.coordinates) {
+    if (coords.length < 2) continue;
+    const length = turf.length(turf.lineString(coords), { units: "meters" });
+    ranges.push({ startMeters: offset, endMeters: offset + length });
+    offset += length;
+  }
+  if (cumulative && cumulative.length >= 2 && ranges.length > 0) {
+    return ranges.map((range, index) => {
+      const startIdx = geometry.coordinates
+        .slice(0, index)
+        .reduce((sum, line) => sum + Math.max(line.length, 1), 0);
+      const line = geometry.coordinates[index];
+      return {
+        startMeters: cumulative[startIdx] ?? range.startMeters,
+        endMeters: cumulative[startIdx + line.length - 1] ?? range.endMeters,
+      };
+    });
+  }
+  return ranges;
+}
+
 function progressOnSegment(
   point: LatLng,
   coordinates: GeoJSON.Position[],
@@ -164,13 +219,26 @@ function pickContinuous(candidates: TrailProgress[], hint?: SnapHint | null): Tr
   return stabilizeLoop(pool[0], hint);
 }
 
+/** Window near the route end where a loop may snap back to coordinate 0. */
+export function loopStabilizeThresholds(totalMeters: number): {
+  nearEndMeters: number;
+  startJumpMeters: number;
+} {
+  if (totalMeters < 200) return { nearEndMeters: 0, startJumpMeters: 0 };
+  return {
+    nearEndMeters: Math.min(200, Math.max(120, totalMeters * 0.08)),
+    startJumpMeters: Math.min(120, Math.max(80, totalMeters * 0.06)),
+  };
+}
+
 /** Keep a loop from snapping remaining-m back to the start vertex. */
 export function stabilizeLoop(progress: TrailProgress, hint?: SnapHint | null): TrailProgress {
   if (!hint || !Number.isFinite(progress.traveledMeters)) return progress;
   const total = progress.totalMeters;
-  if (total < 200) return progress;
+  const { nearEndMeters, startJumpMeters } = loopStabilizeThresholds(total);
+  if (nearEndMeters <= 0) return progress;
   const jumpedToStart =
-    hint.traveledMeters > total - 120 && progress.traveledMeters < 80;
+    hint.traveledMeters > total - nearEndMeters && progress.traveledMeters < startJumpMeters;
   if (!jumpedToStart) return progress;
   const direction = progress.remainingDirection ?? "forward";
   const { remainingMeters } = resolveRemaining(total, total, direction);
@@ -203,6 +271,7 @@ export function progressAlongTrail(
 
   if (geometry.type === "MultiLineString") {
     const candidates: TrailProgress[] = [];
+    const componentRanges = componentRangesFromGeometry(geometry);
     let cumulative = 0;
 
     for (const coords of geometry.coordinates) {
@@ -220,7 +289,36 @@ export function progressAlongTrail(
       cumulative += turf.length(turf.lineString(coords), { units: "meters" });
     }
 
-    if (candidates.length) return pickContinuous(candidates, hint);
+    if (candidates.length) {
+      const picked = pickContinuous(candidates, hint);
+      if (componentRanges.length <= 1) return picked;
+      const componentIndex = componentRanges.findIndex(
+        (range) =>
+          picked.traveledMeters >= range.startMeters - 1 &&
+          picked.traveledMeters <= range.endMeters + 1,
+      );
+      const activeIndex = componentIndex >= 0 ? componentIndex : 0;
+      const { remainingMeters, resolvedDirection } = resolveComponentRemaining(
+        picked.traveledMeters,
+        totalMeters,
+        direction,
+        componentRanges,
+        activeIndex,
+      );
+      return stabilizeLoop(
+        {
+          ...picked,
+          remainingMeters,
+          remainingDirection: direction,
+          remainingElevationMeters: remainingElevationGain(
+            elevationProfile,
+            picked.traveledMeters,
+            resolvedDirection,
+          ),
+        },
+        hint,
+      );
+    }
     return emptyProgress(point, totalMeters);
   }
 

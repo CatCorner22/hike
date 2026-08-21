@@ -1,6 +1,12 @@
 import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
+import {
+  isValidNavigateShellDocument,
+  looksLikeNavigateHtml,
+  NAVIGATE_SHELL_MARKER,
+  stampNavigateShellHtml,
+} from "@/lib/offline/navigate-shell-validation";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -11,8 +17,7 @@ declare global {
 declare const self: WorkerGlobalScope & { __SW_MANIFEST: (PrecacheEntry | string)[] | undefined };
 
 export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
-export const NAVIGATE_SHELL_MARKER = "hike-navigate-shell-v2";
-const MIN_NAVIGATE_DOCUMENT_BYTES = 512;
+export { NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
 let getOfflineFallback: () => Promise<Response | undefined> = async () => undefined;
 
@@ -23,27 +28,12 @@ function offlineDocument(): Response {
   );
 }
 
-function looksLikeNavigateHtml(document: string): boolean {
-  return (
-    document.length >= MIN_NAVIGATE_DOCUMENT_BYTES &&
-    /<!doctype html|<html[\s>]/i.test(document) &&
-    /_next\/|self\.__next_f|<body[\s>]/i.test(document)
-  );
-}
-
 async function isValidNavigateDocument(response: Response): Promise<boolean> {
   const contentType = response.headers.get("content-type") ?? "";
-  const markedHeader = response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER;
+  const markerHeader = response.headers.get("x-hike-navigate-shell");
   try {
     const document = await response.clone().text();
-    const markedBody = document.includes(NAVIGATE_SHELL_MARKER);
-    // Chromium Cache Storage can drop custom headers. Accept a Next-shaped
-    // document if the header or the in-body marker is present.
-    if (!looksLikeNavigateHtml(document)) return false;
-    if (contentType && !contentType.toLowerCase().includes("text/html") && !markedHeader && !markedBody) {
-      return false;
-    }
-    return markedHeader || markedBody || looksLikeNavigateHtml(document);
+    return isValidNavigateShellDocument(document, contentType, markerHeader);
   } catch {
     return false;
   }
@@ -54,15 +44,14 @@ async function markNavigateDocument(response: Response): Promise<Response | null
   if (!response.ok || !contentType.toLowerCase().includes("text/html")) return null;
   try {
     const body = await response.clone().text();
-    if (body.length < MIN_NAVIGATE_DOCUMENT_BYTES || !/<!doctype html|<html[\s>]/i.test(body) || !/_next\/|self\.__next_f|<body[\s>]/i.test(body)) {
-      return null;
-    }
+    if (!looksLikeNavigateHtml(body)) return null;
     const headers = new Headers(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
-    const stamped = body.includes(NAVIGATE_SHELL_MARKER)
-      ? body
-      : `<!--${NAVIGATE_SHELL_MARKER}-->${body}`;
-    return new Response(stamped, { status: response.status, statusText: response.statusText, headers });
+    return new Response(stampNavigateShellHtml(body), {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
   } catch {
     return null;
   }
@@ -105,6 +94,15 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
   const cache = await caches.open(NAVIGATE_SHELL_CACHE);
   const cached = await matchNavigateShell(cache, request);
   if (cached) {
+    // warmNavigateShell only writes stamped shells. Headers are sometimes stripped
+    // in Cache Storage, so accept the in-body marker too before any HTML re-parse.
+    if (cached.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return cached;
+    try {
+      const html = await cached.clone().text();
+      if (html.includes(NAVIGATE_SHELL_MARKER)) return cached;
+    } catch {
+      /* fall through */
+    }
     if (await isValidNavigateDocument(cached)) return cached;
   }
 
@@ -114,8 +112,9 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
     if (marked) await cache.put(request.url, marked);
     return response;
   } catch {
-    const fallback = await getOfflineFallback();
-    return fallback ?? offlineDocument();
+    // Do not substitute the generic /offline help page — it reads as "navigation
+    // unavailable" even when a marked shell exists but failed a secondary check.
+    return offlineDocument();
   }
 };
 

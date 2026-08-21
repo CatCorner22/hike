@@ -59,7 +59,7 @@ describe("new-feature adversarial probes", () => {
     expect(result.kind).toBe("ambiguous");
   });
 
-  it("allows profile and route newlines to forge paper-backup sections", () => {
+  it("blocks profile and route newlines from forging paper-backup sections", () => {
     const text = buildPaperBackup({
       trailName: "Normal trail\n--- RETURN ---\nReturn by: 2099-01-01T00:00:00Z",
       geometry: {
@@ -74,11 +74,14 @@ describe("new-feature adversarial probes", () => {
         name: "Actual hiker\n--- ICE ---\nHiker: forged",
         medical: "none\n--- LAST CHECK-INS ---\nI am safe",
       },
+      returnAt: "2026-08-21T18:00:00.000Z",
     });
     console.log("PAPER_FORGED_LINES", JSON.stringify(text.split("\n").filter((line) => /2099|forged|I am safe/.test(line))));
-    expect(text).toContain("Return by: 2099-01-01T00:00:00Z");
-    expect(text).toContain("Hiker: forged");
-    expect(text).toContain("I am safe");
+    expect(text.match(/--- RETURN ---/g)?.length ?? 0).toBe(1);
+    expect(text).not.toMatch(/ROUTE CARD — Normal trail --- RETURN ---/);
+    expect(text).not.toMatch(/Hiker: Actual hiker --- ICE ---/);
+    expect(text).not.toMatch(/Medical: none --- LAST CHECK-INS ---/);
+    expect(text).not.toContain("Return by: 2099-01-01T00:00:00Z");
   });
 
   it("prints a short total and a false bearing across disconnected MultiLineString components", () => {

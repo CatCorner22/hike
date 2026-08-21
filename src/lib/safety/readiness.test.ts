@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hikeReadiness } from "./readiness";
-import { stabilizeLoop, type TrailProgress } from "@/lib/geo/navigation";
+import { stabilizeLoop, loopStabilizeThresholds, type TrailProgress } from "@/lib/geo/navigation";
 import { buildPaperBackup } from "./paper-backup";
 
 const ice = {
@@ -57,6 +57,12 @@ describe("hikeReadiness", () => {
 });
 
 describe("stabilizeLoop", () => {
+  it("widens the stabilization window on longer loops", () => {
+    expect(loopStabilizeThresholds(1000)).toEqual({ nearEndMeters: 120, startJumpMeters: 80 });
+    expect(loopStabilizeThresholds(5000).nearEndMeters).toBe(200);
+    expect(loopStabilizeThresholds(5000).startJumpMeters).toBe(120);
+  });
+
   it("does not jump remaining to the start near the last vertex", () => {
     const progress: TrailProgress = {
       nearest: { lat: 37, lng: -119 },

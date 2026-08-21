@@ -234,6 +234,9 @@ export function ActivityRecorder({
       pauseAccumRef.current += Date.now() - pausedAtRef.current;
       pausedAtRef.current = null;
     }
+    // Movement while paused must not become hiking distance on the first fix after
+    // resume — the hiker may have walked to a new spot before tapping Resume.
+    lastPointRef.current = null;
     setStatus("recording");
     startWatch();
     void flushActivityQueue();
