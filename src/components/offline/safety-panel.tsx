@@ -45,6 +45,7 @@ import {
 } from "@/lib/safety/emergency";
 import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
 import { gainLastHourM } from "@/lib/safety/backtrack";
+import { buildSafetyDossier } from "@/lib/safety/dossier";
 import { formatFixAge } from "@/lib/safety/gps-quality";
 import { useWakeLockHeld } from "@/hooks/use-wake-lock";
 import {
@@ -155,7 +156,30 @@ import {
   type CheckinEntry,
   type CheckinSettings,
 } from "@/lib/safety/checkin";
-import { buildSafetyDossier } from "@/lib/safety/dossier";
+import { formatCompassCard } from "@/lib/safety/compass-display";
+import {
+  adjacentGridSquares,
+  formatMgrsGridCard,
+  gridSquareBounds,
+  mgrsGridTips,
+} from "@/lib/safety/mgrs-grid";
+import {
+  formatHarvestCard,
+  HARVEST_DISCLAIMER,
+  survivalHarvestAssessment,
+  survivalHarvestPriorities,
+  huntingBasics,
+  trappingBasics,
+  gameFieldDressing,
+  cookingWildGame,
+} from "@/lib/safety/survival-harvest";
+import {
+  backstopChecklist,
+  backstopDefinition,
+  formatWayfindingCard,
+  wayfindingAssessment,
+  wayfindingTechniques,
+} from "@/lib/safety/wayfinding";
 import { verifyRegroup } from "@/lib/safety/verify";
 import {
   amsAssessment,
@@ -321,6 +345,11 @@ export function SafetyPanel({
   const [imsafe, setImsafe] = useState<ImsafeFlag[]>([]);
   const [resectInfo, setResectInfo] = useState<string | null>(null);
   const [copiedSere, setCopiedSere] = useState(false);
+  const [copiedCompass, setCopiedCompass] = useState(false);
+  const [copiedGrid, setCopiedGrid] = useState(false);
+  const [copiedWayfinding, setCopiedWayfinding] = useState(false);
+  const [copiedHarvest, setCopiedHarvest] = useState(false);
+  const [wayfindingOpen, setWayfindingOpen] = useState<string>("handrail");
   const [sereOpen, setSereOpen] = useState<SerePillar | "all">("survival");
   const [gridC, setGridC] = useState("");
   const [brgC, setBrgC] = useState("");
@@ -502,14 +531,26 @@ export function SafetyPanel({
   // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
   // happened to rank first — so "finish with a headlamp" read as darkness at midday,
   // and a GPS-denied or overdue warning read as daylight at midnight. It feeds
-  // sereAssessment and casevacDecision, so it has to be the real value.
   const sereNote = sereAssessment({
     isDark,
     altitudeM,
     partySize: profile.partySize,
     hasSignal: gpsTrusted,
   });
+  const wayfindingNote = wayfindingAssessment({
+    offTrail: offTrailM != null && offTrailM > 25,
+    visibilityPoor: isDark,
+    hasBackstop: backtrackEnabled,
+  });
+  const harvestNote = survivalHarvestAssessment({
+    daysLost: 1,
+    tempC: packWeather?.tempC,
+    hasFire: false,
+  });
   const sereSectionsList = useMemo(() => sereSections(), []);
+  const mgrsCell = lat != null && lng != null ? gridSquareBounds(lat, lng, 1000) : null;
+  const mgrsNeighbors = lat != null && lng != null ? adjacentGridSquares(lat, lng, 1000) : [];
+  const wayfindingTips = useMemo(() => wayfindingTechniques(), []);
   const slopePct = useMemo(
     () => slopeFromProfile(elevationProfile, traveledMeters ?? 0),
     [elevationProfile, traveledMeters],
@@ -1222,6 +1263,126 @@ export function SafetyPanel({
 
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Compass readout
+            </p>
+            {heading != null && lat != null && lng != null ? (
+              <p className="text-sm font-medium tabular-nums">
+                {formatWalkBearing(heading, lat, lng)}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Heading unavailable — enable GPS or enter true degrees for dead reckoning.
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(
+                  formatCompassCard({
+                    headingTrue: heading,
+                    lat,
+                    lng,
+                    source: gpsDenied ? "Dead reckon" : "GPS",
+                  }),
+                );
+                setCopiedCompass(true);
+                window.setTimeout(() => setCopiedCompass(false), 2000);
+              }}
+            >
+              {copiedCompass ? "Compass card copied" : "Copy compass card"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              MGRS grid squares
+            </p>
+            {mgrsCell ? (
+              <>
+                <p className="text-sm font-medium">{mgrsCell.grid}</p>
+                <p className="text-xs text-muted-foreground">
+                  100 km square: {mgrsCell.hundredKmId} · 1 km cell for land nav
+                </p>
+                {mgrsNeighbors.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Adjacent:{" "}
+                    {mgrsNeighbors.map((n) => `${n.direction} ${n.grid}`).join(" · ")}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Waiting for GPS grid…</p>
+            )}
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {mgrsGridTips().slice(0, 4).map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ul>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={lat == null || lng == null}
+              onClick={async () => {
+                if (lat == null || lng == null) return;
+                await navigator.clipboard.writeText(formatMgrsGridCard(lat, lng));
+                setCopiedGrid(true);
+                window.setTimeout(() => setCopiedGrid(false), 2000);
+              }}
+            >
+              {copiedGrid ? "Grid card copied" : "Copy MGRS grid card"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Wayfinding — backstops &amp; techniques
+            </p>
+            <p className="text-xs text-muted-foreground">{backstopDefinition()}</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {backstopChecklist().slice(0, 4).map((b) => (
+                <li key={b}>{b}</li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap gap-1">
+              {wayfindingTips.map((t) => (
+                <Button
+                  key={t.id}
+                  size="sm"
+                  variant={wayfindingOpen === t.id ? "default" : "outline"}
+                  onClick={() => setWayfindingOpen(t.id)}
+                >
+                  {t.title}
+                </Button>
+              ))}
+            </div>
+            {wayfindingTips
+              .filter((t) => t.id === wayfindingOpen)
+              .map((t) => (
+                <div key={t.id}>
+                  <p className="text-xs font-medium text-foreground">{t.summary}</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                    {t.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(formatWayfindingCard(trailName));
+                setCopiedWayfinding(true);
+                window.setTimeout(() => setCopiedWayfinding(false), 2000);
+              }}
+            >
+              {copiedWayfinding ? "Wayfinding card copied" : "Copy wayfinding card"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Resection / offset / box / mils
             </p>
             <p className="text-xs text-muted-foreground">
@@ -1894,6 +2055,66 @@ export function SafetyPanel({
                 </label>
               ))}
             </div>
+          </div>
+
+          {wayfindingNote && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {wayfindingNote}
+            </div>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Survival harvest — hunting · trapping · cook
+            </p>
+            <p className="text-xs text-muted-foreground">{HARVEST_DISCLAIMER}</p>
+            {harvestNote && (
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{harvestNote}</p>
+            )}
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {survivalHarvestPriorities().map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Hunting &amp; trapping</summary>
+              <p className="mt-2 font-medium text-foreground">Hunting</p>
+              <ul className="list-disc pl-4">
+                {huntingBasics().slice(0, 4).map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Trapping</p>
+              <ul className="list-disc pl-4">
+                {trappingBasics().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Field dress &amp; cook</summary>
+              <ul className="mt-2 list-disc pl-4">
+                {gameFieldDressing().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <ul className="mt-2 list-disc pl-4">
+                {cookingWildGame().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(formatHarvestCard());
+                setCopiedHarvest(true);
+                window.setTimeout(() => setCopiedHarvest(false), 2000);
+              }}
+            >
+              {copiedHarvest ? "Harvest card copied" : "Copy harvest card"}
+            </Button>
           </div>
 
           {sereNote && (
