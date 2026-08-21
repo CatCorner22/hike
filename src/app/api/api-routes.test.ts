@@ -449,6 +449,8 @@ describe("activity integrity races", () => {
       params,
     );
     expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { updatedAt: string };
+    expect(firstBody.updatedAt).not.toBe(plan.updatedAt);
     const second = await updatePlan(
       jsonRequest(
         `http://localhost/api/plans/${plan.id}`,

@@ -10,6 +10,7 @@ import {
   getPlan,
   listActivityPoints,
   listPlans,
+  nextIsoTimestamp,
   updatePlan,
 } from "./local";
 
@@ -106,6 +107,17 @@ describe("local store owner scoping", () => {
     expect((await listPlans(OTHER)).map((p) => p.name)).toEqual(["Theirs"]);
     expect(await getPlan(mine.id, OTHER)).toBeNull();
     expect(await getPlan(mine.id, OWNER)).not.toBeNull();
+  });
+
+  it("advances the plan revision when two writes land in the same millisecond", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    expect(Date.parse(nextIsoTimestamp(future))).toBe(Date.parse(future) + 1);
+    const created = await createPlan({ ownerId: OWNER, name: "Original" });
+    const first = await updatePlan(created.id, OWNER, { name: "Tab A" });
+    const second = await updatePlan(created.id, OWNER, { name: "Tab B" });
+    expect(first?.updatedAt).not.toBe(created.updatedAt);
+    expect(second?.updatedAt).not.toBe(first?.updatedAt);
+    expect(Date.parse(second!.updatedAt)).toBeGreaterThan(Date.parse(first!.updatedAt));
   });
 
   it("refuses to update or delete across owners", async () => {
