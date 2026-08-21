@@ -90,21 +90,24 @@ async function matchNavigateShell(cache: Cache, request: Request): Promise<Respo
   return undefined;
 }
 
+async function trustedCachedShell(response: Response): Promise<Response | null> {
+  if (response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return response;
+  try {
+    const html = await response.clone().text();
+    if (html.includes(NAVIGATE_SHELL_MARKER)) return response;
+  } catch {
+    return null;
+  }
+  return (await isValidNavigateDocument(response)) ? response : null;
+}
+
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   try {
     const cache = await caches.open(NAVIGATE_SHELL_CACHE);
     const cached = await matchNavigateShell(cache, request);
     if (cached) {
-      // warmNavigateShell only writes stamped shells. Headers are sometimes stripped
-      // in Cache Storage, so accept the in-body marker too before any HTML re-parse.
-      if (cached.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return cached;
-      try {
-        const html = await cached.clone().text();
-        if (html.includes(NAVIGATE_SHELL_MARKER)) return cached;
-      } catch {
-        /* fall through */
-      }
-      if (await isValidNavigateDocument(cached)) return cached;
+      const trusted = await trustedCachedShell(cached);
+      if (trusted) return trusted;
     }
 
     try {
@@ -114,7 +117,10 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
       return response;
     } catch {
       const retry = await matchNavigateShell(cache, request);
-      if (retry) return retry;
+      if (retry) {
+        const trusted = await trustedCachedShell(retry);
+        if (trusted) return trusted;
+      }
       return offlineDocument();
     }
   } catch {
