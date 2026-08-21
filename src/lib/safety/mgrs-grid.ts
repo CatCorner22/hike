@@ -66,7 +66,24 @@ export function gridSquareBounds(
   };
 }
 
-/** Neighboring grid cells (N/E/S/W) for land-nav confirmation. */
+/** Four corners of the cell, clockwise from SW, for map overlay. */
+export function gridSquareCorners(
+  lat: number,
+  lng: number,
+  scaleM: GridScaleM = 100_000,
+): Array<{ lat: number; lng: number }> | null {
+  const cell = gridSquareBounds(lat, lng, scaleM);
+  if (!cell) return null;
+  const u = latLngToUtm(lat, lng);
+  if (!u) return null;
+  const { easting, northing } = snapUtm(u, scaleM);
+  const sw = utmCorner(u, easting, northing);
+  const se = utmCorner(u, easting + scaleM, northing);
+  const ne = utmCorner(u, easting + scaleM, northing + scaleM);
+  const nw = utmCorner(u, easting, northing + scaleM);
+  if (!sw || !se || !ne || !nw) return null;
+  return [sw, se, ne, nw];
+}
 export function adjacentGridSquares(
   lat: number,
   lng: number,

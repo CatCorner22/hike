@@ -5,6 +5,7 @@ import { safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
 import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
+import { gridSquareBounds, gridSquareCorners } from "@/lib/safety/mgrs-grid";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -172,11 +173,31 @@ export function SafetyNavMap({
         };
         drawUtmLines(1000, 1.75, 0.55);
         drawUtmLines(100, 1, 0.35);
+        const hundredCorners = gridSquareCorners(user.lat, user.lng, 100_000);
+        if (hundredCorners) {
+          ctx.lineWidth = 2.4;
+          ctx.globalAlpha = 0.8;
+          ctx.strokeStyle =
+            nightMode === "red" ? "#ffaaaa" : nightMode === "nvg" ? "#8ee6a6" : "#94a3b8";
+          ctx.beginPath();
+          hundredCorners.forEach((c, i) => {
+            const p = toPx(c.lng, c.lat);
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+          });
+          ctx.closePath();
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
+        const hundred = gridSquareBounds(user.lat, user.lng, 100_000);
         const mgrsLabel = formatUsng(user.lat, user.lng, 3);
-        if (mgrsLabel) {
+        if (mgrsLabel || hundred) {
           ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#cbd5e1";
           ctx.font = "10px sans-serif";
-          ctx.fillText(`1 km · ${mgrsLabel}`, 12, topInsetPx + 38);
+          const label = [hundred ? `100 km ${hundred.hundredKmId}` : null, mgrsLabel ? `1 km · ${mgrsLabel}` : null]
+            .filter(Boolean)
+            .join("  ·  ");
+          ctx.fillText(label, 12, topInsetPx + 38);
         }
         }
       } else {
