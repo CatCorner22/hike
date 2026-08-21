@@ -81,6 +81,14 @@ jobs:
         env:
           BASE: http://127.0.0.1:3111
         run: node adversarial/gps-adversarial.mjs
+      - name: Storage browser probe
+        # Eviction freshness, schema UX, corrupt pack refusal — needs production SW + IDB.
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-storage-browser.mjs
+      - name: Storage local probe
+        # JSON fallback corruption + offline point-queue limits (no server required).
+        run: node adversarial/probe-storage-local.mjs
       - name: Concurrency probe
         env:
           BASE: http://127.0.0.1:3111
