@@ -1,4 +1,5 @@
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+import { isLongitudeInInterval } from "@/lib/geo/antimeridian";
 import type { BboxLngLat } from "@/lib/geo/bbox";
 import { heatIndexC, windChillC } from "@/lib/safety/field-ops";
 import type { PackWeather } from "@/lib/offline/pack-weather";
@@ -141,12 +142,11 @@ function validClock(value: unknown): value is string {
 }
 
 function pointInBbox(lng: number, lat: number, bbox: BboxLngLat, epsilon = 0.02): boolean {
-  return (
-    lng >= bbox[0] - epsilon &&
-    lat >= bbox[1] - epsilon &&
-    lng <= bbox[2] + epsilon &&
-    lat <= bbox[3] + epsilon
-  );
+  if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(epsilon) || epsilon < 0) {
+    return false;
+  }
+  if (lat < bbox[1] - epsilon || lat > bbox[3] + epsilon) return false;
+  return isLongitudeInInterval(lng, { minLng: bbox[0], maxLng: bbox[2] }, epsilon);
 }
 
 function isThunderCode(code: number | null): "watch" | "critical" | null {
@@ -449,6 +449,12 @@ export function hazardBriefFreshness(
   const generatedAt = Date.parse(brief.generatedAt);
   if (!Number.isFinite(generatedAt)) {
     return { kind: "unavailable", reason: "Forecast snapshot has no usable time." };
+  }
+  if (generatedAt > now) {
+    return {
+      kind: "unavailable",
+      reason: "Device clock is behind the snapshot time. Do not treat this as current weather.",
+    };
   }
   const ageMs = Math.max(0, now - generatedAt);
   if (now - generatedAt > HAZARD_BRIEF_MAX_AGE_MS) {

@@ -51,7 +51,8 @@ previous build’s chunks and the service worker install will hang on 404 precac
 | Probe | CI | What it does |
 | --- | --- | --- |
 | `node e2e/offline-navigation.mjs` | yes | Cold/warm offline navigate, ownership, durable storage UX |
-| `node adversarial/offline-adversarial.mjs` | yes | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew |
+| `node adversarial/offline-adversarial.mjs` | yes | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew, stacked extra poison |
+| `npx vitest run adversarial/probe-stacked-failures.test.ts` | unit job | Offline + poisoned extras + stale GPS + dateline + clock skew + invented exits |
 | `node adversarial/gps-adversarial.mjs` | yes | Teleports, frozen fixes, null island, antimeridian positions |
 | `node adversarial/probe-storage-browser.mjs` | yes | Eviction UI, schema errors, corrupt pack refusal |
 | `node adversarial/probe-storage-local.mjs` | yes | JSON fallback corruption, point-queue limits |

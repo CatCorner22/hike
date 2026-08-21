@@ -1,6 +1,7 @@
 import {
   MAX_ROUTE_PACK_BYTES,
   routePackStatus,
+  sanitizeRoutePackForUse,
   validateRoutePack,
   type RoutePack,
 } from "@/lib/offline/route-pack";
@@ -25,9 +26,10 @@ function byteLength(text: string): number {
 }
 
 export function serializeRoutePackBackup(pack: RoutePack): string {
-  const validation = validateRoutePack(pack);
+  const { pack: usable } = sanitizeRoutePackForUse(pack);
+  const validation = validateRoutePack(usable);
   if (validation) throw new Error(validation);
-  if (routePackStatus(pack) !== "ready") {
+  if (routePackStatus(usable) !== "ready") {
     throw new Error("This pack is not current enough to export. Prepare it again while online.");
   }
   const backup: RoutePackBackup = {
@@ -35,7 +37,7 @@ export function serializeRoutePackBackup(pack: RoutePack): string {
     version: PACK_BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     disclaimer: PACK_BACKUP_DISCLAIMER,
-    pack,
+    pack: usable,
   };
   const text = JSON.stringify(backup);
   if (byteLength(text) > MAX_BACKUP_BYTES) {
@@ -74,12 +76,13 @@ export function parseRoutePackBackup(text: unknown): { pack: RoutePack } | { err
     return { error: "Backup export time is invalid." };
   }
   if (!candidate.pack) return { error: "Backup file is missing a route pack." };
-  const validation = validateRoutePack(candidate.pack);
+  const { pack: usable } = sanitizeRoutePackForUse(candidate.pack);
+  const validation = validateRoutePack(usable);
   if (validation) return { error: validation };
-  if (routePackStatus(candidate.pack) !== "ready") {
+  if (routePackStatus(usable) !== "ready") {
     return { error: "This backup is an older pack format. Prepare the route again while online." };
   }
-  return { pack: candidate.pack };
+  return { pack: usable };
 }
 
 export function backupParseError(result: { pack: RoutePack } | { error: string }): string | null {

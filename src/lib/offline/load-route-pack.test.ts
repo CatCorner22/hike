@@ -52,6 +52,17 @@ describe("enrichRoutePack", () => {
     expect(merged.name).toBe("Rebuilt from server");
   });
 
+  it("drops poisoned weather instead of throwing during a plan rebuild", () => {
+    const existing = {
+      ...buildRoutePack({ id: "plan-keep", name: "Kept", geometry }),
+      weather: { source: "open-meteo" as const, cachedAt: "not-a-date", tempC: Number.NaN },
+    };
+    const rebuilt = buildRoutePack({ id: "plan-keep", name: "Rebuilt from server", geometry });
+    const merged = enrichRoutePack(rebuilt, existing);
+    expect(merged.weather).toBeUndefined();
+    expect(merged.geometry).toEqual(geometry);
+  });
+
   it("drops a bailout that no longer meets a changed main route", () => {
     const prepared = prepareBailoutRoute({
       routeId: "plan-keep",

@@ -3,6 +3,7 @@ import {
   getRoutePackStatus,
   packCandidateIds,
   saveRoutePack,
+  validPackWeather,
   type RoutePack,
 } from "@/lib/offline/route-pack";
 import { validCorridorFeatures } from "@/lib/offline/corridor-features";
@@ -42,6 +43,8 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
   const corridor = existing.corridor && validTerrainCorridor(existing.corridor, base.id, base.geometry)
     ? existing.corridor
     : undefined;
+  const keepWeather = (weather: RoutePack["weather"]) =>
+    weather && validPackWeather(weather) ? weather : undefined;
   const keepFeatures = (features: RoutePack["corridorFeatures"]) =>
     corridor && features && validCorridorFeatures(features, base.id, corridor.bboxes) ? features : undefined;
   const keepBrief = (brief: RoutePack["hazardBrief"]) =>
@@ -55,7 +58,7 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
     geometry: base.geometry,
     bbox: base.bbox,
     elevationProfile: base.elevationProfile,
-    weather: base.weather ?? existing.weather,
+    weather: keepWeather(base.weather) ?? keepWeather(existing.weather),
     corridor: corridor ?? base.corridor,
     corridorFeatures: keepFeatures(base.corridorFeatures) ?? keepFeatures(existing.corridorFeatures),
     hazardBrief: keepBrief(base.hazardBrief) ?? keepBrief(existing.hazardBrief),

@@ -49,6 +49,12 @@ export function packWeatherFreshness(
     lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     return { kind: "unavailable", reason: "Weather snapshot has no usable source location." };
   }
+  if (fetchedMs > now) {
+    return {
+      kind: "unavailable",
+      reason: "Device clock is behind the snapshot time. Do not treat this as current weather.",
+    };
+  }
   const ageMs = Math.max(0, now - fetchedMs);
   if (now - fetchedMs > PACK_WEATHER_MAX_AGE_MS) {
     return {
