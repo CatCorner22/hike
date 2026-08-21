@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PACK_WEATHER_MAX_AGE_MS, packWeatherFreshness } from "./pack-weather";
+import { PACK_WEATHER_MAX_AGE_MS, formatPackWeatherNote, packWeatherFreshness } from "./pack-weather";
 
 const fetchedAt = "2026-08-20T12:00:00.000Z";
 const weather = {
@@ -39,5 +39,11 @@ describe("pack weather provenance and freshness", () => {
       kind: "unavailable",
       reason: expect.stringMatching(/source location/i),
     });
+  });
+
+  it("formats fresh weather with age and coordinates", () => {
+    const note = formatPackWeatherNote(weather, Date.parse(fetchedAt) + 3_600_000);
+    expect(note).toMatch(/1h ago/);
+    expect(note).toMatch(/40\.00/);
   });
 });

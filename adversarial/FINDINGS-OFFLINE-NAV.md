@@ -160,8 +160,8 @@ These are documented deferred items; probes pass but semantics may still surpris
 
 | Item | Risk | Status |
 | --- | --- | --- |
-| Out-and-back remaining on single polyline at turnaround | Remaining distance may not match hiker expectation at the turnaround | Unit tests exist; product semantics differ from “leg-aware” remaining |
-| MultiLineString disconnected components | Progress/remaining may span gaps; route card can understate total (see FINDINGS-NEW F-01) | Partially mitigated in navigation tests; route card still needs hardening |
+| Out-and-back remaining on single polyline at turnaround | Remaining distance may not match hiker expectation at the turnaround | **Mitigated** — `travelDirectionAlong` uses recent window; cache path tested |
+| MultiLineString disconnected components | Progress/remaining may span gaps; route card can understate total (see FINDINGS-NEW F-01) | **Mitigated** — component-local remaining; route card shows discontinuous warning |
 | Loop snap outside 120 m `stabilizeLoop` window | Snap-to-trail may miss very wide loop closures | Low frequency; no probe failure |
 | Lat/lng swaps that pass range checks | Rejected at pack validation (`lat-lng-swapped/rejected`) | **Held** |
 | `navigator.storage.persist()` in headless CI | Cannot grant durable storage; app correctly reports refusal | By design — see e2e B4/B5 |

@@ -73,6 +73,33 @@ export function isPackWeatherFresh(weather: PackWeather | null | undefined, now 
   return now - cachedAt <= PACK_WEATHER_FRESH_MS;
 }
 
+/** Human-readable pack weather provenance for the safety panel. */
+export function formatPackWeatherNote(
+  weather: PackWeather | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (!weather) return null;
+  const freshness = packWeatherFreshness(weather, now);
+  const temp =
+    weather.tempC != null && Number.isFinite(weather.tempC) ? ` · ${weather.tempC}°C` : "";
+  if (freshness.kind === "fresh") {
+    const hours = Math.max(1, Math.round(freshness.ageMs / 3_600_000));
+    const where =
+      Number.isFinite(freshness.lat) && Number.isFinite(freshness.lng)
+        ? ` near ${freshness.lat.toFixed(2)}°, ${freshness.lng.toFixed(2)}°`
+        : "";
+    return `Pack-time snapshot from ${hours}h ago${where} (${weather.source}${temp}). Not a live forecast.`;
+  }
+  if (freshness.kind === "stale") {
+    const hours = Math.max(1, Math.round(freshness.ageMs / 3_600_000));
+    return `Pack weather is ${hours}h old — do not use for heat or cold decisions. Enter current conditions below.`;
+  }
+  if (!isPackWeatherFresh(weather, now)) {
+    return "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions.";
+  }
+  return `Using pack-time snapshot (${weather.source}${temp}). Location unknown — treat as historical only.`;
+}
+
 export async function fetchPackWeather(
   lat: number,
   lng: number,

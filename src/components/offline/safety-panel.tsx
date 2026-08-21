@@ -79,7 +79,7 @@ import {
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { buildPaperBackup } from "@/lib/safety/paper-backup";
-import { isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
+import { formatPackWeatherNote, isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -1547,9 +1547,10 @@ export function SafetyPanel({
             </Button>
             {packWeather && (
               <p className="text-xs text-muted-foreground col-span-full">
-                {isPackWeatherFresh(packWeather)
-                  ? `Using pack-time snapshot (${packWeather.source}${packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.`
-                  : "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions."}
+                {formatPackWeatherNote(packWeather) ??
+                  (isPackWeatherFresh(packWeather)
+                    ? `Using pack-time snapshot (${packWeather.source}${packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.`
+                    : "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions.")}
               </p>
             )}
             <div className="grid grid-cols-3 gap-2">

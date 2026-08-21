@@ -76,8 +76,8 @@ try {
     distanceMeters: finish?.body?.stats?.distanceMeters,
     durationSeconds: finish?.body?.stats?.durationSeconds,
   }));
-  if (!(finish?.body?.stats?.distanceMeters > 800)) {
-    throw new Error(`Expected paused movement to be counted; received ${JSON.stringify(finish)}`);
+  if ((finish?.body?.stats?.distanceMeters ?? 0) > 100) {
+    throw new Error(`Paused movement must not count as hiking distance; received ${JSON.stringify(finish)}`);
   }
 } finally {
   await browser.close();

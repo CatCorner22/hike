@@ -61,6 +61,23 @@ describe("progressAlongTrail", () => {
     expect(onSecond.traveledMeters).toBeGreaterThan(multiLine.coordinates[0].length);
   });
 
+  it("remaining on a disconnected MultiLineString uses the active component only", () => {
+    const disconnected: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[0, 0], [0, 0.01]],
+        [[1, 1], [1, 0.99]],
+      ],
+    };
+    const nearEndSecond = progressAlongTrail({ lat: 0.991, lng: 1 }, disconnected, [], "forward");
+    const secondLength = trailLengthMeters({
+      type: "LineString",
+      coordinates: disconnected.coordinates[1],
+    });
+    expect(nearEndSecond.remainingMeters).toBeLessThan(secondLength * 0.15);
+    expect(nearEndSecond.remainingMeters).toBeLessThan(500);
+  });
+
   it("keeps remaining-m at the finish of a loop instead of snapping to the start", () => {
     const loop: GeoJSON.LineString = {
       type: "LineString",

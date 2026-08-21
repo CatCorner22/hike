@@ -1,8 +1,9 @@
 import {
   remainingElevationGain,
-  resolveRemaining,
+  resolveComponentRemaining,
   stabilizeLoop,
   type LatLng,
+  type RouteComponentRange,
   type TrailProgress,
   type TravelDirection,
 } from "@/lib/geo/navigation";
@@ -13,7 +14,10 @@ interface Segment {
   end: GeoJSON.Position;
   startMeters: number;
   endMeters: number;
+  componentIndex: number;
 }
+
+export type { RouteComponentRange } from "@/lib/geo/navigation";
 
 export function routePackFingerprint(pack: RoutePack): string {
   return `${pack.id}:${pack.cachedAt}:${pack.lengthMeters}:${pack.cumulativeDistancesMeters.length}`;
@@ -25,6 +29,7 @@ export interface RouteProgressCache {
   totalMeters: number;
   elevationProfile: RoutePack["elevationProfile"];
   segments: Segment[];
+  componentRanges: RouteComponentRange[];
   segmentCells: Map<string, number[]>;
   hasUnindexedSegments: boolean;
   lastSegment: number | null;
@@ -45,15 +50,24 @@ function lines(geometry: RoutePack["geometry"]): GeoJSON.Position[][] {
 export function createRouteProgressCache(pack: RoutePack): RouteProgressCache {
   const segments: Segment[] = [];
   const segmentCells = new Map<string, number[]>();
+  const componentRanges: RouteComponentRange[] = [];
   let hasUnindexedSegments = false;
   let coordinateIndex = 0;
+  let componentIndex = 0;
   for (const line of lines(pack.geometry)) {
+    if (line.length >= 2) {
+      componentRanges.push({
+        startMeters: pack.cumulativeDistancesMeters[coordinateIndex],
+        endMeters: pack.cumulativeDistancesMeters[coordinateIndex + line.length - 1],
+      });
+    }
     for (let index = 1; index < line.length; index += 1) {
       const segmentIndex = segments.length;
       const segment = {
         start: line[index - 1], end: line[index],
         startMeters: pack.cumulativeDistancesMeters[coordinateIndex + index - 1],
         endMeters: pack.cumulativeDistancesMeters[coordinateIndex + index],
+        componentIndex,
       };
       segments.push(segment);
       const minLng = Math.min(Number(segment.start[0]), Number(segment.end[0]));
@@ -74,8 +88,20 @@ export function createRouteProgressCache(pack: RoutePack): RouteProgressCache {
       }
     }
     coordinateIndex += line.length;
+    if (line.length >= 2) componentIndex += 1;
   }
-  return { packId: pack.id, fingerprint: routePackFingerprint(pack), totalMeters: pack.lengthMeters, elevationProfile: pack.elevationProfile, segments, segmentCells, hasUnindexedSegments, lastSegment: null, lastTraveledMeters: null };
+  return {
+    packId: pack.id,
+    fingerprint: routePackFingerprint(pack),
+    totalMeters: pack.lengthMeters,
+    elevationProfile: pack.elevationProfile,
+    segments,
+    componentRanges,
+    segmentCells,
+    hasUnindexedSegments,
+    lastSegment: null,
+    lastTraveledMeters: null,
+  };
 }
 
 function wrappedLongitudeDelta(lng: number): number {
@@ -174,10 +200,12 @@ export function progressWithRouteCache(
   cache.lastSegment = best.index;
   const segment = cache.segments[best.index];
   const traveledMeters = Math.max(0, Math.min(cache.totalMeters, segment.startMeters + (segment.endMeters - segment.startMeters) * best.fraction));
-  const { remainingMeters, resolvedDirection } = resolveRemaining(
+  const { remainingMeters, resolvedDirection } = resolveComponentRemaining(
     traveledMeters,
     cache.totalMeters,
     direction,
+    cache.componentRanges,
+    segment.componentIndex,
   );
   const progress = stabilizeLoop({
     nearest: best.nearest,

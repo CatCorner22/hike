@@ -89,6 +89,10 @@ jobs:
       - name: Storage local probe
         # JSON fallback corruption + offline point-queue limits (no server required).
         run: node adversarial/probe-storage-local.mjs
+      - name: Activity pause probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-new-activity-pause.mjs
       - name: Concurrency probe
         env:
           BASE: http://127.0.0.1:3111

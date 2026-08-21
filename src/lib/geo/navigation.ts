@@ -102,6 +102,61 @@ export function resolveRemaining(
   return { remainingMeters, resolvedDirection };
 }
 
+export interface RouteComponentRange {
+  startMeters: number;
+  endMeters: number;
+}
+
+/**
+ * On a MultiLineString, remaining toward the end of the *active component* —
+ * not the full route minus a global offset that spans an unrunnable gap.
+ */
+export function resolveComponentRemaining(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+  componentRanges: RouteComponentRange[],
+  componentIndex: number,
+): { remainingMeters: number; resolvedDirection: TravelDirection } {
+  if (componentRanges.length <= 1) {
+    return resolveRemaining(traveledMeters, totalMeters, direction);
+  }
+  const component = componentRanges[componentIndex] ?? componentRanges[0];
+  const componentLength = Math.max(component.endMeters - component.startMeters, 0);
+  const localTraveled = Math.max(
+    0,
+    Math.min(traveledMeters - component.startMeters, componentLength),
+  );
+  return resolveRemaining(localTraveled, componentLength, direction);
+}
+
+function componentRangesFromGeometry(
+  geometry: GeoJSON.MultiLineString,
+  cumulative?: number[],
+): RouteComponentRange[] {
+  const ranges: RouteComponentRange[] = [];
+  let offset = 0;
+  for (const coords of geometry.coordinates) {
+    if (coords.length < 2) continue;
+    const length = turf.length(turf.lineString(coords), { units: "meters" });
+    ranges.push({ startMeters: offset, endMeters: offset + length });
+    offset += length;
+  }
+  if (cumulative && cumulative.length >= 2 && ranges.length > 0) {
+    return ranges.map((range, index) => {
+      const startIdx = geometry.coordinates
+        .slice(0, index)
+        .reduce((sum, line) => sum + Math.max(line.length, 1), 0);
+      const line = geometry.coordinates[index];
+      return {
+        startMeters: cumulative[startIdx] ?? range.startMeters,
+        endMeters: cumulative[startIdx + line.length - 1] ?? range.endMeters,
+      };
+    });
+  }
+  return ranges;
+}
+
 function progressOnSegment(
   point: LatLng,
   coordinates: GeoJSON.Position[],
@@ -203,6 +258,7 @@ export function progressAlongTrail(
 
   if (geometry.type === "MultiLineString") {
     const candidates: TrailProgress[] = [];
+    const componentRanges = componentRangesFromGeometry(geometry);
     let cumulative = 0;
 
     for (const coords of geometry.coordinates) {
@@ -220,7 +276,36 @@ export function progressAlongTrail(
       cumulative += turf.length(turf.lineString(coords), { units: "meters" });
     }
 
-    if (candidates.length) return pickContinuous(candidates, hint);
+    if (candidates.length) {
+      const picked = pickContinuous(candidates, hint);
+      if (componentRanges.length <= 1) return picked;
+      const componentIndex = componentRanges.findIndex(
+        (range) =>
+          picked.traveledMeters >= range.startMeters - 1 &&
+          picked.traveledMeters <= range.endMeters + 1,
+      );
+      const activeIndex = componentIndex >= 0 ? componentIndex : 0;
+      const { remainingMeters, resolvedDirection } = resolveComponentRemaining(
+        picked.traveledMeters,
+        totalMeters,
+        direction,
+        componentRanges,
+        activeIndex,
+      );
+      return stabilizeLoop(
+        {
+          ...picked,
+          remainingMeters,
+          remainingDirection: direction,
+          remainingElevationMeters: remainingElevationGain(
+            elevationProfile,
+            picked.traveledMeters,
+            resolvedDirection,
+          ),
+        },
+        hint,
+      );
+    }
     return emptyProgress(point, totalMeters);
   }
 
