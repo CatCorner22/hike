@@ -219,13 +219,26 @@ function pickContinuous(candidates: TrailProgress[], hint?: SnapHint | null): Tr
   return stabilizeLoop(pool[0], hint);
 }
 
+/** Window near the route end where a loop may snap back to coordinate 0. */
+export function loopStabilizeThresholds(totalMeters: number): {
+  nearEndMeters: number;
+  startJumpMeters: number;
+} {
+  if (totalMeters < 200) return { nearEndMeters: 0, startJumpMeters: 0 };
+  return {
+    nearEndMeters: Math.min(200, Math.max(120, totalMeters * 0.08)),
+    startJumpMeters: Math.min(120, Math.max(80, totalMeters * 0.06)),
+  };
+}
+
 /** Keep a loop from snapping remaining-m back to the start vertex. */
 export function stabilizeLoop(progress: TrailProgress, hint?: SnapHint | null): TrailProgress {
   if (!hint || !Number.isFinite(progress.traveledMeters)) return progress;
   const total = progress.totalMeters;
-  if (total < 200) return progress;
+  const { nearEndMeters, startJumpMeters } = loopStabilizeThresholds(total);
+  if (nearEndMeters <= 0) return progress;
   const jumpedToStart =
-    hint.traveledMeters > total - 120 && progress.traveledMeters < 80;
+    hint.traveledMeters > total - nearEndMeters && progress.traveledMeters < startJumpMeters;
   if (!jumpedToStart) return progress;
   const direction = progress.remainingDirection ?? "forward";
   const { remainingMeters } = resolveRemaining(total, total, direction);

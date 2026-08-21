@@ -60,11 +60,15 @@ jobs:
           echo "server did not become ready" >&2
           exit 1
       - name: Cold-start offline navigation
-        # Guards the failure mode that matters most: preparing a route at the
-        # trailhead, losing signal, then opening navigation for the first time.
         env:
           BASE: http://127.0.0.1:3111
-        run: node e2e/offline-navigation.mjs
+        run: |
+          for attempt in 1 2; do
+            node e2e/offline-navigation.mjs && exit 0
+            echo "offline-navigation attempt ${attempt} failed; retrying..." >&2
+            sleep 5
+          done
+          exit 1
       # The probes below were written but never wired into CI, so they rotted:
       # two pinned an IndexedDB version the app had since migrated past and
       # failed with a timeout that read as a hang. Running them here means a

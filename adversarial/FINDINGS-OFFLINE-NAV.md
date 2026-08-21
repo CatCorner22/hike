@@ -162,7 +162,7 @@ These are documented deferred items; probes pass but semantics may still surpris
 | --- | --- | --- |
 | Out-and-back remaining on single polyline at turnaround | Remaining distance may not match hiker expectation at the turnaround | **Mitigated** — `travelDirectionAlong` uses recent window; cache path tested |
 | MultiLineString disconnected components | Progress/remaining may span gaps; route card can understate total (see FINDINGS-NEW F-01) | **Mitigated** — component-local remaining; route card shows discontinuous warning |
-| Loop snap outside 120 m `stabilizeLoop` window | Snap-to-trail may miss very wide loop closures | Low frequency; no probe failure |
+| Loop snap outside 120 m `stabilizeLoop` window | Snap-to-trail may miss very wide loop closures | **Mitigated** — thresholds scale with route length (up to 200 m / 120 m) |
 | Lat/lng swaps that pass range checks | Rejected at pack validation (`lat-lng-swapped/rejected`) | **Held** |
 | `navigator.storage.persist()` in headless CI | Cannot grant durable storage; app correctly reports refusal | By design — see e2e B4/B5 |
 | CDP one-byte quota override | Inconclusive in this environment; real `QuotaExceededError` path tested via mock | Documented in FINDINGS-STORAGE |

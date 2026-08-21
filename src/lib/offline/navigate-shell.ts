@@ -1,5 +1,11 @@
+import {
+  isValidNavigateShellDocument,
+  NAVIGATE_SHELL_MARKER,
+  stampNavigateShellHtml,
+} from "@/lib/offline/navigate-shell-validation";
+
 export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
-export const NAVIGATE_SHELL_MARKER = "hike-navigate-shell-v2";
+export { NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
 export interface WarmNavigateShellResult { ok: boolean; cachedAssets: number; error?: string; }
 
@@ -20,23 +26,39 @@ function nextStaticUrls(html: string, baseUrl: URL): URL[] {
 
 function ownMarkedDocument(response: Response, html: string): Response | null {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("text/html") || html.length < 512 ||
-    !/<!doctype html|<html[\s>]/i.test(html) || !/_next\/|self\.__next_f|<body[\s>]/i.test(html)) return null;
+  if (!isValidNavigateShellDocument(html, contentType, null)) return null;
   const headers = new Headers(response.headers);
   headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
-  const stamped = html.includes(NAVIGATE_SHELL_MARKER)
-    ? html
-    : `<!--${NAVIGATE_SHELL_MARKER}-->${html}`;
-  return new Response(stamped, { status: response.status, statusText: response.statusText, headers });
+  return new Response(stampNavigateShellHtml(html), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+async function readCachedShell(navId: string): Promise<boolean> {
+  const url = navigateUrl(navId);
+  if (!url || typeof caches === "undefined") return false;
+  const cache = await caches.open(NAVIGATE_SHELL_CACHE);
+  const response = await cache.match(url.toString(), { ignoreSearch: true, ignoreVary: true });
+  if (!response) return false;
+  if (response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return true;
+  try {
+    const html = await response.clone().text();
+    return isValidNavigateShellDocument(
+      html,
+      response.headers.get("content-type") ?? "",
+      response.headers.get("x-hike-navigate-shell"),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Warm only an app-shaped, explicitly marked navigation document. */
 export async function warmNavigateShell(navId: string): Promise<WarmNavigateShellResult> {
   const first = await warmNavigateShellOnce(navId);
   if (first.ok) return first;
-  // One retry: this runs at the trailhead on the last bars of signal, where a single
-  // dropped fetch is common and a second attempt usually lands. A still-failing result
-  // is reported to the user, never swallowed.
   await new Promise((resolve) => setTimeout(resolve, 1_500));
   return warmNavigateShellOnce(navId);
 }
@@ -60,25 +82,17 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
         if (asset.ok) { await cache.put(assetUrl.toString(), asset); cachedAssets += 1; }
       } catch { /* precache may still provide this asset */ }
     }));
-    return { ok: true, cachedAssets };
+    // Slow CI runners can read Cache Storage before the put is visible to the SW.
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      if (await readCachedShell(navId)) return { ok: true, cachedAssets };
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return { ok: false, cachedAssets, error: "Navigation screen was written but failed verification." };
   } catch (error) {
     return { ok: false, cachedAssets: 0, error: error instanceof Error ? error.message : "Navigation screen could not be cached." };
   }
 }
 
 export async function isNavigateShellCached(navId: string): Promise<boolean> {
-  const url = navigateUrl(navId);
-  if (!url || typeof caches === "undefined") return false;
-  const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-  const response = await cache.match(url.toString(), { ignoreSearch: true, ignoreVary: true });
-  if (!response) return false;
-  const markedHeader = response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER;
-  const contentType = response.headers.get("content-type") ?? "";
-  if (contentType && !contentType.toLowerCase().includes("text/html") && !markedHeader) return false;
-  try {
-    const html = await response.clone().text();
-    return markedHeader || html.includes(NAVIGATE_SHELL_MARKER);
-  } catch {
-    return false;
-  }
+  return readCachedShell(navId);
 }
