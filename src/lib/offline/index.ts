@@ -1,4 +1,5 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import type { LocalActivity } from "@/lib/offline/activity-sync";
 
 interface PendingPoint {
@@ -18,10 +19,20 @@ interface HikeDB extends DBSchema {
 
 const OFFLINE_DB_VERSION = 2;
 const SYNCED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-/** Keep recording small enough that a maximum-size offline route can still be saved. */
-export const MAX_PENDING_POINT_COUNT = 2_000;
 export const ROUTE_PACK_STORAGE_RESERVE_BYTES = 16 * 1024 * 1024;
-const ESTIMATED_PENDING_POINT_BYTES = 512;
+export const ESTIMATED_PENDING_POINT_BYTES = 512;
+/**
+ * Bound the all-points-in-memory flush without letting old unsynced activities stop a
+ * new trip after only 2,000 points. The per-activity ceiling prevents an offline-only
+ * recording from outrunning the API, while the larger device budget covers several
+ * trips when quota estimates are absent. The server remains authoritative for mixed
+ * online/offline recordings because IndexedDB cannot observe points accepted elsewhere.
+ */
+export const MAX_PENDING_POINTS_PER_ACTIVITY = MAX_ACTIVITY_POINTS;
+export const MAX_PENDING_POINT_STORAGE_BYTES = 32 * 1024 * 1024;
+export const MAX_PENDING_POINT_COUNT = Math.floor(
+  MAX_PENDING_POINT_STORAGE_BYTES / ESTIMATED_PENDING_POINT_BYTES,
+);
 let dbPromise: Promise<IDBPDatabase<HikeDB>> | null = null;
 let flushPromise: Promise<FlushResult> | null = null;
 let pointWriteQueue: Promise<void> = Promise.resolve();
@@ -88,7 +99,14 @@ function queueFull(message: string, cause?: unknown): OfflinePointQueueFullError
   return error;
 }
 
-async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>) {
+async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>, activityId: string) {
+  const activityPoints = await db.countFromIndex("pendingPoints", "by-activity", activityId);
+  if (activityPoints >= MAX_PENDING_POINTS_PER_ACTIVITY) {
+    throw queueFull(
+      "GPS point was not saved because this activity reached its recording limit. Reconnect and finish the activity before continuing.",
+    );
+  }
+
   const pending = await db.countFromIndex("pendingPoints", "by-synced", 0);
   if (pending >= MAX_PENDING_POINT_COUNT) {
     throw queueFull(
@@ -117,7 +135,7 @@ async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>) {
 }
 
 export async function queueActivityPoint(point: {
-  activityId: string; lat: number; lng: number; elevation?: number; recordedAt: Date;
+  id?: string; activityId: string; lat: number; lng: number; elevation?: number; recordedAt: Date;
 }) {
   const write = pointWriteQueue.then(async () => {
     const db = await getOfflineDb();
@@ -126,10 +144,10 @@ export async function queueActivityPoint(point: {
         "GPS point was not saved because offline storage is unavailable. Reconnect before relying on this recording.",
       );
     }
-    await assertQueueCanAcceptPoint(db);
+    await assertQueueCanAcceptPoint(db, point.activityId);
     try {
       await db.put("pendingPoints", {
-        id: crypto.randomUUID(), activityId: point.activityId, lat: point.lat, lng: point.lng,
+        id: point.id ?? crypto.randomUUID(), activityId: point.activityId, lat: point.lat, lng: point.lng,
         elevation: point.elevation, recordedAt: point.recordedAt.toISOString(), synced: 0,
       });
     } catch (error) {
@@ -232,7 +250,15 @@ async function flushActivityPoints(
       response = await fetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ points: batch.map(({ lat, lng, elevation, recordedAt }) => ({ lat, lng, elevation, recordedAt })) }),
+        body: JSON.stringify({
+          points: batch.map(({ id: clientPointId, lat, lng, elevation, recordedAt }) => ({
+            clientPointId,
+            lat,
+            lng,
+            elevation,
+            recordedAt,
+          })),
+        }),
       });
     } catch {
       break;

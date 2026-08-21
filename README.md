@@ -64,7 +64,9 @@ npm run db:push
 # or
 psql $DATABASE_URL -f drizzle/0000_init.sql
 psql $DATABASE_URL -f drizzle/0001_campground_external_unique.sql
+psql $DATABASE_URL -f drizzle/0001_trails_osm_type_unique.sql
 psql $DATABASE_URL -f drizzle/0002_owner_scoping.sql
+psql $DATABASE_URL -f drizzle/0003_activity_point_idempotency.sql
 ```
 
 `campgrounds.external_id` is unique. Upserts use that key.

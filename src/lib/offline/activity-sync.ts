@@ -87,7 +87,9 @@ export async function beginActivity(input: {
 }
 
 export async function saveActivityPoint(activityId: string, point: QueuedPoint): Promise<boolean> {
+  const clientPointId = crypto.randomUUID();
   const payload = {
+    clientPointId,
     lat: point.lat,
     lng: point.lng,
     elevation: point.elevation,
@@ -107,6 +109,7 @@ export async function saveActivityPoint(activityId: string, point: QueuedPoint):
     /* queue */
   }
   await queueActivityPoint({
+    id: clientPointId,
     activityId,
     lat: point.lat,
     lng: point.lng,
@@ -152,6 +155,7 @@ export async function flushPendingPoints(activityId: string): Promise<number> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          clientPointId: point.id,
           lat: point.lat,
           lng: point.lng,
           elevation: point.elevation,

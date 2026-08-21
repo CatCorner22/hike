@@ -33,6 +33,7 @@ export interface StoredActivity {
 export interface StoredPoint {
   id: string;
   activityId: string;
+  clientPointId?: string;
   lat: number;
   lng: number;
   elevation: number | null;
@@ -95,6 +96,7 @@ function isStoredPoint(value: unknown): value is StoredPoint {
   if (!isRecord(value)) return false;
   return typeof value.id === "string" &&
     typeof value.activityId === "string" &&
+    (value.clientPointId === undefined || typeof value.clientPointId === "string") &&
     Number.isFinite(value.lat) &&
     Number.isFinite(value.lng) &&
     (typeof value.elevation === "number" || value.elevation === null) &&
@@ -326,12 +328,16 @@ export async function updateActivity(
   });
 }
 
-export async function addActivityPoint(point: Omit<StoredPoint, "id">) {
+export async function addActivityPoints(points: Array<Omit<StoredPoint, "id">>) {
   return mutateStore((store) => {
-    const saved: StoredPoint = { ...point, id: crypto.randomUUID() };
-    store.points.push(saved);
+    const saved = points.map((point): StoredPoint => ({ ...point, id: crypto.randomUUID() }));
+    store.points.push(...saved);
     return saved;
   });
+}
+
+export async function addActivityPoint(point: Omit<StoredPoint, "id">) {
+  return (await addActivityPoints([point]))[0];
 }
 
 export async function listActivityPoints(activityId: string) {
