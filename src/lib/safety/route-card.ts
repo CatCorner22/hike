@@ -7,7 +7,16 @@ export interface RouteCardLeg {
   index: number;
   from: { lat: number; lng: number };
   to: { lat: number; lng: number };
+  /** Distance along the trail — what a pace count measures. */
   meters: number;
+  /**
+   * Straight-line distance from `from` to `to` — what pairs with `trueDeg`.
+   *
+   * These are two different measurements and on a switchbacked trail they are
+   * nowhere near each other, so the card has to print both rather than pair a
+   * path distance with a chord bearing and call it one leg.
+   */
+  chordMeters: number;
   cumMeters: number;
   trueDeg: number;
   grid: string;
@@ -65,6 +74,7 @@ export function routeCardLegs(
           from,
           to,
           meters: pathSinceLeg,
+          chordMeters: ra.meters,
           cumMeters: totalMeters,
           trueDeg: ra.trueDeg,
           grid: formatUsng(to.lat, to.lng) ?? "UNKNOWN",
@@ -93,15 +103,27 @@ export function formatRouteCard(trailName: string, legs: RouteCardLeg[]): string
   const discontinuous = (summary.componentCount ?? 1) > 1;
   return formatReport([
     `ROUTE CARD — ${reportField(trailName)}`,
-    `Total ~${rounded(totalMeters)} m · ${reportField(legs.length)} printed legs · bearings are TRUE`,
+    `Total ~${rounded(totalMeters)} m along the trail · ${reportField(legs.length)} printed legs · bearings are TRUE`,
+    "Each leg: bearing pairs with the STRAIGHT distance; the trail distance is what you pace.",
     truncated ? `LEG SUMMARY ONLY: first ${reportField(legs.length)} legs; total above is the full route.` : null,
     discontinuous
       ? `WARNING: route has ${reportField(summary.componentCount)} disconnected components. No leg crosses a gap; verify every transition.`
       : null,
-    ...legs.map(
-      (l) =>
-        `L${reportField(l.index)}  ${rounded(l.trueDeg)}° true / ${rounded(l.meters)} m  cum ${rounded(l.cumMeters)} m  ${reportField(l.grid)}`,
-    ),
+    ...legs.map((l) => {
+      // A leg that curves has a path distance longer than its chord. Printing only
+      // the path distance beside the chord bearing told a searcher plotting these
+      // legs to draw each one too long — 44% too long on a switchbacked trail,
+      // compounding over every leg on the sheet.
+      const chord = Number.isFinite(l.chordMeters) ? l.chordMeters : null;
+      const bends = chord != null && l.meters - chord > Math.max(10, chord * 0.05);
+      const distance =
+        chord == null
+          ? `${rounded(l.meters)} m`
+          : bends
+            ? `${rounded(chord)} m straight (${rounded(l.meters)} m along the trail)`
+            : `${rounded(chord)} m`;
+      return `L${reportField(l.index)}  ${rounded(l.trueDeg)}° true / ${distance}  cum ${rounded(l.cumMeters)} m  ${reportField(l.grid)}`;
+    }),
     "At each leg: confirm terrain handrail, pace count, and time.",
   ]);
 }

@@ -337,7 +337,7 @@ describe("report and radio-format injection resistance", () => {
   });
 
   it("does not allow a route-card name to forge records", () => {
-    const route = formatRouteCard(injection, [{ index: 1, from: { lat: 40, lng: -105 }, to: { lat: 40.001, lng: -105 }, meters: 100, cumMeters: 100, trueDeg: 0, grid: "13T AB 1234 5678" }]);
+    const route = formatRouteCard(injection, [{ index: 1, from: { lat: 40, lng: -105 }, to: { lat: 40.001, lng: -105 }, meters: 100, chordMeters: 100, cumMeters: 100, trueDeg: 0, grid: "13T AB 1234 5678" }]);
     expect(containsForgedLine(route, "L1 LOCATION:")).toBe(false);
   });
 
