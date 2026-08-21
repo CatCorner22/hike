@@ -1347,6 +1347,74 @@ directions.
 
 ---
 
+## Seventeenth pass — the track-point window (`backtrack.ts`)
+
+`gainLastHourM` and `rapidAscentWarning` decide whether the party is climbing fast enough
+to be at risk of altitude illness, and `stationaryMinutes` decides whether they have
+stopped moving. All three read the breadcrumb track through the same time window.
+
+### T1. One corrupt timestamp made "not moving" return NaN
+
+`sampleTime` guards `Date.parse` with `Number.isFinite`. `stationaryMinutes`, twenty
+lines above it in the same file, called `Date.parse` raw:
+
+```
+[40 min ago, 20 min ago, now]                 -> 40
+[40 min ago, "not-a-date",  now]              -> NaN
+```
+
+`Math.min(oldest, NaN)` is NaN and it propagates out. NaN compares false against every
+threshold, so the not-moving warning did not misfire — it **silently stopped firing**,
+which is the worse failure.
+
+### T2. One NaN altitude deleted the rapid-ascent warning
+
+`altitude != null` lets NaN through, and one NaN poisons `Math.min`. A real 900 m ascent:
+
+| track | `gainLastHourM` | warning |
+|---|---|---|
+| clean | 900 m | "You gained ~900 m in the last hour above 2,400 m…" |
+| one NaN altitude inserted | **NaN** | **null** |
+
+So a single bad altitude sample removed the altitude-illness warning entirely *and* zeroed
+the exposure that feeds `amsAssessment`. Fail-quiet, in the direction of under-warning.
+
+### T3. A future-dated point counted as "the last hour"
+
+The window test was `now - t <= windowMs`, which **any** future timestamp satisfies. A
+point dated 90 minutes ahead at 9 000 m was inside the window and became the newest
+sample:
+
+```
+You gained ~7000 m in the last hour above 2,400 m. Slow down and watch for altitude illness.
+```
+
+7 000 m in an hour is not a rate a human produces, and an impossible warning is how a party
+learns to disbelieve the warning bar — the same failure `amsAssessment`'s own comment cites.
+
+All three now share one guarded window: an unparseable timestamp drops the sample rather
+than fabricating recency, a timestamp beyond two minutes of clock skew ahead of `now` is
+rejected, and altitudes are filtered to finite values.
+
+### Also checked, and found sound
+
+`gainLastHourM` uses `last − min(window)` rather than summing positive deltas, so it does
+not accumulate GPS altitude jitter the way the recorder's naive sum once did — the
+residual bias from taking a minimum over a noisy series is on the order of 10–15 m against
+300 m thresholds. `readiness.ts` is sound.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 710/710 green, `npm run build`
+succeeds. Five mutations are each caught — but only after a sixth test was added: the
+first round left "corrupt timestamps read as `now`" **surviving** inside the altitude
+window, covered only for `stationaryMinutes`. The gap was in the tests, not the fix, and
+is recorded here because a mutation that survives is the only evidence that a test suite
+is thinner than it looks.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
