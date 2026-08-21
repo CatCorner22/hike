@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { adjacentGridSquares, gridSquareBounds, formatMgrsGridCard } from "./mgrs-grid";
+import { adjacentGridSquares, gridSquareBounds, formatMgrsGridCard, gridSquareCorners } from "./mgrs-grid";
 
 describe("MGRS grid squares", () => {
   const lat = 37.7459;
@@ -23,5 +23,11 @@ describe("MGRS grid squares", () => {
     const card = formatMgrsGridCard(lat, lng);
     expect(card).toContain("MGRS / USNG GRID SQUARE");
     expect(card).toContain("100 km square");
+  });
+
+  it("returns four corners of the 100 km square", () => {
+    const corners = gridSquareCorners(lat, lng, 100_000);
+    expect(corners).toHaveLength(4);
+    expect(corners![0].lat).toBeLessThan(corners![2].lat);
   });
 });

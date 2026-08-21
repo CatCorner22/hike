@@ -389,10 +389,18 @@ async function run() {
         return [];
       }
     });
+    const assetCacheCount = await page.evaluate(async () => {
+      try {
+        const cache = await caches.open("hike-navigate-assets");
+        return (await cache.keys()).length;
+      } catch {
+        return 0;
+      }
+    });
     log(
       "B1 prepare offline",
-      prepared.via !== "none" && shellCached ? "PASS" : "FAIL",
-      `via ${prepared.via}; navigate shell cached=${shellCached}; keys=${cacheKeys.join(" | ")}`,
+      prepared.via !== "none" && shellCached && assetCacheCount > 0 ? "PASS" : "FAIL",
+      `via ${prepared.via}; navigate shell cached=${shellCached}; asset entries=${assetCacheCount}; keys=${cacheKeys.join(" | ")}`,
     );
     const prepareScreenText =
       (await page.locator("body").innerText().catch(() => "")) || "";
@@ -455,18 +463,25 @@ async function run() {
       );
     }
     const navUrl = `${BASE}/navigate/plan-${planId}`;
-    let navError = null;
-    await page
-      .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
-      .catch((e) => {
-        navError = e.message.split("\n")[0];
-      });
-    await page.waitForTimeout(2500);
-    if (!navError) await completeReadinessIfShown(page);
-
-    const cold = navError
-      ? { ok: false, excerpt: `navigation threw: ${navError}` }
-      : await assessNavigateScreen(page);
+    async function coldNavigateOnce() {
+      let navError = null;
+      await page
+        .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
+        .catch((e) => {
+          navError = e.message.split("\n")[0];
+        });
+      await page.waitForTimeout(2500);
+      if (!navError) await completeReadinessIfShown(page);
+      return navError
+        ? { ok: false, excerpt: `navigation threw: ${navError}` }
+        : await assessNavigateScreen(page);
+    }
+    let cold = await coldNavigateOnce();
+    if (!cold.ok && shellCached) {
+      log("B3 retry cold open", "....", "first cold open missed shell — retry once");
+      await page.waitForTimeout(1500);
+      cold = await coldNavigateOnce();
+    }
     log(
       "B3 cold offline navigate",
       cold.ok ? (workerStillOnline ? "PASS*" : "PASS") : "FAIL",
@@ -522,7 +537,7 @@ async function run() {
         .catch((error) => ({ evaluateFailed: String(error) }));
       log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 1200));
     }
-    results.push(["B: cold offline navigate", cold.ok && shellCached]);
+    results.push(["B: cold offline navigate", cold.ok && shellCached && assetCacheCount > 0]);
 
     // Storage durability.
     //

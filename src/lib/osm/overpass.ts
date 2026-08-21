@@ -63,7 +63,7 @@ async function runOverpass(query: string): Promise<OverpassResponse> {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
-          "User-Agent": "HikeApp/1.0 (bespoke hiking planner)",
+          "User-Agent": "Klandagi/1.0 (wilderness navigation app)",
         },
         body: `data=${encodeURIComponent(query)}`,
       }, 2_500);

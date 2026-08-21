@@ -1,6 +1,7 @@
 import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/safety/usng";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
+import { APP_SENT_FROM } from "@/lib/brand";
 import { formatReport, reportField } from "@/lib/safety/report-field";
 import { isValidCoordinate } from "@/lib/geo/coords";
 
@@ -103,14 +104,14 @@ export function emergencyMessage(input: {
   if (input.partyNote) lines.push(reportField(input.partyNote));
   if (fix) {
     if (source === "deadReckon") {
-      lines.push("Sent from Hike app — dead-reckon estimate, not a live GPS fix.");
+      lines.push(`${APP_SENT_FROM} — dead-reckon estimate, not a live GPS fix.`);
     } else if (source === "lastKnown" || input.stale) {
-      lines.push("Sent from Hike app — last-known coordinates, GPS not live.");
+      lines.push(`${APP_SENT_FROM} — last-known coordinates, GPS not live.`);
     } else {
-      lines.push("Sent from Hike app (offline-capable GPS).");
+      lines.push(`${APP_SENT_FROM} (offline-capable GPS).`);
     }
   } else {
-    lines.push("Sent from Hike app — no usable GPS fix on this device.");
+    lines.push(`${APP_SENT_FROM} — no usable GPS fix on this device.`);
   }
   return formatReport(lines);
 }

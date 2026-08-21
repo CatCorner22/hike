@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import { formatZulu } from "@/lib/safety/landnav";
 import { formatCoords, emergencyMessage, type PositionSource } from "@/lib/safety/emergency";
 import { formatCheckinLog, type CheckinEntry } from "@/lib/safety/checkin";
@@ -24,7 +25,7 @@ export function buildSafetyDossier(input: {
   positionSource?: PositionSource;
 }): string {
   const lines: string[] = [
-    "=== HIKE SAFETY DOSSIER ===",
+    `=== ${APP_NAME.toUpperCase()} SAFETY DOSSIER ===`,
     `Generated: ${new Date().toISOString()} (${formatZulu()})`,
     `Route: ${input.trailName}`,
     `Pack ID: ${input.packId}`,

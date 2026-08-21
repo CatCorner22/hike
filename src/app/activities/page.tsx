@@ -49,7 +49,7 @@ export default function ActivitiesPage() {
               <Card className="transition-colors hover:bg-muted/50">
                 <CardHeader>
                   <CardTitle className="text-base">
-                    {activity.name || "Hike activity"}
+                    {activity.name || "Trail activity"}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>

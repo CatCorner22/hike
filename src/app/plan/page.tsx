@@ -1,8 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { APP_NAME } from "@/lib/brand";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -48,7 +49,7 @@ export default function PlansPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Hike plans</h1>
+          <h1 className="text-2xl font-bold">{APP_NAME} plans</h1>
           <p className="text-muted-foreground">
             Organize upcoming hikes with dates, notes, and camping stops.
           </p>

@@ -7,6 +7,7 @@ describe("reportField", () => {
     expect(reportField(value)).not.toMatch(/--- RETURN ---/);
     expect(reportField(value)).not.toMatch(/Return by: 2099/);
     expect(reportField(value)).toContain("Normal trail");
+    expect(reportField("ICE Return by: 2099")).not.toMatch(/Return by:/);
   });
 
   it("removes zero-width characters", () => {
