@@ -61,14 +61,16 @@ export function distanceToTrailMeters(
 export function nearestPointOnTrail(
   point: { lat: number; lng: number },
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
-): { lat: number; lng: number; distanceMeters: number; index: number } | null {
+): { lat: number; lng: number; distanceMeters: number; index: number; alongMeters: number } | null {
   if (!isValidCoordinate(point)) return null;
   const pt = turf.point([point.lng, point.lat]);
-  let best: { lat: number; lng: number; distanceMeters: number; index: number } | null = null;
+  let best: { lat: number; lng: number; distanceMeters: number; index: number; alongMeters: number } | null = null;
   let indexOffset = 0;
+  let priorMeters = 0;
   for (const coords of geometrySegments(trail)) {
     if (coords.length < 2) continue;
-    const snapped = turf.nearestPointOnLine(turf.lineString(coords), pt, { units: "meters" });
+    const line = turf.lineString(coords);
+    const snapped = turf.nearestPointOnLine(line, pt, { units: "meters" });
     const d = snapped.properties.dist ?? Infinity;
     if (!best || d < best.distanceMeters) {
       best = {
@@ -76,11 +78,13 @@ export function nearestPointOnTrail(
         lat: snapped.geometry.coordinates[1],
         distanceMeters: d,
         index: indexOffset + (snapped.properties.index ?? 0),
+        alongMeters: priorMeters + (snapped.properties.location ?? 0),
       };
     }
     indexOffset += coords.length;
+    priorMeters += turf.length(line, { units: "meters" });
   }
-  return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0 };
+  return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0, alongMeters: Number.NaN };
 }
 
 export function computeTrackStats(

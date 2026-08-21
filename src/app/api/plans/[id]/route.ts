@@ -77,7 +77,12 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
             { status: 409 },
           );
         }
-        const values: Partial<typeof hikePlans.$inferInsert> = { updatedAt: new Date() };
+        const now = new Date();
+        const values: Partial<typeof hikePlans.$inferInsert> = {
+          updatedAt: now.getTime() <= current.updatedAt.getTime()
+            ? new Date(current.updatedAt.getTime() + 1)
+            : now,
+        };
         if ("name" in body) values.name = body.name;
         if ("trailId" in body) values.trailId = body.trailId;
         if ("plannedDate" in body) values.plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;

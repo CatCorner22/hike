@@ -1,6 +1,23 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
 import type { PackWeather } from "@/lib/offline/pack-weather";
+import {
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
+import {
+  validHazardBrief,
+  type RouteHazardBrief,
+} from "@/lib/offline/hazard-brief";
+import {
+  validBailoutRoutes,
+  type PreparedBailoutRoute,
+} from "@/lib/offline/bailout-routes";
+import {
+  buildTerrainCorridorSpec,
+  validTerrainCorridor,
+  type TerrainCorridorSpec,
+} from "@/lib/offline/terrain-corridor";
 
 /**
  * Offline packs have an intentionally conservative ceiling.  A route above this
@@ -35,6 +52,26 @@ export interface RoutePack {
   cachedAt: string;
   version: number;
   weather?: PackWeather;
+  /**
+   * Planned offline terrain corridor. Optional on legacy packs so they stay
+   * navigable; prepare-offline writes it on every new save.
+   */
+  corridor?: TerrainCorridorSpec;
+  /**
+   * OSM vector context for the planned corridor. Optional — prepare stores it
+   * when Overpass answers; legacy packs and failed fetches stay navigable.
+   */
+  corridorFeatures?: CorridorFeatureSet;
+  /**
+   * Along-route forecast snapshot at prepare time. Optional — prepare stores it
+   * when Open-Meteo answers; legacy packs and failed fetches stay navigable.
+   */
+  hazardBrief?: RouteHazardBrief;
+  /**
+   * User-supplied bailout tracks that already meet this route. Optional —
+   * visiting the plan page must not invent connectors or drop a navigable pack.
+   */
+  bailoutRoutes?: PreparedBailoutRoute[];
 }
 
 interface RoutePackAlias {
@@ -187,6 +224,21 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
     return "Saved route weather snapshot is invalid.";
   }
+  if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id, pack.geometry)) {
+    return "Saved route terrain corridor is invalid.";
+  }
+  if (pack.corridorFeatures !== undefined) {
+    if (!pack.corridor) return "Saved route corridor features are missing a corridor record.";
+    if (!validCorridorFeatures(pack.corridorFeatures, pack.id, pack.corridor.bboxes)) {
+      return "Saved route corridor features are invalid.";
+    }
+  }
+  if (pack.hazardBrief !== undefined && !validHazardBrief(pack.hazardBrief, pack.id, pack.bbox)) {
+    return "Saved route hazard briefing is invalid.";
+  }
+  if (pack.bailoutRoutes !== undefined && !validBailoutRoutes(pack.bailoutRoutes, pack.id, pack.geometry)) {
+    return "Saved route bailout tracks are invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -274,6 +326,10 @@ export function buildRoutePack(input: {
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   weather?: PackWeather;
+  corridor?: TerrainCorridorSpec;
+  corridorFeatures?: CorridorFeatureSet;
+  hazardBrief?: RouteHazardBrief;
+  bailoutRoutes?: PreparedBailoutRoute[];
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -296,6 +352,10 @@ export function buildRoutePack(input: {
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
     weather: input.weather,
+    corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
+    corridorFeatures: input.corridorFeatures,
+    hazardBrief: input.hazardBrief,
+    bailoutRoutes: input.bailoutRoutes,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);

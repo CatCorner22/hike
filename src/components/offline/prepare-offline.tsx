@@ -3,15 +3,50 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
-import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { persistRoutePack, withNetworkTimeout } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
-import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import {
+  describeCorridorFeatures,
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
+import {
+  describeHazardBrief,
+  fetchRouteHazardBrief,
+  packWeatherFromHazardBrief,
+  validHazardBrief,
+} from "@/lib/offline/hazard-brief";
+import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
+import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
   OfflineReadiness,
   formatOfflineRouteStorageError,
 } from "@/components/offline/offline-readiness";
+
+async function requestCorridorFeatures(
+  routeId: string,
+  bboxes: Array<[number, number, number, number]>,
+): Promise<CorridorFeatureSet | null> {
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => fetch("/api/corridor/features", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, bboxes }),
+        signal,
+      }),
+      12_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { features?: unknown };
+    return validCorridorFeatures(data.features, routeId, bboxes) ? data.features : null;
+  } catch {
+    return null;
+  }
+}
 
 interface PrepareOfflineProps {
   packId: string;
@@ -97,7 +132,15 @@ export function PrepareOffline({
       const center = bbox
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
-      const weather = await fetchPackWeather(center.lat, center.lng);
+      const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
+      const [corridorFeatures, hazardBrief] = await Promise.all([
+        requestCorridorFeatures(packId, corridor.bboxes),
+        fetchRouteHazardBrief({ routeId: packId, geometry }),
+      ]);
+      const weather = hazardBrief
+        ? packWeatherFromHazardBrief(hazardBrief)
+        : await fetchPackWeather(center.lat, center.lng);
+      const existing = await getRoutePack(packId);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -105,9 +148,23 @@ export function PrepareOffline({
         geometry,
         bbox,
         elevationProfile,
-        weather: weather ?? undefined,
+        weather: weather ?? existing?.weather,
+        corridor,
+        corridorFeatures: corridorFeatures ?? (
+          existing?.corridorFeatures && validCorridorFeatures(existing.corridorFeatures, packId, corridor.bboxes)
+            ? existing.corridorFeatures
+            : undefined
+        ),
+        hazardBrief: hazardBrief ?? (
+          existing?.hazardBrief && validHazardBrief(existing.hazardBrief, packId, bbox ?? existing.bbox)
+            ? existing.hazardBrief
+            : undefined
+        ),
+        bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
+          ? existing.bailoutRoutes
+          : undefined,
       });
-      await persistRoutePack(pack);
+      const saved = await persistRoutePack(pack);
       if (!await refreshReady()) {
         throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
       }
@@ -127,10 +184,19 @@ export function PrepareOffline({
       const weatherNote = weather
         ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
         : "Type temp/wind in Safety if you want field weather.";
+      const corridorNote = saved.corridor
+        ? describePersistedCorridor(saved.corridor)
+        : "Terrain corridor was not recorded on this pack.";
+      const featureNote = saved.corridorFeatures
+        ? describeCorridorFeatures(saved.corridorFeatures)
+        : "OSM corridor features were not stored (Overpass unavailable, or the bbox is too large for one snapshot).";
+      const hazardNote = saved.hazardBrief
+        ? describeHazardBrief(saved.hazardBrief)
+        : "Route forecast snapshot was not stored (Open-Meteo unavailable).";
       setMessage(
         warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`,
+          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`
+          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`,
       );
     } catch (error) {
       setReady(false);

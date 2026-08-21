@@ -7,6 +7,8 @@ import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain } from "lucid
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CompassHud } from "@/components/navigate/compass-hud";
+import { NextDecisionCard } from "@/components/navigate/next-decision-card";
+import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
 import { RescueCard } from "@/components/navigate/rescue-card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
@@ -45,7 +47,11 @@ import {
   type RouteProgressCache,
 } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { bailoutRouteCandidates } from "@/lib/offline/bailout-routes";
+import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { hikeReadiness } from "@/lib/safety/readiness";
+import { nextDecisionPoint } from "@/lib/safety/decision-support";
+import { bailoutDecisionPoints } from "@/lib/safety/bailout";
 import { wayfindingAssessment } from "@/lib/safety/wayfinding";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
@@ -284,6 +290,20 @@ export default function NavigatePage() {
   }, [gpsDenied, deniedAnchor, deniedPaces, deniedPaceLen]);
 
   const trusted = gpsDenied ? Boolean(drFix) : gpsTrusted;
+  const corridorDecisions = useMemo(() => {
+    if (loadState.status !== "ready") return [];
+    return bailoutDecisionPoints([
+      ...bailoutRouteCandidates(loadState.pack.bailoutRoutes),
+      ...deriveCorridorBailouts({
+        geometry: loadState.pack.geometry,
+        features: loadState.pack.corridorFeatures,
+      }),
+    ]);
+  }, [loadState]);
+  const nextDecision = useMemo(() => {
+    const traveled = trusted && progress ? progress.traveledMeters : 0;
+    return nextDecisionPoint(corridorDecisions, traveled);
+  }, [corridorDecisions, trusted, progress]);
   const navFix = gpsDenied && drFix ? drFix : gps.fix;
   const positionSource: PositionSource =
     gpsDenied && drFix ? "deadReckon" : gpsTrusted ? "gps" : "lastKnown";
@@ -956,6 +976,8 @@ export default function NavigatePage() {
         {beaconOn && <SosBeacon onClose={() => setBeaconOn(false)} />}
         <SafetyNavMap
           geometry={pack.geometry}
+          corridorFeatures={pack.corridorFeatures ?? null}
+          bailoutRoutes={pack.bailoutRoutes ?? null}
           user={user}
           nearest={
             backtrackOn
@@ -1145,6 +1167,19 @@ export default function NavigatePage() {
       </div>
 
       <div className="shrink-0 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <HazardBriefCard
+          compact
+          brief={loadState.status === "ready" ? loadState.pack.hazardBrief : null}
+        />
+        <NextDecisionCard
+          point={nextDecision}
+          aheadMeters={
+            nextDecision && trusted && progress
+              ? nextDecision.distanceMeters - progress.traveledMeters
+              : nextDecision?.distanceMeters
+          }
+          alongRouteOnly={!(trusted && progress)}
+        />
         <div className="mb-2 flex items-center justify-between gap-2">
           <CompassHud
             headingTrue={navHeading}

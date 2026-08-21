@@ -186,6 +186,133 @@ describe("route pack integrity boundaries", () => {
     expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
   });
 
+  it("persists corridor OSM features and still accepts packs without them", async () => {
+    const { parseCorridorOverpassResponse } = await import("@/lib/osm/corridor-overpass");
+    const pack = buildRoutePack({ id: "plan-features", name: "Feature route", geometry });
+    const features = parseCorridorOverpassResponse({
+      routeId: "plan-features",
+      bboxes: pack.corridor!.bboxes,
+      elements: [{
+        type: "node",
+        id: 99,
+        tags: { amenity: "shelter", name: "Hut" },
+        lat: geometry.coordinates[0][1],
+        lon: geometry.coordinates[0][0],
+      }],
+    });
+    const withFeatures = buildRoutePack({
+      id: "plan-features",
+      name: "Feature route",
+      geometry,
+      corridor: pack.corridor,
+      corridorFeatures: features,
+    });
+    await saveRoutePack(withFeatures);
+    const loaded = await getRoutePack("plan-features");
+    expect(loaded?.corridorFeatures?.featureCount).toBe(1);
+    expect(validateRoutePack({ ...withFeatures, corridorFeatures: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withFeatures,
+      corridorFeatures: { ...features, routeId: "someone-else" },
+    })).toContain("corridor features");
+  });
+
+  it("persists a hazard briefing and still accepts packs without one", async () => {
+    const { buildHazardBrief } = await import("@/lib/offline/hazard-brief");
+    const pack = buildRoutePack({ id: "plan-hazard", name: "Hazard route", geometry });
+    const brief = buildHazardBrief({
+      routeId: "plan-hazard",
+      samples: [{
+        distanceMeters: 0,
+        lat: geometry.coordinates[0][1],
+        lng: geometry.coordinates[0][0],
+        hours: [{
+          time: "2026-08-21T12:00",
+          tempC: 18,
+          rhPct: 40,
+          precipMm: 0,
+          precipProb: 10,
+          windKph: 8,
+          gustKph: 12,
+          weatherCode: 1,
+        }],
+      }],
+      now: Date.now() - 60_000,
+    });
+    const withBrief = buildRoutePack({
+      id: "plan-hazard",
+      name: "Hazard route",
+      geometry,
+      hazardBrief: brief,
+    });
+    await saveRoutePack(withBrief);
+    const loaded = await getRoutePack("plan-hazard");
+    expect(loaded?.hazardBrief?.samples).toHaveLength(1);
+    expect(validateRoutePack({ ...withBrief, hazardBrief: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, routeId: "someone-else" },
+    })).toContain("hazard briefing");
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, disclaimer: "Live weather. Safe to go." },
+    })).toContain("hazard briefing");
+  });
+
+  it("persists user-supplied bailout tracks and still accepts packs without them", async () => {
+    const { prepareBailoutRoute } = await import("@/lib/offline/bailout-routes");
+    const pack = buildRoutePack({ id: "plan-exit", name: "Exit route", geometry });
+    const prepared = prepareBailoutRoute({
+      routeId: "plan-exit",
+      name: "Spur",
+      geometry: {
+        type: "LineString",
+        coordinates: [geometry.coordinates[0], [geometry.coordinates[0][0], geometry.coordinates[0][1] + 0.01]],
+      },
+      main: geometry,
+    });
+    expect("route" in prepared).toBe(true);
+    if (!("route" in prepared)) return;
+    const withRoutes = buildRoutePack({
+      id: "plan-exit",
+      name: "Exit route",
+      geometry,
+      bailoutRoutes: [prepared.route],
+    });
+    await saveRoutePack(withRoutes);
+    const loaded = await getRoutePack("plan-exit");
+    expect(loaded?.bailoutRoutes).toHaveLength(1);
+    expect(validateRoutePack({ ...withRoutes, bailoutRoutes: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withRoutes,
+      bailoutRoutes: [{ ...prepared.route, routeId: "someone-else" }],
+    })).toContain("bailout tracks");
+  });
+
+  it("persists a terrain corridor and still accepts legacy packs without one", async () => {
+    const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
+    expect(pack.corridor?.routeId).toBe("plan-corridor");
+    expect(pack.corridor?.bufferMeters).toBeGreaterThan(0);
+    await saveRoutePack(pack);
+    const loaded = await getRoutePack("plan-corridor");
+    expect(loaded?.corridor?.routeId).toBe("plan-corridor");
+    expect(loaded?.corridor?.layers).toContain("hillshade");
+
+    expect(validateRoutePack({ ...pack, corridor: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, routeId: "someone-elses-trail" },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bufferMeters: 50_000 },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bboxes: [[0, 0, 0, 0]] },
+    })).toContain("terrain corridor");
+  });
+
   it("aborts the payload transaction when an alias write throws synchronously", async () => {
     const original = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function patchedPut(this: IDBObjectStore, value: unknown) {

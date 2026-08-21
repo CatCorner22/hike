@@ -13,7 +13,9 @@ import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { PreDeparturePanel } from "@/components/offline/pre-departure-panel";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
-import { packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
+import { BailoutRoutePanel } from "@/components/offline/bailout-route-panel";
+import { enrichRoutePack, packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
+import { getRoutePack } from "@/lib/offline/route-pack";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { httpsUrl } from "@/lib/urls";
 import { Search, Trash2 } from "lucide-react";
@@ -84,7 +86,8 @@ export default function PlanDetailPage() {
             const built = packFromPlanApi(`plan-${planId}`, p, tr);
             if (built) {
               try {
-                await persistRoutePack(built);
+                const existing = await getRoutePack(built.id);
+                await persistRoutePack(enrichRoutePack(built, existing));
               } catch {
                 /* Navigate stays gated until a valid pack is on device */
               }
@@ -94,7 +97,8 @@ export default function PlanDetailPage() {
           const custom = packFromPlanApi(`plan-${planId}`, p, null);
           if (custom) {
             try {
-              await persistRoutePack(custom);
+              const existing = await getRoutePack(custom.id);
+              await persistRoutePack(enrichRoutePack(custom, existing));
             } catch {
               /* Navigate stays gated until a valid pack is on device */
             }
@@ -144,7 +148,8 @@ export default function PlanDetailPage() {
         );
         if (imported) {
           try {
-            await persistRoutePack(imported);
+            const existing = await getRoutePack(imported.id);
+            await persistRoutePack(enrichRoutePack(imported, existing));
           } catch {
             /* invalid GPX geometry is rejected */
           }
@@ -302,6 +307,12 @@ export default function PlanDetailPage() {
           </ul>
         )}
       </div>
+
+      {geometry && (
+        <div className="space-y-3 rounded-xl border p-4">
+          <BailoutRoutePanel packId={`plan-${plan.id}`} name={plan.name} geometry={geometry} />
+        </div>
+      )}
 
       <div>
         <h2 className="mb-2 text-lg font-semibold">Record activity</h2>

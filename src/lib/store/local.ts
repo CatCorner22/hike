@@ -252,6 +252,14 @@ export async function createPlan(input: {
   });
 }
 
+/** OCC tokens must move even when two writes land in the same millisecond. */
+export function nextIsoTimestamp(previous?: string): string {
+  const now = Date.now();
+  const prior = previous ? Date.parse(previous) : Number.NaN;
+  const next = Number.isFinite(prior) && now <= prior ? prior + 1 : now;
+  return new Date(next).toISOString();
+}
+
 export async function updatePlan(id: string, ownerId: string, updates: Partial<StoredPlan>) {
   return mutateStore((store) => {
     const index = store.plans.findIndex((p) => p.id === id && p.ownerId === ownerId);
@@ -261,7 +269,7 @@ export async function updatePlan(id: string, ownerId: string, updates: Partial<S
       ...updates,
       id,
       ownerId,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nextIsoTimestamp(store.plans[index].updatedAt),
     };
     return store.plans[index];
   });

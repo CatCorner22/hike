@@ -11,12 +11,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { formatDistance, lineLengthMeters, nearestPointOnTrail } from "@/lib/geo";
-import { sampleRouteByDistance } from "@/lib/offline/route-hazard";
-import { buildTerrainCorridorSpec, corridorCoverageLabel } from "@/lib/offline/terrain-corridor";
-import { cumulativeDistancesForGeometry } from "@/lib/offline/route-pack";
+import { BailoutRoutePanel } from "@/components/offline/bailout-route-panel";
+import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
+import { formatDistance, lineLengthMeters } from "@/lib/geo";
+import { CORRIDOR_DECISION_DISCLAIMER, deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
+import { selectHazardSamplePoints, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
+import { getRoutePack } from "@/lib/offline/route-pack";
+import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
-import { bailoutDecisionPoints, type BailoutCandidate } from "@/lib/safety/bailout";
+import { bailoutRouteCandidates, type PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
+import { bailoutDecisionPoints, explicitBailoutCandidates } from "@/lib/safety/bailout";
 
 interface Waypoint { name: string; lat: number; lng: number }
 
@@ -32,28 +36,6 @@ function firstCoordinate(geometry: GeoJSON.LineString | GeoJSON.MultiLineString)
   return geometry.type === "LineString"
     ? geometry.coordinates[0] ?? null
     : geometry.coordinates.find((line) => line.length)?.[0] ?? null;
-}
-
-function explicitBailouts(
-  waypoints: Waypoint[],
-  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
-): BailoutCandidate[] {
-  const cumulative = cumulativeDistancesForGeometry(geometry);
-  return waypoints
-    .filter((waypoint) => /^(bailout|exit):/i.test(waypoint.name.trim()))
-    .flatMap<BailoutCandidate>((waypoint, index) => {
-      const snapped = nearestPointOnTrail(waypoint, geometry);
-      if (!snapped) return [];
-      return [{
-        id: `waypoint-bailout-${index}`,
-        name: waypoint.name.replace(/^(bailout|exit):\s*/i, "") || waypoint.name,
-        kind: "custom" as const,
-        lat: waypoint.lat,
-        lng: waypoint.lng,
-        routeDistanceMeters: cumulative[Math.min(snapped.index, Math.max(0, cumulative.length - 1))] ?? 0,
-        note: "User-marked exit candidate. Verify the actual mapped path from the planned route before relying on it.",
-      }];
-    });
 }
 
 function localDeparture(plannedDate: string | null | undefined, time: string): Date | null {
@@ -74,6 +56,9 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     partySize: 1,
   });
   const [returnAt, setReturnAt] = useState<string | null>(null);
+  const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
+  const [hazardBrief, setHazardBrief] = useState<RouteHazardBrief | null>(null);
+  const [storedBailouts, setStoredBailouts] = useState<PreparedBailoutRoute[]>([]);
 
   useEffect(() => {
     void (async () => {
@@ -83,10 +68,31 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     })();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getRoutePack(`plan-${planId}`).then((pack) => {
+      if (cancelled) return;
+      setOsmBailouts(deriveCorridorBailouts({
+        geometry,
+        features: pack?.corridorFeatures,
+      }));
+      setHazardBrief(pack?.hazardBrief ?? null);
+      setStoredBailouts(pack?.bailoutRoutes ?? []);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [planId, geometry]);
+
   const routeLength = useMemo(() => lineLengthMeters(geometry), [geometry]);
   const corridor = useMemo(() => buildTerrainCorridorSpec({ routeId: `plan-${planId}`, geometry }), [planId, geometry]);
-  const hazardSamples = useMemo(() => sampleRouteByDistance(geometry, 5000), [geometry]);
-  const bailouts = useMemo(() => bailoutDecisionPoints(explicitBailouts(waypoints ?? [], geometry)), [waypoints, geometry]);
+  const hazardSamples = useMemo(() => selectHazardSamplePoints(geometry), [geometry]);
+  const userBailouts = useMemo(() => explicitBailoutCandidates(waypoints ?? [], geometry), [waypoints, geometry]);
+  const gpxBailouts = useMemo(() => bailoutRouteCandidates(storedBailouts), [storedBailouts]);
+  const bailouts = useMemo(
+    () => bailoutDecisionPoints([...userBailouts, ...gpxBailouts, ...osmBailouts]),
+    [userBailouts, gpxBailouts, osmBailouts],
+  );
 
   const daylight = useMemo(() => {
     const departure = localDeparture(plannedDate, departureTime);
@@ -117,14 +123,29 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Terrain target</p>
             <p className="mt-1 text-sm font-medium">{corridorCoverageLabel(corridor)}</p>
-            <p className="text-xs text-muted-foreground">Manifest only; provider-backed terrain download is not shipped yet.</p>
+            <p className="text-xs text-muted-foreground">
+              {corridorSizeLabel(corridor)} · bbox estimate. Prepare stores this spec plus nearby OSM vectors when Overpass answers. Terrain tiles are not downloaded.
+            </p>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Hazard coverage</p>
-            <p className="mt-1 text-lg font-semibold">{hazardSamples.length} sample points</p>
-            <p className="text-xs text-muted-foreground">Spaced by route distance, not GPX point density.</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Forecast samples</p>
+            <p className="mt-1 text-lg font-semibold">
+              {hazardBrief ? `${hazardBrief.samples.length} stored` : `${hazardSamples.length} planned`}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {hazardBrief
+                ? "Along-route Open-Meteo snapshot from Prepare. Not current weather."
+                : "Prepare offline to store a 24-hour forecast snapshot at these route-distance samples."}
+            </p>
           </div>
         </div>
+
+        {hazardBrief && (
+          <>
+            <Separator />
+            <HazardBriefCard brief={hazardBrief} />
+          </>
+        )}
 
         <Separator />
 
@@ -206,15 +227,22 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
                   <p className="mt-1 text-xs text-muted-foreground">{point.note}</p>
                 </div>
               ))}
-              <p className="text-xs text-muted-foreground">Only waypoints explicitly named “Bailout:” or “Exit:” appear here. {APP_NAME} does not infer escape routes from ordinary waypoints.</p>
+              <p className="text-xs text-muted-foreground">
+                {osmBailouts.length ? `${CORRIDOR_DECISION_DISCLAIMER} ` : ""}
+                Named “Bailout:” or “Exit:” waypoints stay user-marked. User-supplied GPX is stored only if it meets the route. {APP_NAME} does not invent a straight-line shortcut.
+              </p>
             </div>
           ) : (
             <Alert>
               <AlertTriangle />
-              <AlertTitle>No explicit bailout candidates</AlertTitle>
-              <AlertDescription>Add a waypoint beginning with “Bailout:” or “Exit:” only after you have verified a real trail/road exit. {APP_NAME} will not invent a straight-line shortcut.</AlertDescription>
+              <AlertTitle>No bailout candidates yet</AlertTitle>
+              <AlertDescription>
+                Add a waypoint beginning with “Bailout:” or “Exit:” after you have verified a real trail/road exit,
+                or import a bailout GPX that already meets the route. Prepare offline to load OSM features that actually meet the route. {APP_NAME} will not invent a straight-line shortcut.
+              </AlertDescription>
             </Alert>
           )}
+          <BailoutRoutePanel packId={`plan-${planId}`} name={trailName || `Plan ${planId.slice(0, 8)}`} geometry={geometry} />
         </div>
 
         <Separator />
@@ -238,7 +266,9 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         <div className="space-y-2">
           <h3 className="font-medium">Planned offline context layers</h3>
           <div className="flex flex-wrap gap-2">{corridor.layers.map((layer) => <Badge key={layer} variant="secondary">{layer}</Badge>)}</div>
-          <p className="text-xs text-muted-foreground">The current production fallback remains the route-only Safety Map. These layers become additive when an offline terrain provider is integrated.</p>
+          <p className="text-xs text-muted-foreground">
+            {corridorSizeLabel(corridor)} for these layers (bounding-box estimate). Vector layers (trails, roads, water, shelters, campsites, landmarks) are fetched from OpenStreetMap when you prepare. Hillshade and contours stay as size estimates only — tiles are not downloaded. The Safety Map remains the guaranteed fallback.
+          </p>
         </div>
       </CardContent>
     </Card>

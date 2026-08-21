@@ -44,8 +44,21 @@ afterEach(() => {
 
 describe("point sync failure handling", () => {
   it("keeps recording beyond the old 2,000-point global cutoff when storage is available", async () => {
-    await queue(2_001);
-    expect(await getPendingPointCount()).toBe(2_001);
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const count = vi.spyOn(db, "countFromIndex").mockImplementation(async (_store, index) => {
+      // Pretend the device already holds the retired 2,000-point global cutoff.
+      return index === "by-synced" ? 2_000 : 0;
+    });
+
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37.7,
+      lng: -119.6,
+      recordedAt: new Date(1_700_000_000_000),
+    })).resolves.toBeUndefined();
+    count.mockRestore();
+    expect(await getPendingPointCount()).toBe(1);
   });
 
   it.each([
