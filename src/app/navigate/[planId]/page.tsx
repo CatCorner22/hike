@@ -47,6 +47,7 @@ import {
   type RouteProgressCache,
 } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { bailoutRouteCandidates } from "@/lib/offline/bailout-routes";
 import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { hikeReadiness } from "@/lib/safety/readiness";
 import { nextDecisionPoint } from "@/lib/safety/decision-support";
@@ -291,10 +292,13 @@ export default function NavigatePage() {
   const trusted = gpsDenied ? Boolean(drFix) : gpsTrusted;
   const corridorDecisions = useMemo(() => {
     if (loadState.status !== "ready") return [];
-    return bailoutDecisionPoints(deriveCorridorBailouts({
-      geometry: loadState.pack.geometry,
-      features: loadState.pack.corridorFeatures,
-    }));
+    return bailoutDecisionPoints([
+      ...bailoutRouteCandidates(loadState.pack.bailoutRoutes),
+      ...deriveCorridorBailouts({
+        geometry: loadState.pack.geometry,
+        features: loadState.pack.corridorFeatures,
+      }),
+    ]);
   }, [loadState]);
   const nextDecision = useMemo(() => {
     const traveled = trusted && progress ? progress.traveledMeters : 0;
@@ -973,6 +977,7 @@ export default function NavigatePage() {
         <SafetyNavMap
           geometry={pack.geometry}
           corridorFeatures={pack.corridorFeatures ?? null}
+          bailoutRoutes={pack.bailoutRoutes ?? null}
           user={user}
           nearest={
             backtrackOn

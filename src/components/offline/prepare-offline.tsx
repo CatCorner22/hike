@@ -14,8 +14,10 @@ import {
   describeHazardBrief,
   fetchRouteHazardBrief,
   packWeatherFromHazardBrief,
+  validHazardBrief,
 } from "@/lib/offline/hazard-brief";
-import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
+import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
@@ -138,6 +140,7 @@ export function PrepareOffline({
       const weather = hazardBrief
         ? packWeatherFromHazardBrief(hazardBrief)
         : await fetchPackWeather(center.lat, center.lng);
+      const existing = await getRoutePack(packId);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -145,10 +148,21 @@ export function PrepareOffline({
         geometry,
         bbox,
         elevationProfile,
-        weather: weather ?? undefined,
+        weather: weather ?? existing?.weather,
         corridor,
-        corridorFeatures: corridorFeatures ?? undefined,
-        hazardBrief: hazardBrief ?? undefined,
+        corridorFeatures: corridorFeatures ?? (
+          existing?.corridorFeatures && validCorridorFeatures(existing.corridorFeatures, packId, corridor.bboxes)
+            ? existing.corridorFeatures
+            : undefined
+        ),
+        hazardBrief: hazardBrief ?? (
+          existing?.hazardBrief && validHazardBrief(existing.hazardBrief, packId, bbox ?? existing.bbox)
+            ? existing.hazardBrief
+            : undefined
+        ),
+        bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
+          ? existing.bailoutRoutes
+          : undefined,
       });
       const saved = await persistRoutePack(pack);
       if (!await refreshReady()) {

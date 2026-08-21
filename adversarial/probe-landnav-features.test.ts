@@ -8,6 +8,7 @@ import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
 import { formatGuardianMessage, GUARDIAN_NO_DISTRESS } from "@/lib/safety/guardian-message";
 import { buildRoutePack, validateRoutePack } from "@/lib/offline/route-pack";
 import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
+import { parseBailoutGpx } from "@/lib/offline/bailout-routes";
 import { buildHazardBrief } from "@/lib/offline/hazard-brief";
 import { parseCorridorOverpassResponse } from "@/lib/osm/corridor-overpass";
 import { backupParseError, parseRoutePackBackup, serializeRoutePackBackup } from "@/lib/offline/pack-backup";
@@ -133,6 +134,17 @@ describe("landnav feature probes", () => {
         samples: [{ ...brief.samples[0], lat: 51.5, lng: -0.1 }],
       },
     })).toContain("hazard briefing");
+  });
+
+  it("does not store a distant GPX as a bailout connector", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.7]] };
+    const result = parseBailoutGpx({
+      routeId: "plan-honest",
+      name: "Elsewhere.gpx",
+      gpx: `<gpx><trk><trkseg><trkpt lat="51.5" lon="-0.12"></trkpt><trkpt lat="51.51" lon="-0.11"></trkpt></trkseg></trk></gpx>`,
+      main: geometry,
+    });
+    expect(result).toMatchObject({ error: expect.stringMatching(/will not invent a connector/i) });
   });
 
   it("does not promote a distant OSM feature into a stored exit path", () => {

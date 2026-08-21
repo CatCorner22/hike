@@ -10,6 +10,10 @@ import {
   type RouteHazardBrief,
 } from "@/lib/offline/hazard-brief";
 import {
+  validBailoutRoutes,
+  type PreparedBailoutRoute,
+} from "@/lib/offline/bailout-routes";
+import {
   buildTerrainCorridorSpec,
   validTerrainCorridor,
   type TerrainCorridorSpec,
@@ -63,6 +67,11 @@ export interface RoutePack {
    * when Open-Meteo answers; legacy packs and failed fetches stay navigable.
    */
   hazardBrief?: RouteHazardBrief;
+  /**
+   * User-supplied bailout tracks that already meet this route. Optional —
+   * visiting the plan page must not invent connectors or drop a navigable pack.
+   */
+  bailoutRoutes?: PreparedBailoutRoute[];
 }
 
 interface RoutePackAlias {
@@ -227,6 +236,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.hazardBrief !== undefined && !validHazardBrief(pack.hazardBrief, pack.id, pack.bbox)) {
     return "Saved route hazard briefing is invalid.";
   }
+  if (pack.bailoutRoutes !== undefined && !validBailoutRoutes(pack.bailoutRoutes, pack.id, pack.geometry)) {
+    return "Saved route bailout tracks are invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -317,6 +329,7 @@ export function buildRoutePack(input: {
   corridor?: TerrainCorridorSpec;
   corridorFeatures?: CorridorFeatureSet;
   hazardBrief?: RouteHazardBrief;
+  bailoutRoutes?: PreparedBailoutRoute[];
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -342,6 +355,7 @@ export function buildRoutePack(input: {
     corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
     corridorFeatures: input.corridorFeatures,
     hazardBrief: input.hazardBrief,
+    bailoutRoutes: input.bailoutRoutes,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);

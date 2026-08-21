@@ -5,6 +5,10 @@ import {
   saveRoutePack,
   type RoutePack,
 } from "@/lib/offline/route-pack";
+import { validCorridorFeatures } from "@/lib/offline/corridor-features";
+import { validHazardBrief } from "@/lib/offline/hazard-brief";
+import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
+import { validTerrainCorridor } from "@/lib/offline/terrain-corridor";
 import { isValidGeometry } from "@/lib/geo/navigation";
 
 function sleep(ms: number) {
@@ -30,6 +34,33 @@ export async function loadCachedRoutePack(
   }
 
   return null;
+}
+
+/** Keep Prepare extras when a plan/trail page rebuilds a pack from the server. */
+export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): RoutePack {
+  if (!existing) return base;
+  const corridor = existing.corridor && validTerrainCorridor(existing.corridor, base.id, base.geometry)
+    ? existing.corridor
+    : undefined;
+  const keepFeatures = (features: RoutePack["corridorFeatures"]) =>
+    corridor && features && validCorridorFeatures(features, base.id, corridor.bboxes) ? features : undefined;
+  const keepBrief = (brief: RoutePack["hazardBrief"]) =>
+    brief && validHazardBrief(brief, base.id, base.bbox) ? brief : undefined;
+  const keepBailouts = (routes: RoutePack["bailoutRoutes"]) =>
+    routes && validBailoutRoutes(routes, base.id, base.geometry) ? routes : undefined;
+  return buildRoutePack({
+    id: base.id,
+    aliases: base.aliases,
+    name: base.name,
+    geometry: base.geometry,
+    bbox: base.bbox,
+    elevationProfile: base.elevationProfile,
+    weather: base.weather ?? existing.weather,
+    corridor: corridor ?? base.corridor,
+    corridorFeatures: keepFeatures(base.corridorFeatures) ?? keepFeatures(existing.corridorFeatures),
+    hazardBrief: keepBrief(base.hazardBrief) ?? keepBrief(existing.hazardBrief),
+    bailoutRoutes: keepBailouts(base.bailoutRoutes) ?? keepBailouts(existing.bailoutRoutes),
+  });
 }
 
 export async function persistRoutePack(pack: RoutePack): Promise<RoutePack> {

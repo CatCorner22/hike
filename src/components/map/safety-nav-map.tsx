@@ -7,6 +7,7 @@ import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 import { gridSquareBounds, gridSquareCorners } from "@/lib/safety/mgrs-grid";
 import type { CorridorFeatureSet } from "@/lib/offline/corridor-features";
+import type { PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -31,6 +32,7 @@ interface SafetyNavMapProps {
    */
   topInsetPx?: number;
   corridorFeatures?: CorridorFeatureSet | null;
+  bailoutRoutes?: PreparedBailoutRoute[] | null;
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -70,6 +72,7 @@ export function SafetyNavMap({
   uncertaintyM,
   topInsetPx = 0,
   corridorFeatures = null,
+  bailoutRoutes = null,
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
@@ -258,6 +261,27 @@ export function SafetyNavMap({
           }
         }
       }
+      if (bailoutRoutes?.length) {
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = nightMode === "red" ? "#fb923c" : nightMode === "nvg" ? "#fde68a" : "#ea580c";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        for (const route of bailoutRoutes) {
+          const tracks = route.geometry.type === "LineString" ? [route.geometry.coordinates] : route.geometry.coordinates;
+          for (const line of tracks) {
+            if (line.length < 2) continue;
+            ctx.beginPath();
+            line.forEach(([lng, lat], index) => {
+              const p = toPx(lng, lat);
+              if (index === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            });
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
       ctx.strokeStyle = nightMode === "red" ? "#f87171" : "#16a34a";
       ctx.lineWidth = 5;
       for (const line of lines) {
@@ -444,7 +468,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
+  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

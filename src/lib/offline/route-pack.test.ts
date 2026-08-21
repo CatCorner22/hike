@@ -259,6 +259,36 @@ describe("route pack integrity boundaries", () => {
     })).toContain("hazard briefing");
   });
 
+  it("persists user-supplied bailout tracks and still accepts packs without them", async () => {
+    const { prepareBailoutRoute } = await import("@/lib/offline/bailout-routes");
+    const pack = buildRoutePack({ id: "plan-exit", name: "Exit route", geometry });
+    const prepared = prepareBailoutRoute({
+      routeId: "plan-exit",
+      name: "Spur",
+      geometry: {
+        type: "LineString",
+        coordinates: [geometry.coordinates[0], [geometry.coordinates[0][0], geometry.coordinates[0][1] + 0.01]],
+      },
+      main: geometry,
+    });
+    expect("route" in prepared).toBe(true);
+    if (!("route" in prepared)) return;
+    const withRoutes = buildRoutePack({
+      id: "plan-exit",
+      name: "Exit route",
+      geometry,
+      bailoutRoutes: [prepared.route],
+    });
+    await saveRoutePack(withRoutes);
+    const loaded = await getRoutePack("plan-exit");
+    expect(loaded?.bailoutRoutes).toHaveLength(1);
+    expect(validateRoutePack({ ...withRoutes, bailoutRoutes: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withRoutes,
+      bailoutRoutes: [{ ...prepared.route, routeId: "someone-else" }],
+    })).toContain("bailout tracks");
+  });
+
   it("persists a terrain corridor and still accepts legacy packs without one", async () => {
     const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
     expect(pack.corridor?.routeId).toBe("plan-corridor");

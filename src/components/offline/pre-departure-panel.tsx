@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { BailoutRoutePanel } from "@/components/offline/bailout-route-panel";
 import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
 import { formatDistance, lineLengthMeters } from "@/lib/geo";
 import { CORRIDOR_DECISION_DISCLAIMER, deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
@@ -18,6 +19,7 @@ import { selectHazardSamplePoints, type RouteHazardBrief } from "@/lib/offline/h
 import { getRoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
+import { bailoutRouteCandidates, type PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
 import { bailoutDecisionPoints, explicitBailoutCandidates } from "@/lib/safety/bailout";
 
 interface Waypoint { name: string; lat: number; lng: number }
@@ -56,6 +58,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
   const [returnAt, setReturnAt] = useState<string | null>(null);
   const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
   const [hazardBrief, setHazardBrief] = useState<RouteHazardBrief | null>(null);
+  const [storedBailouts, setStoredBailouts] = useState<PreparedBailoutRoute[]>([]);
 
   useEffect(() => {
     void (async () => {
@@ -74,6 +77,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         features: pack?.corridorFeatures,
       }));
       setHazardBrief(pack?.hazardBrief ?? null);
+      setStoredBailouts(pack?.bailoutRoutes ?? []);
     });
     return () => {
       cancelled = true;
@@ -84,9 +88,10 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
   const corridor = useMemo(() => buildTerrainCorridorSpec({ routeId: `plan-${planId}`, geometry }), [planId, geometry]);
   const hazardSamples = useMemo(() => selectHazardSamplePoints(geometry), [geometry]);
   const userBailouts = useMemo(() => explicitBailoutCandidates(waypoints ?? [], geometry), [waypoints, geometry]);
+  const gpxBailouts = useMemo(() => bailoutRouteCandidates(storedBailouts), [storedBailouts]);
   const bailouts = useMemo(
-    () => bailoutDecisionPoints([...userBailouts, ...osmBailouts]),
-    [userBailouts, osmBailouts],
+    () => bailoutDecisionPoints([...userBailouts, ...gpxBailouts, ...osmBailouts]),
+    [userBailouts, gpxBailouts, osmBailouts],
   );
 
   const daylight = useMemo(() => {
@@ -224,7 +229,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
               ))}
               <p className="text-xs text-muted-foreground">
                 {osmBailouts.length ? `${CORRIDOR_DECISION_DISCLAIMER} ` : ""}
-                Named “Bailout:” or “Exit:” waypoints stay user-marked. {APP_NAME} does not invent a straight-line shortcut.
+                Named “Bailout:” or “Exit:” waypoints stay user-marked. User-supplied GPX is stored only if it meets the route. {APP_NAME} does not invent a straight-line shortcut.
               </p>
             </div>
           ) : (
@@ -232,11 +237,12 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
               <AlertTriangle />
               <AlertTitle>No bailout candidates yet</AlertTitle>
               <AlertDescription>
-                Add a waypoint beginning with “Bailout:” or “Exit:” after you have verified a real trail/road exit.
-                Prepare offline to load OSM features that actually meet the route. {APP_NAME} will not invent a straight-line shortcut.
+                Add a waypoint beginning with “Bailout:” or “Exit:” after you have verified a real trail/road exit,
+                or import a bailout GPX that already meets the route. Prepare offline to load OSM features that actually meet the route. {APP_NAME} will not invent a straight-line shortcut.
               </AlertDescription>
             </Alert>
           )}
+          <BailoutRoutePanel packId={`plan-${planId}`} name={trailName || `Plan ${planId.slice(0, 8)}`} geometry={geometry} />
         </div>
 
         <Separator />
