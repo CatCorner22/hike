@@ -7,6 +7,7 @@ import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain } from "lucid
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CompassHud } from "@/components/navigate/compass-hud";
+import { RescueCard } from "@/components/navigate/rescue-card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
 import { ReadinessGate } from "@/components/offline/readiness-gate";
@@ -15,7 +16,7 @@ import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useDeviceHeading } from "@/hooks/use-device-heading";
-import { fuseNavHeading, headingSourceLabel } from "@/lib/safety/device-heading";
+import { fuseNavHeading, headingDisagreement, headingSourceLabel } from "@/lib/safety/device-heading";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatElevation } from "@/lib/geo";
 import {
@@ -263,6 +264,14 @@ export default function NavigatePage() {
       gpsTrusted,
       gps.fix?.heading,
     ],
+  );
+  const headingConflict = useMemo(
+    () =>
+      headingDisagreement({
+        compass: deviceHeading.heading,
+        gps: gpsTrusted ? gps.fix?.heading : null,
+      }),
+    [deviceHeading.heading, gpsTrusted, gps.fix?.heading],
   );
 
   const drFix = useMemo(() => {
@@ -1144,6 +1153,7 @@ export default function NavigatePage() {
             headingUp={headingUp}
             nightMode={nightMode}
             sourceLabel={headingSourceLabel(navHeadingSource)}
+            headingWarning={headingConflict.message}
             compassPrompt={
               deviceHeading.permission === "prompt" ? deviceHeading.message : null
             }
@@ -1152,6 +1162,18 @@ export default function NavigatePage() {
                 ? () => void deviceHeading.requestPermission()
                 : undefined
             }
+          />
+          <RescueCard
+            lat={navFix?.lat}
+            lng={navFix?.lng}
+            accuracyM={gpsDenied ? drUncertainty : gps.fix?.accuracy}
+            trailName={pack.name}
+            offTrailM={progress?.offsetMeters}
+            stale={positionSource !== "gps"}
+            recordedAt={gpsDenied ? deniedAnchor?.at : gps.fix?.recordedAt}
+            positionSource={positionSource}
+            batteryPct={battery.available ? (battery.level ?? 0) * 100 : null}
+            batteryCharging={battery.charging ?? undefined}
           />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/*

@@ -1,8 +1,8 @@
-# Hike
+# Klandagi
 
 **Know the route. Know the risks. Know how you're getting home.**
 
-Hike is a safety-first wilderness decision-support app for exploring OSM trails, preparing an offline route pack, navigating when tiles and networks disappear, recording an activity, and communicating an honest rescue position.
+*Klandagi* (Cherokee: mountain lion) is a safety-first wilderness decision-support app for exploring OSM trails, preparing an offline route pack, navigating when tiles and networks disappear, recording an activity, and communicating an honest rescue position.
 
 The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). The strategic direction is contingency navigation rather than a generic trail-review social network.
 

@@ -1,4 +1,4 @@
-# Adversarial review — Hike
+# Adversarial review — Klandagi
 
 Scope: whole repository at `0809db7` (current `main`). Focus weighted toward the
 life-safety surface (`src/lib/safety/**`, `src/lib/geo/navigation.ts`,
@@ -552,7 +552,7 @@ cold offline navigate.
 the UTM grid, but the paper sheet interpolated the result straight into a template:
 
 ```
-=== HIKE PAPER BACKUP (hand to SAR) ===
+=== KLANDAGI PAPER BACKUP (hand to SAR) ===
 --- GRIDS ---
 Start USNG: null
 End USNG: null

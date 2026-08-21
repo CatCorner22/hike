@@ -1,21 +1,36 @@
 import type { Metadata, Viewport } from "next";
 import { AppNav } from "@/components/layout/app-nav";
+import {
+  APP_DESCRIPTION,
+  APP_FULL_TITLE,
+  APP_NAME,
+  APP_THEME_COLOR,
+} from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Hike — Plan, Track & Navigate",
-  description:
-    "Plan hikes, track activities, navigate trails in real time, research trail conditions, and find camping at state and national parks.",
+  title: APP_FULL_TITLE,
+  description: APP_DESCRIPTION,
   manifest: "/manifest.json",
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "Hike",
+    title: APP_NAME,
+  },
+  openGraph: {
+    title: APP_FULL_TITLE,
+    description: APP_DESCRIPTION,
+    type: "website",
+    images: [{ url: "/brand/klandagi-mascot.png", alt: "Klandagi mountain lion mascot" }],
   },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#16a34a",
+  themeColor: APP_THEME_COLOR,
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,

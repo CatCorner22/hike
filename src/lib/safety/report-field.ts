@@ -3,7 +3,7 @@ const FIELD_CONTROL_CHARS = /[\r\n\u0000\u200B-\u200F\u202A-\u202E\u2066-\u2069\
 /** Strip user attempts to forge formatter-owned `--- SECTION ---` lines in one field. */
 const SECTION_FORGERY = /\s*-{3,}\s*[A-Z][A-Z0-9 /-]*\s*-{3,}\s*/gi;
 /** Strip embedded return-deadline forgeries inside a single field value. */
-const RETURN_FORGERY = /\bReturn by:\s*\d{4}-\d{2}-\d{2}[T\s\d:.-Z]*/gi;
+const RETURN_FORGERY = /\bReturn by:\s*\S+/gi;
 const WHITESPACE = /\s+/g;
 export const REPORT_FIELD_MAX_LENGTH = 240;
 export const REPORT_MAX_LENGTH = 6_000;

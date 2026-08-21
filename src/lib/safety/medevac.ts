@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import { formatDdm, formatMgrs10, formatUsng, phonetic } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
 import { formatReport, reportField } from "@/lib/safety/report-field";
@@ -46,7 +47,7 @@ export function nineLineMedevac(input: {
   return formatReport([
     "9-LINE MEDEVAC / SAR",
     `L1 LOCATION: ${reportField(loc)}${sourceNote}`,
-    "L2 FREQ/CALL: SMS/CELL — Hike app",
+    `L2 FREQ/CALL: SMS/CELL — ${APP_NAME} app`,
 `L3 PATIENTS BY PRECEDENCE: ${reportField(patients)}${prec} (${
       prec === "A" ? "Urgent" : prec === "B" ? "Urgent Surgical" : "Priority"
     })`,

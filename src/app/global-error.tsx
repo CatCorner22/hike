@@ -1,5 +1,7 @@
 "use client";
 
+import { APP_NAME } from "@/lib/brand";
+
 /**
  * Last-resort boundary, used when the root layout itself fails. It must render
  * its own <html> and <body>, and must not depend on app styling, providers or
@@ -13,7 +15,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   // Console only: this path must not assume a working network or reporting layer.
-  if (typeof console !== "undefined") console.error("Hike failed to start", error);
+  if (typeof console !== "undefined") console.error(`${APP_NAME} failed to start`, error);
 
   return (
     <html lang="en">
@@ -23,7 +25,7 @@ export default function GlobalError({
           aria-live="assertive"
           style={{ maxWidth: "34rem", margin: "0 auto", padding: "2rem 1.25rem", lineHeight: 1.6 }}
         >
-          <h1 style={{ fontSize: "1.5rem", margin: "0 0 1rem" }}>Hike could not start</h1>
+          <h1 style={{ fontSize: "1.5rem", margin: "0 0 1rem" }}>{APP_NAME} could not start</h1>
           <p style={{ fontSize: "1rem" }}>
             The app failed to load. Your saved plans, recorded tracks and offline maps are
             stored on this device and are not lost.

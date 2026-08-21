@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "How to use Hike",
+  title: `How to use ${APP_NAME}`,
   description: "Plan a hike, save it for offline, navigate on the trail, and get help if something goes wrong.",
 };
 
@@ -28,7 +29,7 @@ export default function GuidePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <section className="rounded-2xl bg-gradient-to-br from-green-600 to-emerald-800 p-6 text-white">
-        <h1 className="text-2xl font-bold tracking-tight">How to use Hike</h1>
+        <h1 className="text-2xl font-bold tracking-tight">How to use {APP_NAME}</h1>
         <p className="mt-2 text-sm text-green-50">
           Five minutes now saves a bad hour on the trail. The one rule that matters:{" "}
           <strong>save your route while you still have signal.</strong> Everything else is

@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { formatUsng } from "@/lib/safety/usng";
 import type { CheckinEntry } from "@/lib/safety/checkin";
@@ -94,7 +95,7 @@ export function buildPaperBackup(input: {
   const ends = trailhead(input.geometry);
   const legs = routeCardLegs(input.geometry);
   const lines = [
-    "=== HIKE PAPER BACKUP (hand to SAR) ===",
+    `=== ${APP_NAME.toUpperCase()} PAPER BACKUP (hand to SAR) ===`,
     `Route: ${reportField(input.trailName)}`,
     input.packAge ? `Pack saved: ${reportField(input.packAge)}` : "",
     "",

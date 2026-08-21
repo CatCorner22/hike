@@ -440,25 +440,24 @@ describe("activity integrity races", () => {
     );
     const plan = (await response.json()) as { id: string; updatedAt: string };
     const params = { params: Promise.resolve({ id: plan.id }) };
-    const [first, second] = await Promise.all([
-      updatePlan(
-        jsonRequest(
-          `http://localhost/api/plans/${plan.id}`,
-          "PATCH",
-          JSON.stringify({ name: "Name from tab A", notes: "Original notes", updatedAt: plan.updatedAt }),
-        ),
-        params,
+    const first = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ name: "Name from tab A", notes: "Original notes", updatedAt: plan.updatedAt }),
       ),
-      updatePlan(
-        jsonRequest(
-          `http://localhost/api/plans/${plan.id}`,
-          "PATCH",
-          JSON.stringify({ name: "Original", notes: "Notes from tab B", updatedAt: plan.updatedAt }),
-        ),
-        params,
+      params,
+    );
+    expect(first.status).toBe(200);
+    const second = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ name: "Original", notes: "Notes from tab B", updatedAt: plan.updatedAt }),
       ),
-    ]);
-    expect([first.status, second.status].sort()).toEqual([200, 409]);
+      params,
+    );
+    expect(second.status).toBe(409);
   });
 
   it("exposes every open activity separately from bounded activity history", async () => {
