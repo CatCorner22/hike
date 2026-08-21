@@ -11,12 +11,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { formatDistance, lineLengthMeters, nearestPointOnTrail } from "@/lib/geo";
+import { formatDistance, lineLengthMeters } from "@/lib/geo";
+import { CORRIDOR_DECISION_DISCLAIMER, deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { sampleRouteByDistance } from "@/lib/offline/route-hazard";
+import { getRoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
-import { cumulativeDistancesForGeometry } from "@/lib/offline/route-pack";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
-import { bailoutDecisionPoints, type BailoutCandidate } from "@/lib/safety/bailout";
+import { bailoutDecisionPoints, explicitBailoutCandidates } from "@/lib/safety/bailout";
 
 interface Waypoint { name: string; lat: number; lng: number }
 
@@ -32,28 +33,6 @@ function firstCoordinate(geometry: GeoJSON.LineString | GeoJSON.MultiLineString)
   return geometry.type === "LineString"
     ? geometry.coordinates[0] ?? null
     : geometry.coordinates.find((line) => line.length)?.[0] ?? null;
-}
-
-function explicitBailouts(
-  waypoints: Waypoint[],
-  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
-): BailoutCandidate[] {
-  const cumulative = cumulativeDistancesForGeometry(geometry);
-  return waypoints
-    .filter((waypoint) => /^(bailout|exit):/i.test(waypoint.name.trim()))
-    .flatMap<BailoutCandidate>((waypoint, index) => {
-      const snapped = nearestPointOnTrail(waypoint, geometry);
-      if (!snapped) return [];
-      return [{
-        id: `waypoint-bailout-${index}`,
-        name: waypoint.name.replace(/^(bailout|exit):\s*/i, "") || waypoint.name,
-        kind: "custom" as const,
-        lat: waypoint.lat,
-        lng: waypoint.lng,
-        routeDistanceMeters: cumulative[Math.min(snapped.index, Math.max(0, cumulative.length - 1))] ?? 0,
-        note: "User-marked exit candidate. Verify the actual mapped path from the planned route before relying on it.",
-      }];
-    });
 }
 
 function localDeparture(plannedDate: string | null | undefined, time: string): Date | null {
@@ -74,6 +53,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     partySize: 1,
   });
   const [returnAt, setReturnAt] = useState<string | null>(null);
+  const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
 
   useEffect(() => {
     void (async () => {
@@ -83,10 +63,28 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     })();
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void getRoutePack(`plan-${planId}`).then((pack) => {
+      if (cancelled) return;
+      setOsmBailouts(deriveCorridorBailouts({
+        geometry,
+        features: pack?.corridorFeatures,
+      }));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [planId, geometry]);
+
   const routeLength = useMemo(() => lineLengthMeters(geometry), [geometry]);
   const corridor = useMemo(() => buildTerrainCorridorSpec({ routeId: `plan-${planId}`, geometry }), [planId, geometry]);
   const hazardSamples = useMemo(() => sampleRouteByDistance(geometry, 5000), [geometry]);
-  const bailouts = useMemo(() => bailoutDecisionPoints(explicitBailouts(waypoints ?? [], geometry)), [waypoints, geometry]);
+  const userBailouts = useMemo(() => explicitBailoutCandidates(waypoints ?? [], geometry), [waypoints, geometry]);
+  const bailouts = useMemo(
+    () => bailoutDecisionPoints([...userBailouts, ...osmBailouts]),
+    [userBailouts, osmBailouts],
+  );
 
   const daylight = useMemo(() => {
     const departure = localDeparture(plannedDate, departureTime);
@@ -208,13 +206,19 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
                   <p className="mt-1 text-xs text-muted-foreground">{point.note}</p>
                 </div>
               ))}
-              <p className="text-xs text-muted-foreground">Only waypoints explicitly named “Bailout:” or “Exit:” appear here. {APP_NAME} does not infer escape routes from ordinary waypoints.</p>
+              <p className="text-xs text-muted-foreground">
+                {osmBailouts.length ? `${CORRIDOR_DECISION_DISCLAIMER} ` : ""}
+                Named “Bailout:” or “Exit:” waypoints stay user-marked. {APP_NAME} does not invent a straight-line shortcut.
+              </p>
             </div>
           ) : (
             <Alert>
               <AlertTriangle />
-              <AlertTitle>No explicit bailout candidates</AlertTitle>
-              <AlertDescription>Add a waypoint beginning with “Bailout:” or “Exit:” only after you have verified a real trail/road exit. {APP_NAME} will not invent a straight-line shortcut.</AlertDescription>
+              <AlertTitle>No bailout candidates yet</AlertTitle>
+              <AlertDescription>
+                Add a waypoint beginning with “Bailout:” or “Exit:” after you have verified a real trail/road exit.
+                Prepare offline to load OSM features that actually meet the route. {APP_NAME} will not invent a straight-line shortcut.
+              </AlertDescription>
             </Alert>
           )}
         </div>

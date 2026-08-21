@@ -1,4 +1,5 @@
-import { lineLengthMeters } from "@/lib/geo";
+import { lineLengthMeters, nearestPointOnTrail } from "@/lib/geo";
+import { cumulativeDistancesForGeometry } from "@/lib/offline/route-pack";
 import type { DecisionPoint } from "@/lib/safety/decision-support";
 
 export interface BailoutCandidate {
@@ -10,6 +11,30 @@ export interface BailoutCandidate {
   routeDistanceMeters: number;
   exitDistanceMeters?: number;
   note?: string;
+}
+
+export function explicitBailoutCandidates(
+  waypoints: Array<{ name: string; lat: number; lng: number }>,
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+): BailoutCandidate[] {
+  const cumulative = cumulativeDistancesForGeometry(geometry);
+  return waypoints
+    .filter((waypoint) => /^(bailout|exit):/i.test(waypoint.name.trim()))
+    .flatMap<BailoutCandidate>((waypoint, index) => {
+      const snapped = nearestPointOnTrail(waypoint, geometry);
+      if (!snapped || !Number.isFinite(snapped.distanceMeters)) return [];
+      return [{
+        id: `waypoint-bailout-${index}`,
+        name: waypoint.name.replace(/^(bailout|exit):\s*/i, "") || waypoint.name,
+        kind: "custom",
+        lat: waypoint.lat,
+        lng: waypoint.lng,
+        routeDistanceMeters: Number.isFinite(snapped.alongMeters)
+          ? snapped.alongMeters
+          : cumulative[Math.min(snapped.index, Math.max(0, cumulative.length - 1))] ?? 0,
+        note: "User-marked exit candidate. Verify the actual mapped path from the planned route before relying on it.",
+      }];
+    });
 }
 
 export function bailoutDecisionPoints(candidates: BailoutCandidate[]): DecisionPoint[] {

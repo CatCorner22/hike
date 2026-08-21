@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bailoutDecisionPoints, rankBailouts, validateBailoutRoute } from "./bailout";
+import { bailoutDecisionPoints, explicitBailoutCandidates, rankBailouts, validateBailoutRoute } from "./bailout";
 
 const candidates = [
   { id: "road", name: "Forest Road", kind: "road" as const, lat: 35.9, lng: -83.9, routeDistanceMeters: 5000, exitDistanceMeters: 900 },
@@ -15,6 +15,17 @@ describe("bailout planning", () => {
     const points = bailoutDecisionPoints(candidates);
     expect(points[0].id).toBe("shelter");
     expect(points[0].note).toContain("300 m");
+  });
+
+  it("only treats explicitly named Bailout or Exit waypoints as user candidates", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-83.9, 35.9], [-83.89, 35.91]] };
+    const found = explicitBailoutCandidates([
+      { name: "Bailout: Forest road", lat: 35.9003, lng: -83.899 },
+      { name: "Pretty view", lat: 35.9003, lng: -83.899 },
+    ], geometry);
+    expect(found).toHaveLength(1);
+    expect(found[0].name).toBe("Forest road");
+    expect(found[0].note).toMatch(/User-marked/);
   });
 
   it("accepts a plausible mapped bailout route", () => {

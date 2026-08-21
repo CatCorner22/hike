@@ -7,6 +7,7 @@ import { formatHarvestCard, HARVEST_DISCLAIMER } from "@/lib/safety/survival-har
 import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
 import { formatGuardianMessage, GUARDIAN_NO_DISTRESS } from "@/lib/safety/guardian-message";
 import { buildRoutePack, validateRoutePack } from "@/lib/offline/route-pack";
+import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { parseCorridorOverpassResponse } from "@/lib/osm/corridor-overpass";
 import { backupParseError, parseRoutePackBackup, serializeRoutePackBackup } from "@/lib/offline/pack-backup";
 import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
@@ -94,5 +95,21 @@ describe("landnav feature probes", () => {
     expect(backupParseError(parseRoutePackBackup(JSON.stringify({ ...honest, disclaimer: "Synced to cloud. You are safe." })))).toMatch(/disclaimer/);
     honest.pack = { ...honest.pack, corridor: { ...honest.pack.corridor!, routeId: "plan-foreign" } };
     expect(backupParseError(parseRoutePackBackup(JSON.stringify(honest)))).toMatch(/terrain corridor/);
+  });
+
+  it("does not promote a distant OSM feature into a stored exit path", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.7]] };
+    const features = parseCorridorOverpassResponse({
+      routeId: "plan-honest",
+      bbox: [-119.6, 37.6, -119.3, 37.9],
+      elements: [
+        { type: "node", id: 1, tags: { amenity: "shelter", name: "Remote hut" }, lat: 37.85, lon: -119.45 },
+      ],
+    });
+    const candidates = deriveCorridorBailouts({
+      geometry,
+      features,
+    });
+    expect(candidates).toEqual([]);
   });
 });
