@@ -3,14 +3,14 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Compass,
+  ClipboardList,
   Footprints,
   HelpCircle,
   Map,
   Mountain,
   Tent,
-  ClipboardList,
 } from "lucide-react";
+import { BrandLogo } from "@/components/brand/brand-logo";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -34,10 +34,7 @@ export function AppNav() {
     <>
       <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-          <Link href="/" className="flex items-center gap-2 font-semibold">
-            <Compass className="h-5 w-5 text-green-600" />
-            Hike
-          </Link>
+          <BrandLogo asLink iconClassName="h-7 w-7" />
           <nav className="hidden items-center gap-1 md:flex">
             {navItems.slice(1).map(({ href, label, icon: Icon }) => (
               <Link

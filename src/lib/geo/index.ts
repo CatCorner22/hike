@@ -331,7 +331,7 @@ export function gpxFromLineString(
     })
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Hike App">
+<gpx version="1.1" creator="Klandagi">
   <trk>
     <name>${escapeXml(name)}</name>
 ${segs}
@@ -349,7 +349,7 @@ export function gpxFromTrack(
     return `      <trkpt lat="${point.lat}" lon="${point.lng}">${ele}${time}\n      </trkpt>`;
   }).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Hike App">
+<gpx version="1.1" creator="Klandagi">
   <trk>
     <name>${escapeXml(name)}</name>
     <trkseg>

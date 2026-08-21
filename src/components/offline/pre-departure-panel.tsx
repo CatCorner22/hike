@@ -1,5 +1,6 @@
 "use client";
 
+import { APP_NAME } from "@/lib/brand";
 import { useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, MapPinned, ShieldAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -86,7 +87,7 @@ export function PreDeparturePanel({ planId, plannedDate, geometry, waypoints = [
     <Card>
       <CardHeader>
         <CardTitle>Pre-departure decision support</CardTitle>
-        <CardDescription>Review what Hike knows before you prepare the route offline. Unknowns stay unknown.</CardDescription>
+        <CardDescription>Review what {APP_NAME} knows before you prepare the route offline. Unknowns stay unknown.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="grid gap-4 sm:grid-cols-3">
@@ -186,13 +187,13 @@ export function PreDeparturePanel({ planId, plannedDate, geometry, waypoints = [
                   <p className="mt-1 text-xs text-muted-foreground">{point.note}</p>
                 </div>
               ))}
-              <p className="text-xs text-muted-foreground">Only waypoints explicitly named “Bailout:” or “Exit:” appear here. Hike does not infer escape routes from ordinary waypoints.</p>
+              <p className="text-xs text-muted-foreground">Only waypoints explicitly named “Bailout:” or “Exit:” appear here. {APP_NAME} does not infer escape routes from ordinary waypoints.</p>
             </div>
           ) : (
             <Alert>
               <AlertTriangle />
               <AlertTitle>No explicit bailout candidates</AlertTitle>
-              <AlertDescription>Add a waypoint beginning with “Bailout:” or “Exit:” only after you have verified a real trail/road exit. Hike will not invent a straight-line shortcut.</AlertDescription>
+              <AlertDescription>Add a waypoint beginning with “Bailout:” or “Exit:” only after you have verified a real trail/road exit. {APP_NAME} will not invent a straight-line shortcut.</AlertDescription>
             </Alert>
           )}
         </div>

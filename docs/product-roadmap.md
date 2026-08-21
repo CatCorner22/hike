@@ -1,10 +1,10 @@
-# Hike product roadmap
+# Klandagi product roadmap
 
 ## Product thesis
 
 **Know the route. Know the risks. Know how you're getting home.**
 
-Hike should compete as a safety-first wilderness decision-support and contingency-navigation product, not as a generic trail-review social network.
+Klandagi should compete as a safety-first wilderness decision-support and contingency-navigation product, not as a generic trail-review social network.
 
 ## Product principles
 
@@ -59,7 +59,7 @@ Offline waypoint creation with typed categories (water, hazard, campsite, crossi
 
 ## Explicit non-priorities
 
-Do not spend early product cycles on a social feed, follower graph, leaderboards, badges, a giant photo-review network, photorealistic 3D, or an AI chatbot on every screen. These increase scope without strengthening Hike's safety/decision-support differentiation.
+Do not spend early product cycles on a social feed, follower graph, leaderboards, badges, a giant photo-review network, photorealistic 3D, or an AI chatbot on every screen. These increase scope without strengthening Klandagi's safety/decision-support differentiation.
 
 ## Definition of done for safety-affecting features
 
