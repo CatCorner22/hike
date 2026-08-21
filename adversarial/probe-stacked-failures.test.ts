@@ -183,6 +183,18 @@ describe("stacked failures: extras must not kill a prepared route", () => {
     }
   });
 
+  it("repairs a world-spanning bbox on a dateline pack instead of refusing navigation", async () => {
+    const honest = buildRoutePack({ id: "plan-wrap", name: "Wrap", geometry: DATELINE });
+    await saveRoutePack(honest);
+    await overwriteStoredPack({ ...honest, bbox: [-180, -90, 180, 90] });
+    const lookup = await getRoutePackStatus("plan-wrap");
+    expect(lookup.status).toBe("ready");
+    expect(lookup.pack?.geometry).toEqual(DATELINE);
+    expect((lookup.pack?.bbox[2] ?? 0) - (lookup.pack?.bbox[0] ?? 0)).toBeLessThan(180);
+    expect(lookup.strippedExtras).toContain("bbox");
+    expect(isFixNearRouteBbox(51.5, 0, lookup.pack!.bbox)).toBe(false);
+  });
+
   it("still rejects a pack whose core geometry is gone", async () => {
     const honest = buildRoutePack({ id: "plan-core", name: "Core", geometry: SIERRA });
     await saveRoutePack(honest);

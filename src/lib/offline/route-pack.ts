@@ -102,7 +102,8 @@ export type RoutePackExtraField =
   | "corridor"
   | "corridorFeatures"
   | "hazardBrief"
-  | "bailoutRoutes";
+  | "bailoutRoutes"
+  | "bbox";
 export interface RoutePackLookup {
   pack: RoutePack | null;
   status: RoutePackStatus;
@@ -290,6 +291,14 @@ export function sanitizeRoutePackForUse(pack: RoutePack): {
 } {
   const next: RoutePack = { ...pack };
   const stripped: RoutePackExtraField[] = [];
+
+  if (!validStoredRouteBbox(next.bbox)) {
+    const computed = bboxFromGeometry(next.geometry, 0.004);
+    if (computed && validStoredRouteBbox(computed)) {
+      next.bbox = computed;
+      stripped.push("bbox");
+    }
+  }
 
   if (next.weather !== undefined && !validPackWeather(next.weather)) {
     delete next.weather;
