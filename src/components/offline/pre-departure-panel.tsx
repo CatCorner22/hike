@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { formatDistance, lineLengthMeters, nearestPointOnTrail } from "@/lib/geo";
 import { sampleRouteByDistance } from "@/lib/offline/route-hazard";
-import { buildTerrainCorridorSpec, corridorCoverageLabel } from "@/lib/offline/terrain-corridor";
+import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
 import { cumulativeDistancesForGeometry } from "@/lib/offline/route-pack";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
 import { bailoutDecisionPoints, type BailoutCandidate } from "@/lib/safety/bailout";
@@ -117,7 +117,9 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Terrain target</p>
             <p className="mt-1 text-sm font-medium">{corridorCoverageLabel(corridor)}</p>
-            <p className="text-xs text-muted-foreground">Manifest only; provider-backed terrain download is not shipped yet.</p>
+            <p className="text-xs text-muted-foreground">
+              {corridorSizeLabel(corridor)} · bbox estimate. Stored on the pack when you prepare offline. Terrain tiles are not downloaded yet.
+            </p>
           </div>
           <div>
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Hazard coverage</p>
@@ -238,7 +240,9 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         <div className="space-y-2">
           <h3 className="font-medium">Planned offline context layers</h3>
           <div className="flex flex-wrap gap-2">{corridor.layers.map((layer) => <Badge key={layer} variant="secondary">{layer}</Badge>)}</div>
-          <p className="text-xs text-muted-foreground">The current production fallback remains the route-only Safety Map. These layers become additive when an offline terrain provider is integrated.</p>
+          <p className="text-xs text-muted-foreground">
+            {corridorSizeLabel(corridor)} for these layers (bounding-box estimate). The production fallback remains the route-only Safety Map until a terrain provider is integrated.
+          </p>
         </div>
       </CardContent>
     </Card>

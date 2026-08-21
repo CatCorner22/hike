@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from "react";
 import type React from "react";
-import { CheckCircle2, CircleAlert, HardDriveDownload, Route, ScreenShare } from "lucide-react";
+import { CheckCircle2, CircleAlert, HardDriveDownload, Mountain, Route, ScreenShare } from "lucide-react";
 import {
   getRoutePackStatus,
   type RoutePackStatus,
 } from "@/lib/offline/route-pack";
 import { isNavigateShellCached } from "@/lib/offline/navigate-shell";
 import { isStoragePersistent, storageEstimate } from "@/lib/offline/storage";
+import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface ReadinessState {
@@ -18,6 +19,7 @@ interface ReadinessState {
   persistent: boolean;
   usage?: number;
   quota?: number;
+  corridor?: TerrainCorridorSpec | null;
 }
 
 const EMPTY_READINESS: ReadinessState = {
@@ -25,6 +27,7 @@ const EMPTY_READINESS: ReadinessState = {
   packCheckFailed: false,
   shellCached: false,
   persistent: false,
+  corridor: null,
 };
 
 /**
@@ -114,7 +117,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
       if (!cancelled && currentRefresh === refreshNumber) {
         const pack = packResult.status === "fulfilled"
           ? packResult.value
-          : { status: "missing" as const };
+          : { status: "missing" as const, pack: null };
         setReadiness({
           packStatus: pack.status,
           packCheckFailed: packResult.status === "rejected",
@@ -122,6 +125,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
           persistent: persistentResult.status === "fulfilled" ? persistentResult.value : false,
           usage: estimateResult.status === "fulfilled" ? estimateResult.value?.usage : undefined,
           quota: estimateResult.status === "fulfilled" ? estimateResult.value?.quota : undefined,
+          corridor: pack.pack?.corridor ?? null,
         });
       }
     };
@@ -154,7 +158,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
     <Card size="sm" className="mt-3 w-full max-w-xl">
       <CardHeader>
         <CardTitle>Offline readiness</CardTitle>
-        <CardDescription>Check all four items before leaving signal.</CardDescription>
+        <CardDescription>Check these items before leaving signal.</CardDescription>
       </CardHeader>
       <CardContent>
         <ul className="space-y-2">
@@ -170,6 +174,22 @@ export function OfflineReadiness({ packId }: { packId: string }) {
                   : state.packCheckFailed
                     ? "Offline route storage could not be checked. Treat this route as missing; reconnect and re-download it before relying on this device."
                     : "Navigation cannot start without a saved, current route pack. Reconnect and re-download before relying on this device."
+            }
+          />
+          <CheckRow
+            icon={<Mountain className="mt-0.5 h-4 w-4" />}
+            title={
+              packReady && state.corridor
+                ? "Terrain corridor recorded"
+                : "Terrain corridor missing — update the pack while online"
+            }
+            ok={Boolean(packReady && state.corridor)}
+            detail={
+              packReady && state.corridor
+                ? describePersistedCorridor(state.corridor)
+                : packReady
+                  ? "This pack has no corridor record. Update the offline pack while online to store coverage and the planned download size."
+                  : "Save the route pack to record the planned terrain corridor. Terrain tiles themselves are not downloaded yet."
             }
           />
           <CheckRow

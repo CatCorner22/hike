@@ -6,6 +6,7 @@ import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { describePersistedCorridor } from "@/lib/offline/terrain-corridor";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
@@ -107,7 +108,7 @@ export function PrepareOffline({
         elevationProfile,
         weather: weather ?? undefined,
       });
-      await persistRoutePack(pack);
+      const saved = await persistRoutePack(pack);
       if (!await refreshReady()) {
         throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
       }
@@ -127,10 +128,13 @@ export function PrepareOffline({
       const weatherNote = weather
         ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
         : "Type temp/wind in Safety if you want field weather.";
+      const corridorNote = saved.corridor
+        ? describePersistedCorridor(saved.corridor)
+        : "Terrain corridor was not recorded on this pack.";
       setMessage(
         warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`,
+          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${weatherNote}`
+          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${weatherNote}`,
       );
     } catch (error) {
       setReady(false);
