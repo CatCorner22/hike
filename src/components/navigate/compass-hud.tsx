@@ -6,9 +6,11 @@ export interface CompassHudProps {
   headingTrue: number | null | undefined;
   lat?: number | null;
   lng?: number | null;
-  /** When true, rotate rose so heading points up (map-style). */
   headingUp?: boolean;
   nightMode?: "off" | "red" | "nvg";
+  sourceLabel?: string;
+  compassPrompt?: string | null;
+  onEnableCompass?: () => void;
   className?: string;
 }
 
@@ -23,6 +25,9 @@ export function CompassHud({
   lng,
   headingUp = false,
   nightMode = "off",
+  sourceLabel,
+  compassPrompt,
+  onEnableCompass,
   className = "",
 }: CompassHudProps) {
   const readout = compassReadout(headingTrue, lat, lng);
@@ -111,9 +116,19 @@ export function CompassHud({
               <p className="tabular-nums">{Math.round(readout.magneticDeg)}° mag</p>
             )}
             <p>{readout.cardinal}</p>
+            {sourceLabel && <p className="text-[9px] opacity-80">{sourceLabel}</p>}
           </>
         ) : (
           <p>No heading</p>
+        )}
+        {compassPrompt && onEnableCompass && (
+          <button
+            type="button"
+            className="mt-1 text-[9px] font-medium text-primary underline"
+            onClick={onEnableCompass}
+          >
+            Enable compass
+          </button>
         )}
       </div>
     </div>

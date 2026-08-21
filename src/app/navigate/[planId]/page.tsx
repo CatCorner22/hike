@@ -8,13 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CompassHud } from "@/components/navigate/compass-hud";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
-import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
 import { ReadinessGate } from "@/components/offline/readiness-gate";
 import { formatOfflineRouteStorageError } from "@/components/offline/offline-readiness";
 import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
+import { fuseNavHeading, headingSourceLabel } from "@/lib/safety/device-heading";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatElevation } from "@/lib/geo";
 import {
@@ -164,6 +164,7 @@ export default function NavigatePage() {
   >([]);
 
   const gps = useGps();
+  const deviceHeading = useDeviceHeading(true);
 
   useEffect(() => {
     const tick = () => {
@@ -246,6 +247,22 @@ export default function NavigatePage() {
   const batteryWarning = useBatteryWarning();
   const battery = useBatteryStatus();
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
+  const navHeadingFusion = useMemo(
+    () =>
+      fuseNavHeading({
+        manual: gpsDenied ? parseTypedHeading(deniedHeadingText) : null,
+        device: deviceHeading.heading,
+        gps: gpsTrusted ? gps.fix?.heading : undefined,
+        gpsDenied,
+      }),
+    [
+      gpsDenied,
+      deniedHeadingText,
+      deviceHeading.heading,
+      gpsTrusted,
+      gps.fix?.heading,
+    ],
+  );
 
   const drFix = useMemo(() => {
     if (!gpsDenied || !deniedAnchor) return null;
@@ -262,6 +279,9 @@ export default function NavigatePage() {
     gpsDenied && drFix ? "deadReckon" : gpsTrusted ? "gps" : "lastKnown";
 
   function resolveDeniedHeading(): number | null {
+    if (deviceHeading.heading != null && Number.isFinite(deviceHeading.heading)) {
+      return deviceHeading.heading;
+    }
     const live = gps.fix?.heading;
     if (live != null && Number.isFinite(live)) return live;
     return parseTypedHeading(deniedHeadingText);
@@ -884,7 +904,8 @@ export default function NavigatePage() {
   const fixOnRoute = Boolean(
     gps.fix && isFixNearRouteBbox(gps.fix.lat, gps.fix.lng, pack.bbox),
   );
-  const navHeading = gpsDenied ? drFix?.heading : gpsTrusted ? gps.fix?.heading : undefined;
+  const navHeading = navHeadingFusion.heading ?? undefined;
+  const navHeadingSource = navHeadingFusion.source;
   const drUncertainty =
     gpsDenied && drFix
       ? deadReckonUncertaintyM({
@@ -1121,6 +1142,15 @@ export default function NavigatePage() {
             lng={navFix?.lng}
             headingUp={headingUp}
             nightMode={nightMode}
+            sourceLabel={headingSourceLabel(navHeadingSource)}
+            compassPrompt={
+              deviceHeading.permission === "prompt" ? deviceHeading.message : null
+            }
+            onEnableCompass={
+              deviceHeading.permission === "prompt"
+                ? () => void deviceHeading.requestPermission()
+                : undefined
+            }
           />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/*

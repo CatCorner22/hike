@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { fuseNavHeading, headingFromOrientationEvent } from "@/lib/safety/device-heading";
 import { formatCompassCard } from "@/lib/safety/compass-display";
 import { formatMgrsGridCard } from "@/lib/safety/mgrs-grid";
 import { formatWayfindingCard } from "@/lib/safety/wayfinding";
@@ -26,5 +27,10 @@ describe("landnav feature probes", () => {
 
   it("always includes harvest disclaimer", () => {
     expect(formatHarvestCard()).toContain(HARVEST_DISCLAIMER.slice(0, 40));
+  });
+
+  it("ignores non-finite orientation values", () => {
+    expect(headingFromOrientationEvent({ webkitCompassHeading: NaN } as DeviceOrientationEvent)).toBeNull();
+    expect(fuseNavHeading({ device: Infinity, gps: 90 })).toEqual({ heading: 90, source: "gps" });
   });
 });
