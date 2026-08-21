@@ -51,24 +51,47 @@ export function amsAssessment(input: {
   }
   const score = exposure + symptomScore;
 
+  // Severity comes from the symptoms; exposure is allowed to escalate it by one step
+  // and no further.
+  //
+  // Thresholding the combined total let altitude manufacture an emergency out of an
+  // ordinary symptom: a single headache at 3 500 m after a 450 m/hr climb scored 8 and
+  // came back "Possible HACE/HAPE ... descend immediately. This is an emergency." A
+  // headache at that elevation is the most common altitude symptom there is and is
+  // textbook *mild* AMS — stop ascending, rest, hydrate. Two hikers with identical
+  // symptoms were also given diagnoses three steps apart on altitude alone.
+  //
+  // That is the same false alarm this function already separates exposure from symptoms
+  // to avoid, and the module's own comment gives the reason: it teaches people to ignore
+  // the warning bar, which is the one that has to be believed when ataxia shows up.
+  const ataxia = input.symptoms.includes("ataxia");
+  const fatigueOnlyLow =
+    alt < 2500 && input.symptoms.length > 0 && input.symptoms.every((symptom) => symptom === "fatigue");
+
   let level: AmsLevel = "none";
-  if (input.symptoms.length > 0) {
-    if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-    // Fatigue alone at low elevation is not altitude illness. Calling it AMS would
-    // misdirect a hiker from other causes while giving a confident false diagnosis.
-    else if (alt < 2500 && input.symptoms.every((symptom) => symptom === "fatigue")) level = "none";
-    else if (score >= 5) level = "moderate";
+  if (input.symptoms.length > 0 && !fatigueOnlyLow) {
+    if (ataxia || symptomScore >= 8) level = "severe";
+    else if (symptomScore >= 6) level = "moderate";
     else level = "mild";
+    // Being high, and having got there fast, is a real aggravator — one step, not three.
+    if (level === "mild" && exposure >= 4) level = "moderate";
   }
 
   const actions: string[] = [];
   let warning: string | null = null;
 
   if (level === "severe") {
-    warning =
-      "Possible HACE/HAPE — stop ascent, give O₂ if available, descend immediately. This is an emergency.";
+    // Ataxia is what makes this HACE rather than bad AMS. HAPE is defined by
+    // breathlessness at rest, which this symptom list cannot record at all, so the
+    // emergency wording belongs only on the finding that actually earns it.
+    warning = ataxia
+      ? "Ataxia with altitude symptoms — treat as HACE. Stop ascent, give O₂ if available, descend immediately. This is an emergency."
+      : "Severe AMS — symptoms this heavy mean descend now, not rest and reassess.";
     actions.push("Descend at least 300–500 m if you can do so safely.");
     actions.push("Do not sleep at this altitude if confused or short of breath at rest.");
+    if (!ataxia) {
+      actions.push("Unsteady gait, confusion, or breathlessness at rest = HACE/HAPE. Descend immediately.");
+    }
   } else if (level === "moderate") {
     warning = "Moderate altitude illness — do not go higher. Rest, hydrate, monitor closely.";
     actions.push("Descend if symptoms worsen or do not improve in 1 hour at rest.");

@@ -48,12 +48,61 @@ describe("amsAssessment", () => {
     }
   });
 
-  it("does report illness once symptoms are present", () => {
+  /**
+   * The 3600 m case asserted "severe" and was updated deliberately.
+   *
+   * Severity was thresholded on symptoms *plus* exposure, so a single headache at
+   * 3 600 m after a 500 m/hr climb came back "Possible HACE/HAPE ... descend
+   * immediately. This is an emergency." A headache at that elevation is the most
+   * common altitude symptom there is and is textbook mild AMS; the standard advice
+   * is to stop ascending, rest and hydrate. Exposure still escalates it — the fast
+   * climb makes it moderate rather than mild — but altitude alone must not
+   * manufacture an emergency, which is the same false alarm this function already
+   * separates exposure from symptoms to avoid.
+   */
+  it("does report illness once symptoms are present, at a severity the symptoms support", () => {
     expect(amsAssessment({ altitudeM: 3600, gainLastHourM: 500, symptoms: ["headache"] }).level).toBe(
-      "severe",
+      "moderate",
     );
     expect(amsAssessment({ altitudeM: 2600, symptoms: ["headache"] }).level).toBe("mild");
     expect(amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] }).level).toBe("severe");
+  });
+
+  it("never calls an emergency on altitude alone", () => {
+    for (const altitudeM of [2600, 3100, 3600, 4200, 5500]) {
+      for (const gainLastHourM of [0, 320, 500, 900]) {
+        for (const symptoms of [["headache"], ["nausea"], ["fatigue"], ["headache", "nausea"]] as const) {
+          const result = amsAssessment({ altitudeM, gainLastHourM, symptoms: [...symptoms] });
+          expect(result.level, `${altitudeM} m +${gainLastHourM} ${symptoms.join("+")}`).not.toBe("severe");
+          expect(result.warning ?? "").not.toMatch(/HACE|HAPE/);
+        }
+      }
+    }
+  });
+
+  it("escalates by one step for exposure, never three", () => {
+    const low = amsAssessment({ altitudeM: 1500, symptoms: ["headache", "nausea"] });
+    const high = amsAssessment({ altitudeM: 4200, gainLastHourM: 500, symptoms: ["headache", "nausea"] });
+    expect(low.level).toBe("mild");
+    expect(high.level).toBe("moderate");
+  });
+
+  /** Ataxia is what makes it HACE; HAPE needs breathlessness at rest, which is not an input here. */
+  it("reserves the HACE wording for ataxia and still descends on a heavy symptom load", () => {
+    const hace = amsAssessment({ altitudeM: 3000, symptoms: ["headache", "ataxia"] });
+    expect(hace.level).toBe("severe");
+    expect(hace.warning).toMatch(/HACE/);
+    expect(hace.warning).toMatch(/emergency/i);
+
+    const heavy = amsAssessment({
+      altitudeM: 3000,
+      symptoms: ["headache", "nausea", "dizziness", "insomnia", "fatigue"],
+    });
+    expect(heavy.level).toBe("severe");
+    expect(heavy.warning).toMatch(/descend now/i);
+    expect(heavy.warning).not.toMatch(/HACE|HAPE/);
+    // It must still tell them what would make it one.
+    expect(heavy.actions.join(" ")).toMatch(/HACE\/HAPE/);
   });
 });
 

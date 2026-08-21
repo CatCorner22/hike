@@ -1289,6 +1289,64 @@ trail distance beside the bearing — are each caught.
 
 ---
 
+## Sixteenth pass — altitude illness (`wilderness.ts`)
+
+### W1. Altitude could manufacture an emergency out of a headache
+
+`amsAssessment` already separates *exposure* (altitude, ascent rate) from *symptoms*, and
+its own comment gives the reason: scoring exposure as illness produced "a false alarm that
+teaches people to ignore the warning bar". That fix stopped exposure creating a diagnosis
+out of nothing — but severity was still thresholded on `exposure + symptoms`, so exposure
+could still drive the *level*:
+
+| symptoms | 1 500 m, +100 | 2 600 m, +200 | 3 500 m, +450 |
+|---|---|---|---|
+| headache | mild | mild | **severe — "Possible HACE/HAPE … descend immediately. This is an emergency."** |
+| headache + nausea | mild | moderate | **severe** |
+
+A headache at 3 500 m after a fast climb is the most common altitude symptom there is and
+is textbook **mild** AMS; the standard response is to stop ascending, rest and hydrate.
+Two hikers with identical symptoms were also handed diagnoses three steps apart on
+altitude alone.
+
+There is a second problem in that string. HACE is defined by ataxia or altered mental
+status; HAPE by breathlessness at rest — which this symptom list cannot record at all. So
+the emergency wording named two conditions, one of which the input can never establish,
+on symptoms that established neither.
+
+Fixed by driving severity from the symptoms and letting exposure escalate it **one step,
+not three**, and by reserving the HACE wording for the finding that earns it:
+
+| symptoms | result now |
+|---|---|
+| headache, 3 500 m, +450 | moderate — "do not go higher. Rest, hydrate, monitor closely." |
+| headache + nausea + dizziness | moderate at any altitude |
+| all five non-ataxia symptoms | severe — "Severe AMS — descend now", **no** HACE/HAPE claim, plus an action naming what would make it one |
+| ataxia | severe — "treat as HACE … this is an emergency", at every altitude, unchanged |
+| fatigue alone below 2 500 m | none, unchanged |
+
+An existing assertion pinned `headache` at 3 600 m as `severe`; like the `Start USNG` and
+`paceBeads(9).km === 1` assertions before it, it encoded the behaviour being fixed and was
+updated deliberately, with the reasoning recorded beside it. The test's intent — that
+symptoms produce a diagnosis — is preserved; only the severity moves.
+
+**This one is a judgement call in a medical area and is flagged as such.** It makes the
+app *less* alarming in a specific case, which is the direction that deserves scrutiny. The
+change aligns the ladder with ordinary wilderness-medicine practice (stop ascent for mild;
+descend for moderate and severe; emergency for HACE) and does not touch the ataxia path,
+which remains severe and unconditional.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 705/705 green, `npm run build`
+succeeds. Four mutations — thresholding on the combined score again, letting exposure
+escalate all the way to severe, restoring the HACE/HAPE wording for every severe case, and
+dropping the one-step escalation entirely — are each caught, so the tests pin both
+directions.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
