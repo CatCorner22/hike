@@ -195,8 +195,7 @@ describe("route pack integrity boundaries", () => {
     expect(loaded?.corridor?.routeId).toBe("plan-corridor");
     expect(loaded?.corridor?.layers).toContain("hillshade");
 
-    const { corridor: _omitted, ...legacy } = pack;
-    expect(validateRoutePack(legacy)).toBeNull();
+    expect(validateRoutePack({ ...pack, corridor: undefined })).toBeNull();
     expect(validateRoutePack({
       ...pack,
       corridor: { ...pack.corridor!, routeId: "someone-elses-trail" },
