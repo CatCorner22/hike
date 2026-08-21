@@ -8,6 +8,7 @@ import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
 import { formatGuardianMessage, GUARDIAN_NO_DISTRESS } from "@/lib/safety/guardian-message";
 import { buildRoutePack, validateRoutePack } from "@/lib/offline/route-pack";
 import { parseCorridorOverpassResponse } from "@/lib/osm/corridor-overpass";
+import { backupParseError, parseRoutePackBackup, serializeRoutePackBackup } from "@/lib/offline/pack-backup";
 import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 
 describe("landnav feature probes", () => {
@@ -84,5 +85,14 @@ describe("landnav feature probes", () => {
     });
     expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, routeId: "plan-foreign" } })).toContain("corridor features");
     expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, disclaimer: "safe to drink" } })).toContain("corridor features");
+  });
+
+  it("rejects a pack backup that drops the device-only disclaimer or wraps a foreign corridor", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.8]] };
+    const pack = buildRoutePack({ id: "plan-honest", name: "Honest", geometry });
+    const honest = JSON.parse(serializeRoutePackBackup(pack)) as { disclaimer: string; pack: typeof pack };
+    expect(backupParseError(parseRoutePackBackup(JSON.stringify({ ...honest, disclaimer: "Synced to cloud. You are safe." })))).toMatch(/disclaimer/);
+    honest.pack = { ...honest.pack, corridor: { ...honest.pack.corridor!, routeId: "plan-foreign" } };
+    expect(backupParseError(parseRoutePackBackup(JSON.stringify(honest)))).toMatch(/terrain corridor/);
   });
 });
