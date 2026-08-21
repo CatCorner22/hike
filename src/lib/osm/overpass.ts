@@ -48,7 +48,7 @@ const OVERPASS_URLS = [
 const OVERPASS_CACHE_TTL_MS = 60 * 60 * 1000;
 const overpassCache = new Map<string, { expiresAt: number; data: OverpassResponse }>();
 
-async function runOverpass(query: string): Promise<OverpassResponse> {
+export async function runOverpass(query: string, timeoutMs = 2_500): Promise<OverpassResponse> {
   const cached = overpassCache.get(query);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
   if (cached) overpassCache.delete(query);
@@ -66,7 +66,7 @@ async function runOverpass(query: string): Promise<OverpassResponse> {
           "User-Agent": "Klandagi/1.0 (wilderness navigation app)",
         },
         body: `data=${encodeURIComponent(query)}`,
-      }, 2_500);
+      }, timeoutMs);
       if (!response.ok) {
         lastError = new Error(`Overpass API error: ${response.status}`);
         continue;

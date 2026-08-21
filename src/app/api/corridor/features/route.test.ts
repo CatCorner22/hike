@@ -1,0 +1,37 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { __resetRateLimitForTests } from "@/lib/api/rate-limit";
+import { POST } from "./route";
+
+beforeEach(() => {
+  __resetRateLimitForTests();
+});
+
+describe("POST /api/corridor/features", () => {
+  it("rejects malformed requests before calling Overpass", async () => {
+    const broken = await POST(new Request("http://localhost/api/corridor/features", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{broken",
+    }));
+    expect(broken.status).toBe(400);
+
+    const missing = await POST(new Request("http://localhost/api/corridor/features", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ routeId: "plan-1" }),
+    }));
+    expect(missing.status).toBe(400);
+  });
+
+  it("returns a null snapshot when the bbox is too large", async () => {
+    const response = await POST(new Request("http://localhost/api/corridor/features", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ routeId: "plan-1", bbox: [-120, 30, -100, 50] }),
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json() as { features: unknown; reason?: string };
+    expect(body.features).toBeNull();
+    expect(body.reason).toMatch(/too large/);
+  });
+});

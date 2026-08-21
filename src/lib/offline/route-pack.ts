@@ -2,6 +2,10 @@ import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
 import type { PackWeather } from "@/lib/offline/pack-weather";
 import {
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
+import {
   buildTerrainCorridorSpec,
   validTerrainCorridor,
   type TerrainCorridorSpec,
@@ -45,6 +49,11 @@ export interface RoutePack {
    * navigable; prepare-offline writes it on every new save.
    */
   corridor?: TerrainCorridorSpec;
+  /**
+   * OSM vector context for the planned corridor. Optional — prepare stores it
+   * when Overpass answers; legacy packs and failed fetches stay navigable.
+   */
+  corridorFeatures?: CorridorFeatureSet;
 }
 
 interface RoutePackAlias {
@@ -200,6 +209,12 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id)) {
     return "Saved route terrain corridor is invalid.";
   }
+  if (pack.corridorFeatures !== undefined) {
+    if (!pack.corridor) return "Saved route corridor features are missing a corridor record.";
+    if (!validCorridorFeatures(pack.corridorFeatures, pack.id, pack.corridor.bbox)) {
+      return "Saved route corridor features are invalid.";
+    }
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -288,6 +303,7 @@ export function buildRoutePack(input: {
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   weather?: PackWeather;
   corridor?: TerrainCorridorSpec;
+  corridorFeatures?: CorridorFeatureSet;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -311,6 +327,7 @@ export function buildRoutePack(input: {
     version: ROUTE_PACK_VERSION,
     weather: input.weather,
     corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
+    corridorFeatures: input.corridorFeatures,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);

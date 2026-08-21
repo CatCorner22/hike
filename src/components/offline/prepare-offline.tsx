@@ -3,16 +3,43 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
-import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { persistRoutePack, withNetworkTimeout } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
+import {
+  describeCorridorFeatures,
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
-import { describePersistedCorridor } from "@/lib/offline/terrain-corridor";
+import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
   OfflineReadiness,
   formatOfflineRouteStorageError,
 } from "@/components/offline/offline-readiness";
+
+async function requestCorridorFeatures(
+  routeId: string,
+  bbox: [number, number, number, number],
+): Promise<CorridorFeatureSet | null> {
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => fetch("/api/corridor/features", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, bbox }),
+        signal,
+      }),
+      12_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { features?: unknown };
+    return validCorridorFeatures(data.features, routeId, bbox) ? data.features : null;
+  } catch {
+    return null;
+  }
+}
 
 interface PrepareOfflineProps {
   packId: string;
@@ -98,7 +125,11 @@ export function PrepareOffline({
       const center = bbox
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
-      const weather = await fetchPackWeather(center.lat, center.lng);
+      const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
+      const [weather, corridorFeatures] = await Promise.all([
+        fetchPackWeather(center.lat, center.lng),
+        requestCorridorFeatures(packId, corridor.bbox),
+      ]);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -107,6 +138,8 @@ export function PrepareOffline({
         bbox,
         elevationProfile,
         weather: weather ?? undefined,
+        corridor,
+        corridorFeatures: corridorFeatures ?? undefined,
       });
       const saved = await persistRoutePack(pack);
       if (!await refreshReady()) {
@@ -131,10 +164,13 @@ export function PrepareOffline({
       const corridorNote = saved.corridor
         ? describePersistedCorridor(saved.corridor)
         : "Terrain corridor was not recorded on this pack.";
+      const featureNote = saved.corridorFeatures
+        ? describeCorridorFeatures(saved.corridorFeatures)
+        : "OSM corridor features were not stored (Overpass unavailable, or the bbox is too large for one snapshot).";
       setMessage(
         warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${weatherNote}`,
+          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${weatherNote}`
+          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${featureNote} ${weatherNote}`,
       );
     } catch (error) {
       setReady(false);

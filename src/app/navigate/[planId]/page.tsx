@@ -956,6 +956,7 @@ export default function NavigatePage() {
         {beaconOn && <SosBeacon onClose={() => setBeaconOn(false)} />}
         <SafetyNavMap
           geometry={pack.geometry}
+          corridorFeatures={pack.corridorFeatures ?? null}
           user={user}
           nearest={
             backtrackOn

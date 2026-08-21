@@ -186,6 +186,37 @@ describe("route pack integrity boundaries", () => {
     expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
   });
 
+  it("persists corridor OSM features and still accepts packs without them", async () => {
+    const { parseCorridorOverpassResponse } = await import("@/lib/osm/corridor-overpass");
+    const pack = buildRoutePack({ id: "plan-features", name: "Feature route", geometry });
+    const features = parseCorridorOverpassResponse({
+      routeId: "plan-features",
+      bbox: pack.corridor!.bbox,
+      elements: [{
+        type: "node",
+        id: 99,
+        tags: { amenity: "shelter", name: "Hut" },
+        lat: geometry.coordinates[0][1],
+        lon: geometry.coordinates[0][0],
+      }],
+    });
+    const withFeatures = buildRoutePack({
+      id: "plan-features",
+      name: "Feature route",
+      geometry,
+      corridor: pack.corridor,
+      corridorFeatures: features,
+    });
+    await saveRoutePack(withFeatures);
+    const loaded = await getRoutePack("plan-features");
+    expect(loaded?.corridorFeatures?.featureCount).toBe(1);
+    expect(validateRoutePack({ ...withFeatures, corridorFeatures: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withFeatures,
+      corridorFeatures: { ...features, routeId: "someone-else" },
+    })).toContain("corridor features");
+  });
+
   it("persists a terrain corridor and still accepts legacy packs without one", async () => {
     const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
     expect(pack.corridor?.routeId).toBe("plan-corridor");

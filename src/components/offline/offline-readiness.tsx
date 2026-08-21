@@ -9,6 +9,7 @@ import {
 } from "@/lib/offline/route-pack";
 import { isNavigateShellCached } from "@/lib/offline/navigate-shell";
 import { isStoragePersistent, storageEstimate } from "@/lib/offline/storage";
+import { describeCorridorFeatures, type CorridorFeatureSet } from "@/lib/offline/corridor-features";
 import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -20,6 +21,7 @@ interface ReadinessState {
   usage?: number;
   quota?: number;
   corridor?: TerrainCorridorSpec | null;
+  corridorFeatures?: CorridorFeatureSet | null;
 }
 
 const EMPTY_READINESS: ReadinessState = {
@@ -28,6 +30,7 @@ const EMPTY_READINESS: ReadinessState = {
   shellCached: false,
   persistent: false,
   corridor: null,
+  corridorFeatures: null,
 };
 
 /**
@@ -126,6 +129,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
           usage: estimateResult.status === "fulfilled" ? estimateResult.value?.usage : undefined,
           quota: estimateResult.status === "fulfilled" ? estimateResult.value?.quota : undefined,
           corridor: pack.pack?.corridor ?? null,
+          corridorFeatures: pack.pack?.corridorFeatures ?? null,
         });
       }
     };
@@ -180,13 +184,19 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             icon={<Mountain className="mt-0.5 h-4 w-4" />}
             title={
               packReady && state.corridor
-                ? "Terrain corridor recorded"
+                ? state.corridorFeatures
+                  ? "Terrain corridor and OSM context recorded"
+                  : "Terrain corridor recorded"
                 : "Terrain corridor missing — update the pack while online"
             }
             ok={Boolean(packReady && state.corridor)}
             detail={
               packReady && state.corridor
-                ? describePersistedCorridor(state.corridor)
+                ? `${describePersistedCorridor(state.corridor)}. ${
+                  state.corridorFeatures
+                    ? describeCorridorFeatures(state.corridorFeatures)
+                    : "OSM context is not stored on this pack. Update it while online if you want nearby trails, roads, water, and shelters."
+                }`
                 : packReady
                   ? "This pack has no corridor record. Update the offline pack while online to store coverage and the planned download size."
                   : "Save the route pack to record the planned terrain corridor. Terrain tiles themselves are not downloaded yet."

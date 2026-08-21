@@ -118,7 +118,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Terrain target</p>
             <p className="mt-1 text-sm font-medium">{corridorCoverageLabel(corridor)}</p>
             <p className="text-xs text-muted-foreground">
-              {corridorSizeLabel(corridor)} · bbox estimate. Stored on the pack when you prepare offline. Terrain tiles are not downloaded yet.
+              {corridorSizeLabel(corridor)} · bbox estimate. Prepare stores this spec plus nearby OSM vectors when Overpass answers. Terrain tiles are not downloaded.
             </p>
           </div>
           <div>
@@ -241,7 +241,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
           <h3 className="font-medium">Planned offline context layers</h3>
           <div className="flex flex-wrap gap-2">{corridor.layers.map((layer) => <Badge key={layer} variant="secondary">{layer}</Badge>)}</div>
           <p className="text-xs text-muted-foreground">
-            {corridorSizeLabel(corridor)} for these layers (bounding-box estimate). The production fallback remains the route-only Safety Map until a terrain provider is integrated.
+            {corridorSizeLabel(corridor)} for these layers (bounding-box estimate). Vector layers (trails, roads, water, shelters, campsites, landmarks) are fetched from OpenStreetMap when you prepare. Hillshade and contours stay as size estimates only — tiles are not downloaded. The Safety Map remains the guaranteed fallback.
           </p>
         </div>
       </CardContent>

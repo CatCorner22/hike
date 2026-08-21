@@ -7,6 +7,7 @@ import { formatHarvestCard, HARVEST_DISCLAIMER } from "@/lib/safety/survival-har
 import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
 import { formatGuardianMessage, GUARDIAN_NO_DISTRESS } from "@/lib/safety/guardian-message";
 import { buildRoutePack, validateRoutePack } from "@/lib/offline/route-pack";
+import { parseCorridorOverpassResponse } from "@/lib/osm/corridor-overpass";
 import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 
 describe("landnav feature probes", () => {
@@ -71,5 +72,17 @@ describe("landnav feature probes", () => {
       ...pack,
       corridor: { ...pack.corridor!, layers: [...pack.corridor!.layers, "backdoor" as never] },
     })).toContain("terrain corridor");
+  });
+
+  it("rejects poisoned OSM corridor features on an otherwise valid pack", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.8]] };
+    const pack = buildRoutePack({ id: "plan-honest", name: "Honest", geometry });
+    const features = parseCorridorOverpassResponse({
+      routeId: "plan-honest",
+      bbox: pack.corridor!.bbox,
+      elements: [{ type: "node", id: 1, tags: { amenity: "shelter" }, lat: 37.75, lon: -119.45 }],
+    });
+    expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, routeId: "plan-foreign" } })).toContain("corridor features");
+    expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, disclaimer: "safe to drink" } })).toContain("corridor features");
   });
 });
