@@ -408,13 +408,14 @@ export function buildRoutePack(input: {
       : "Route geometry is invalid — cannot navigate safely.");
   }
   const aliases = uniqueAliases(input.id, input.aliases);
+  const computedBbox = bboxFromGeometry(input.geometry, 0.004);
   const pack: RoutePack = {
     id: input.id,
     canonicalId: input.id,
     aliases,
     name: input.name,
     geometry: input.geometry,
-    bbox: input.bbox ?? bboxFromGeometry(input.geometry, 0.004) ?? [0, 0, 0, 0],
+    bbox: input.bbox && validStoredRouteBbox(input.bbox) ? input.bbox : computedBbox ?? [0, 0, 0, 0],
     elevationProfile: input.elevationProfile ?? [],
     lengthMeters: 0,
     cumulativeDistancesMeters: cumulativeDistancesForGeometry(input.geometry),

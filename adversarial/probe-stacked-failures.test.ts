@@ -277,6 +277,15 @@ describe("stacked failures: dateline + stale GPS + extras + invented exits", () 
       ...westSample,
       samples: [{ ...westSample.samples[0], lat: 51.5, lng: 0 }],
     }, pack.id, pack.bbox)).toBe(false);
+
+    const fromWorldBbox = buildRoutePack({
+      id: "plan-fiji-osm",
+      name: "OSM world box",
+      geometry: DATELINE,
+      bbox: [-180, -90, 180, 90],
+    });
+    expect(fromWorldBbox.bbox[2] - fromWorldBbox.bbox[0]).toBeLessThan(180);
+    expect(isFixNearRouteBbox(51.5, 0, fromWorldBbox.bbox)).toBe(false);
     const poisoned = poisonEveryExtra(pack);
     const { pack: usable, stripped } = sanitizeRoutePackForUse(poisoned);
     expect(validateRoutePack(usable)).toBeNull();
