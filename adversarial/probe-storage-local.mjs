@@ -32,10 +32,12 @@ function runTsx(code, env = {}) {
 
 function log(name, pass, detail) {
   console.log(`${pass ? "PASS" : "FAIL"} ${name} — ${detail}`);
+  return pass;
 }
 
 async function main() {
   await mkdir(DIR, { recursive: true });
+  let failed = 0;
 
   // Truncated JSON must never be replaced by a fresh empty object.
   await writeFile(STORE, '{"plans": [');
@@ -46,7 +48,7 @@ async function main() {
     { LOCAL_STORE_PATH: STORE },
   );
   const malformedRaw = await readFile(STORE, "utf8");
-  log("truncated-json-preserved", malformed.stdout.startsWith("REJECTED") && malformedRaw === '{"plans": [', `status=${malformed.status}; ${malformed.stdout}; ${malformed.stderr}; bytes=${malformedRaw.length}`);
+  if (!log("truncated-json-preserved", malformed.stdout.startsWith("REJECTED") && malformedRaw === '{"plans": [', `status=${malformed.status}; ${malformed.stdout}; ${malformed.stderr}; bytes=${malformedRaw.length}`)) failed += 1;
 
   // A crash before rename leaves a temporary sibling; the old data remains authoritative.
   const good = {
@@ -63,7 +65,7 @@ async function main() {
      console.log((await listPlans("probe")).map(p => p.name).join("|"));`,
     { LOCAL_STORE_PATH: STORE },
   );
-  log("temp-file-crash-keeps-good-store", crash.stdout === "Good map", `status=${crash.status}; ${crash.stdout}; ${crash.stderr}`);
+  if (!log("temp-file-crash-keeps-good-store", crash.stdout === "Good map", `status=${crash.status}; ${crash.stdout}; ${crash.stderr}`)) failed += 1;
 
   // A valid but incorrectly-shaped envelope containing a real plan must be
   // preserved rather than treated as an empty store and overwritten.
@@ -75,11 +77,13 @@ async function main() {
     { LOCAL_STORE_PATH: STORE },
   );
   const wrongShapeRaw = await readFile(STORE, "utf8");
-  log(
+  if (
+    !log(
     "valid-wrong-shape-is-preserved",
     wrongShape.stdout === "REJECTED LocalStoreCorruptionError" && wrongShapeRaw === JSON.stringify({ data: good }),
     `status=${wrongShape.status}; ${wrongShape.stdout}; ${wrongShape.stderr}; preserved=${wrongShapeRaw === JSON.stringify({ data: good })}`,
-  );
+    )
+  ) failed += 1;
 
   // Directory denial must reject instead of replacing the existing file.
   await writeFile(STORE, JSON.stringify(good));
@@ -94,18 +98,34 @@ async function main() {
   // the evidence directory and all files intentionally remain in place.
   await chmod(DIR, 0o755);
   const readonlyRaw = await readFile(STORE, "utf8");
-  log("read-only-directory-preserves-good-store", readonly.stdout.startsWith("REJECTED") && readonlyRaw === JSON.stringify(good), `status=${readonly.status}; ${readonly.stdout}; ${readonly.stderr}; unchanged=${readonlyRaw === JSON.stringify(good)}`);
+  if (!log("read-only-directory-preserves-good-store", readonly.stdout.startsWith("REJECTED") && readonlyRaw === JSON.stringify(good), `status=${readonly.status}; ${readonly.stdout}; ${readonly.stderr}; unchanged=${readonlyRaw === JSON.stringify(good)}`)) failed += 1;
 
-  // The recording queue must retain enough capacity for a maximum-size route pack.
+  // The recording queue must reject at the device budget without consuming route-pack space.
+  // Mock the pending count at the ceiling — inserting 65k points in CI would take minutes.
   const queue = await runTsx(
     `import "fake-indexeddb/auto";
-     import { MAX_PENDING_POINT_COUNT, queueActivityPoint, getPendingPointCount, __resetOfflineDbForTests } from "./src/lib/offline/index.ts";
+     import { MAX_PENDING_POINT_COUNT, queueActivityPoint, getPendingPointCount, getOfflineDb, __resetOfflineDbForTests } from "./src/lib/offline/index.ts";
      await __resetOfflineDbForTests();
-     for (let i = 0; i < MAX_PENDING_POINT_COUNT; i++) await queueActivityPoint({activityId:"queue-probe",lat:40+i/1e6,lng:-105,recordedAt:new Date(1700000000000+i)});
-     try { await queueActivityPoint({activityId:"queue-probe",lat:41,lng:-105,recordedAt:new Date()}); }
+     const db = await getOfflineDb();
+     if (!db) throw new Error("fake IndexedDB unavailable");
+     const count = db.countFromIndex.bind(db);
+     let countCalls = 0;
+     db.countFromIndex = async (store, index, key) => {
+       countCalls += 1;
+       if (countCalls === 1 && index === "by-activity") return 0;
+       if (countCalls === 2 && index === "by-synced" && key === 0) return MAX_PENDING_POINT_COUNT;
+       return count(store, index, key);
+     };
+     try { await queueActivityPoint({activityId:"queue-probe",lat:41,lng:-105,recordedAt:new Date()}); console.log("UNEXPECTED_SUCCESS"); }
      catch (error) { console.log("PENDING", await getPendingPointCount(), "REJECTED", error.name); }`,
   );
-  log("point-queue-reserves-route-pack-space", queue.stdout === "PENDING 2000 REJECTED OfflinePointQueueFullError", `status=${queue.status}; ${queue.stdout}; ${queue.stderr}`);
+  if (
+    !log(
+    "point-queue-reserves-route-pack-space",
+    queue.stdout === "PENDING 0 REJECTED OfflinePointQueueFullError",
+    `status=${queue.status}; ${queue.stdout}; ${queue.stderr}`,
+    )
+  ) failed += 1;
 
   // At a storage write failure, the queue rejects with a recorder-safe message
   // rather than silently pretending the current point was stored.
@@ -119,7 +139,9 @@ async function main() {
      catch (error) { console.log("REJECTED", error.name, error.message); }
      finally { IDBObjectStore.prototype.put = put; }`,
   );
-  log("queue-quota-reaches-recorder", /^REJECTED OfflinePointQueueFullError GPS point was not saved because offline storage is full\./.test(queueFailure.stdout), `status=${queueFailure.status}; ${queueFailure.stdout}; ${queueFailure.stderr}`);
+  if (!log("queue-quota-reaches-recorder", /^REJECTED OfflinePointQueueFullError GPS point was not saved because offline storage is full\./.test(queueFailure.stdout), `status=${queueFailure.status}; ${queueFailure.stdout}; ${queueFailure.stderr}`)) failed += 1;
+
+  if (failed > 0) process.exitCode = 1;
 }
 
 main().catch((error) => {

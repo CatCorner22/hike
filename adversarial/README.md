@@ -28,28 +28,39 @@ them is a bug that already happened once:
 - `xss-probe.test.ts` — URL sinks and the LLM prompt-injection surface
 - `api-owner-store.test.ts` — device-scoped ownership isolation
 
-## Probes (run manually)
+## Probes
 
-Need a production server, because the service worker is disabled in dev:
+Most probes need a production server because the service worker is disabled in dev. The
+`offline-navigation` CI job runs the full wired set after `npm run build` and
+`next start --port 3111` (see `.github/workflows/ci.yml`).
+
+Reproduce locally:
 
 ```bash
 npm run build
+SESSION_SECRET="$(openssl rand -base64 32)" \
 OWNER_TOKEN_SECRET="$(openssl rand -base64 32)" \
-  ALLOW_LOCAL_STORE_IN_PRODUCTION=true \
-  npx next start --port 3111 &
+ALLOW_LOCAL_STORE_IN_PRODUCTION=true \
+npx next start --port 3111 &
+export BASE=http://127.0.0.1:3111
 ```
 
-| Probe | What it does |
-| --- | --- |
-| `node adversarial/api-probe.mjs` | Fuzzing, injection, size limits, IDOR, response hygiene |
-| `node adversarial/offline-adversarial.mjs` | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew |
-| `node adversarial/gps-adversarial.mjs` | Teleports, frozen fixes, null island, antimeridian positions |
-| `node adversarial/probe-storage-browser.mjs` | Eviction UI, schema errors, corrupt pack refusal (CI) |
-| `node adversarial/probe-storage-local.mjs` | JSON fallback corruption, point-queue limits (CI) |
-| `node adversarial/probe-storage-weather-stall.mjs` | Pack save completes when weather fetch stalls |
-| `node adversarial/retest-concurrency.mjs` | 50 parallel writes; must retain 50/50 |
-| `node adversarial/csp-check.mjs` | Confirms the CSP does not break the map |
-| `npx vitest run adversarial/perf.bench.ts` | Scale benchmarks; writes `perf-results.json` |
+Restart the server after every rebuild — a stale `next start` on the same port serves the
+previous build’s chunks and the service worker install will hang on 404 precache entries.
+
+| Probe | CI | What it does |
+| --- | --- | --- |
+| `node e2e/offline-navigation.mjs` | yes | Cold/warm offline navigate, ownership, durable storage UX |
+| `node adversarial/offline-adversarial.mjs` | yes | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew |
+| `node adversarial/gps-adversarial.mjs` | yes | Teleports, frozen fixes, null island, antimeridian positions |
+| `node adversarial/probe-storage-browser.mjs` | yes | Eviction UI, schema errors, corrupt pack refusal |
+| `node adversarial/probe-storage-local.mjs` | yes | JSON fallback corruption, point-queue limits |
+| `node adversarial/probe-new-activity-pause.mjs` | yes | Pause/resume must not count movement while paused |
+| `node adversarial/api-probe.mjs` | yes | Fuzzing, injection, size limits, IDOR, response hygiene |
+| `node adversarial/retest-concurrency.mjs` | yes | 50 parallel writes; must retain 50/50 |
+| `node adversarial/csp-check.mjs` | yes | Confirms the CSP does not break the map |
+| `node adversarial/probe-storage-weather-stall.mjs` | manual | Pack save completes when weather fetch stalls |
+| `npx vitest run adversarial/perf.bench.ts` | bench job | Scale benchmarks; writes `perf-results.json` |
 
 ## Performance baselines
 
