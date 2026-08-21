@@ -186,6 +186,27 @@ describe("route pack integrity boundaries", () => {
     expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
   });
 
+  it("persists a terrain corridor and still accepts legacy packs without one", async () => {
+    const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
+    expect(pack.corridor?.routeId).toBe("plan-corridor");
+    expect(pack.corridor?.bufferMeters).toBeGreaterThan(0);
+    await saveRoutePack(pack);
+    const loaded = await getRoutePack("plan-corridor");
+    expect(loaded?.corridor?.routeId).toBe("plan-corridor");
+    expect(loaded?.corridor?.layers).toContain("hillshade");
+
+    const { corridor: _omitted, ...legacy } = pack;
+    expect(validateRoutePack(legacy)).toBeNull();
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, routeId: "someone-elses-trail" },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bufferMeters: 50_000 },
+    })).toContain("terrain corridor");
+  });
+
   it("aborts the payload transaction when an alias write throws synchronously", async () => {
     const original = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function patchedPut(this: IDBObjectStore, value: unknown) {

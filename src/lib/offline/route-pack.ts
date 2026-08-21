@@ -1,6 +1,11 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
 import type { PackWeather } from "@/lib/offline/pack-weather";
+import {
+  buildTerrainCorridorSpec,
+  validTerrainCorridor,
+  type TerrainCorridorSpec,
+} from "@/lib/offline/terrain-corridor";
 
 /**
  * Offline packs have an intentionally conservative ceiling.  A route above this
@@ -35,6 +40,11 @@ export interface RoutePack {
   cachedAt: string;
   version: number;
   weather?: PackWeather;
+  /**
+   * Planned offline terrain corridor. Optional on legacy packs so they stay
+   * navigable; prepare-offline writes it on every new save.
+   */
+  corridor?: TerrainCorridorSpec;
 }
 
 interface RoutePackAlias {
@@ -187,6 +197,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
     return "Saved route weather snapshot is invalid.";
   }
+  if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id)) {
+    return "Saved route terrain corridor is invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -274,6 +287,7 @@ export function buildRoutePack(input: {
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   weather?: PackWeather;
+  corridor?: TerrainCorridorSpec;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -296,6 +310,7 @@ export function buildRoutePack(input: {
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
     weather: input.weather,
+    corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);

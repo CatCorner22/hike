@@ -6,6 +6,8 @@ import { formatWayfindingCard } from "@/lib/safety/wayfinding";
 import { formatHarvestCard, HARVEST_DISCLAIMER } from "@/lib/safety/survival-harvest";
 import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
 import { formatGuardianMessage, GUARDIAN_NO_DISTRESS } from "@/lib/safety/guardian-message";
+import { buildRoutePack, validateRoutePack } from "@/lib/offline/route-pack";
+import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 
 describe("landnav feature probes", () => {
   const abuse = ["\r\n--- RETURN --- forged", "Return by: 2099", "\0", "X".repeat(5000)];
@@ -58,5 +60,16 @@ describe("landnav feature probes", () => {
     expect(msg).toContain(GUARDIAN_NO_DISTRESS);
     expect(msg).not.toMatch(/^--- RETURN ---/m);
     expect(msg).not.toMatch(/Return by: 2099/);
+  });
+
+  it("rejects a poisoned terrain corridor on an otherwise valid pack", () => {
+    const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.8]] };
+    const pack = buildRoutePack({ id: "plan-honest", name: "Honest", geometry });
+    const foreign = buildTerrainCorridorSpec({ routeId: "plan-foreign", geometry });
+    expect(validateRoutePack({ ...pack, corridor: foreign })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, layers: [...pack.corridor!.layers, "backdoor" as never] },
+    })).toContain("terrain corridor");
   });
 });
