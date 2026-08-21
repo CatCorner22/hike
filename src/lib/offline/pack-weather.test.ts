@@ -34,6 +34,13 @@ describe("pack weather provenance and freshness", () => {
     });
   });
 
+  it("does not call a future-dated snapshot fresh when the clock is behind", () => {
+    expect(packWeatherFreshness(weather, Date.parse(fetchedAt) - 3_600_000)).toMatchObject({
+      kind: "unavailable",
+      reason: expect.stringMatching(/clock/i),
+    });
+  });
+
   it("does not treat legacy weather without a location as usable current conditions", () => {
     expect(packWeatherFreshness({ ...weather, lat: undefined, lng: undefined })).toMatchObject({
       kind: "unavailable",

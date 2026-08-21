@@ -97,11 +97,20 @@ interface RoutePackDB extends DBSchema {
 }
 
 export type RoutePackStatus = "ready" | "stale" | "invalid" | "missing";
+export type RoutePackExtraField =
+  | "weather"
+  | "corridor"
+  | "corridorFeatures"
+  | "hazardBrief"
+  | "bailoutRoutes"
+  | "bbox";
 export interface RoutePackLookup {
   pack: RoutePack | null;
   status: RoutePackStatus;
   /** Safe, user-facing reason when an untrusted cache record was rejected. */
   error?: string;
+  /** Optional extras dropped so a prepared route stays navigable. */
+  strippedExtras?: RoutePackExtraField[];
 }
 
 let dbPromise: Promise<IDBPDatabase<RoutePackDB>> | null = null;
@@ -130,6 +139,22 @@ function positionCount(geometry: unknown): number {
 
 function coordinateLines(geometry: GeoJSON.LineString | GeoJSON.MultiLineString): GeoJSON.Position[][] {
   return geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+}
+
+/**
+ * Pack bboxes use the compact unwrapped interval from `bboxFromGeometry`.
+ * A dateline walk is stored as e.g. [179.8, -16.5, 180.2, -16.5] — not a
+ * world-spanning [-180, 180] box and not a wrapping min>max GeoJSON box.
+ */
+function validStoredRouteBbox(bbox: unknown): bbox is [number, number, number, number] {
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return false;
+  }
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  if (minLat < -90 || maxLat > 90 || minLat > maxLat || minLng > maxLng) return false;
+  if (maxLng - minLng >= 180) return false;
+  if (minLng < -181 || maxLng > 540) return false;
+  return true;
 }
 
 function finitePosition(position: unknown): position is GeoJSON.Position {
@@ -176,7 +201,7 @@ export function cumulativeDistancesForGeometry(
   return cumulative;
 }
 
-function validPackWeather(weather: unknown): weather is PackWeather {
+export function validPackWeather(weather: unknown): weather is PackWeather {
   if (!weather || typeof weather !== "object") return false;
   const candidate = weather as PackWeather;
   if (candidate.source !== "open-meteo" && candidate.source !== "manual") return false;
@@ -204,9 +229,7 @@ function validationError(pack: RoutePack | null | undefined): string | null {
       ? `Route has more than ${MAX_ROUTE_PACK_COORDINATES.toLocaleString()} coordinates and cannot be navigated safely offline.`
       : "Route geometry is invalid.";
   }
-  if (!Array.isArray(pack.bbox) || pack.bbox.length !== 4 || !pack.bbox.every(Number.isFinite) ||
-    pack.bbox[0] < -180 || pack.bbox[2] > 180 || pack.bbox[1] < -90 || pack.bbox[3] > 90 ||
-    pack.bbox[0] > pack.bbox[2] || pack.bbox[1] > pack.bbox[3]) return "Saved route bounds are invalid.";
+  if (!validStoredRouteBbox(pack.bbox)) return "Saved route bounds are invalid.";
   if (!Number.isFinite(pack.lengthMeters) || pack.lengthMeters < 0) return "Saved route length is invalid.";
   if (!Array.isArray(pack.cumulativeDistancesMeters) || pack.cumulativeDistancesMeters.length !== positionCount(pack.geometry) ||
     pack.cumulativeDistancesMeters.some((value) => !Number.isFinite(value) || value < 0) ||
@@ -254,6 +277,61 @@ function validationError(pack: RoutePack | null | undefined): string | null {
 /** Exported for direct persistence-boundary tests. */
 export function validateRoutePack(pack: RoutePack | null | undefined): string | null {
   return validationError(pack);
+}
+
+/**
+ * Optional extras must never take down a prepared Safety Map. Prepare still
+ * refuses to *write* a poisoned extra; load/list/import drop that extra and
+ * keep the route. Combined failures (offline + bit-flipped forecast + bad
+ * OSM + a distant bailout file) are the field case this exists for.
+ */
+export function sanitizeRoutePackForUse(pack: RoutePack): {
+  pack: RoutePack;
+  stripped: RoutePackExtraField[];
+} {
+  const next: RoutePack = { ...pack };
+  const stripped: RoutePackExtraField[] = [];
+
+  if (!validStoredRouteBbox(next.bbox)) {
+    const computed = bboxFromGeometry(next.geometry, 0.004);
+    if (computed && validStoredRouteBbox(computed)) {
+      next.bbox = computed;
+      stripped.push("bbox");
+    }
+  }
+
+  if (next.weather !== undefined && !validPackWeather(next.weather)) {
+    delete next.weather;
+    stripped.push("weather");
+  }
+
+  if (next.corridor !== undefined && !validTerrainCorridor(next.corridor, next.id, next.geometry)) {
+    delete next.corridor;
+    stripped.push("corridor");
+    if (next.corridorFeatures !== undefined) {
+      delete next.corridorFeatures;
+      stripped.push("corridorFeatures");
+    }
+  } else if (next.corridorFeatures !== undefined) {
+    const featuresOk = Boolean(next.corridor) &&
+      validCorridorFeatures(next.corridorFeatures, next.id, next.corridor!.bboxes);
+    if (!featuresOk) {
+      delete next.corridorFeatures;
+      stripped.push("corridorFeatures");
+    }
+  }
+
+  if (next.hazardBrief !== undefined && !validHazardBrief(next.hazardBrief, next.id, next.bbox)) {
+    delete next.hazardBrief;
+    stripped.push("hazardBrief");
+  }
+
+  if (next.bailoutRoutes !== undefined && !validBailoutRoutes(next.bailoutRoutes, next.id, next.geometry)) {
+    delete next.bailoutRoutes;
+    stripped.push("bailoutRoutes");
+  }
+
+  return { pack: next, stripped };
 }
 
 export function packOwnsAlias(pack: RoutePack, id: string): boolean {
@@ -339,13 +417,14 @@ export function buildRoutePack(input: {
       : "Route geometry is invalid — cannot navigate safely.");
   }
   const aliases = uniqueAliases(input.id, input.aliases);
+  const computedBbox = bboxFromGeometry(input.geometry, 0.004);
   const pack: RoutePack = {
     id: input.id,
     canonicalId: input.id,
     aliases,
     name: input.name,
     geometry: input.geometry,
-    bbox: input.bbox ?? bboxFromGeometry(input.geometry, 0.004) ?? [0, 0, 0, 0],
+    bbox: input.bbox && validStoredRouteBbox(input.bbox) ? input.bbox : computedBbox ?? [0, 0, 0, 0],
     elevationProfile: input.elevationProfile ?? [],
     lengthMeters: 0,
     cumulativeDistancesMeters: cumulativeDistancesForGeometry(input.geometry),
@@ -422,11 +501,19 @@ export async function getRoutePackStatus(id: string): Promise<RoutePackLookup> {
   if (!db) return { pack: null, status: "missing" };
   const found = await findRoutePack(db, id);
   if (found.error) return { pack: null, status: "invalid", error: found.error };
-  const status = routePackStatus(found.pack);
+  if (!found.pack) return { pack: null, status: "missing" };
+  if (found.pack.version !== ROUTE_PACK_VERSION) {
+    return { pack: found.pack, status: "stale" };
+  }
+  const { pack, stripped } = sanitizeRoutePackForUse(found.pack);
+  const error = validationError(pack);
+  if (error) {
+    return { pack: null, status: "invalid", error };
+  }
   return {
-    pack: status === "ready" || status === "stale" ? found.pack : null,
-    status,
-    error: status === "invalid" ? validationError(found.pack) ?? "Saved route pack is invalid." : undefined,
+    pack,
+    status: "ready",
+    strippedExtras: stripped.length ? stripped : undefined,
   };
 }
 
@@ -438,7 +525,13 @@ export async function getRoutePack(id: string): Promise<RoutePack | null> {
 export async function listRoutePacks(): Promise<RoutePack[]> {
   const db = await getDb();
   if (!db) return [];
-  return (await db.getAll("routePacks")).filter((pack) => routePackStatus(pack) !== "invalid");
+  return (await db.getAll("routePacks")).flatMap((pack) => {
+    if (pack.version !== ROUTE_PACK_VERSION) {
+      return routePackStatus(pack) !== "invalid" ? [pack] : [];
+    }
+    const sanitized = sanitizeRoutePackForUse(pack).pack;
+    return validationError(sanitized) ? [] : [sanitized];
+  });
 }
 
 export async function hasRoutePack(id: string): Promise<boolean> {

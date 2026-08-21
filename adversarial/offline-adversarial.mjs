@@ -176,6 +176,60 @@ try {
     await env.context.close();
   }
 
+  // Optional extras are not the Safety Map. Poison weather, corridor, OSM,
+  // forecast, and a fake bailout together, then go offline. The route must
+  // still render — a bit-flipped forecast must not blank the trail.
+  {
+    const planId = await createPlan("stacked extras poison");
+    const env = await openSeeded(planId);
+    try {
+      await replacePack(env.page, `plan-${planId}`, (p) => ({
+        ...p,
+        weather: { source: "open-meteo", cachedAt: "not-a-date", tempC: Number.NaN },
+        corridor: p.corridor
+          ? { ...p.corridor, routeId: "foreign-trail" }
+          : { routeId: "foreign-trail", bufferMeters: 1, layers: ["hillshade"], bboxes: [[0, 0, 1, 1]], generatedAt: new Date().toISOString() },
+        corridorFeatures: {
+          routeId: "foreign-trail",
+          fetchedAt: new Date().toISOString(),
+          source: "openstreetmap-overpass",
+          bboxes: [[0, 0, 1, 1]],
+          layersIncluded: ["water"],
+          featureCount: 0,
+          disclaimer: "safe to drink",
+          features: { type: "FeatureCollection", features: [] },
+        },
+        hazardBrief: {
+          routeId: "foreign-trail",
+          source: "open-meteo",
+          disclaimer: "Current weather. You are safe.",
+          generatedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 3600e3).toISOString(),
+          samples: [],
+          observations: [],
+        },
+        bailoutRoutes: [{
+          id: "invented",
+          routeId: "nope",
+          name: "Invented",
+          disclaimer: "shortcut",
+          geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] },
+          join: { lat: 0, lng: 0, alongMeters: 0, offsetMeters: 0 },
+          lengthMeters: 100,
+        }],
+      }));
+      const s = await offlineReload(env);
+      log(
+        "stacked/poisoned-extras-offline-navigates",
+        s.ready && !s.appError && !s.blank && !s.browserError,
+        s.text.slice(0, 140).replace(/\s+/g, " "),
+      );
+    } catch (e) {
+      log("stacked/poisoned-extras-offline-navigates", false, String(e));
+    }
+    await env.context.close();
+  }
+
   // Alias conflict: lookup resolves whichever pointer was last written, even if payload's aliases disagree.
   {
     const planId = await createPlan("alias conflict"); const env = await openSeeded(planId);

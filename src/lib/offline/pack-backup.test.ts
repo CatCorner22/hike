@@ -42,13 +42,18 @@ describe("route pack backup", () => {
     })))).toMatch(/older pack format/);
   });
 
-  it("rejects a poisoned corridor inside an otherwise wrapped backup", () => {
+  it("imports a backup after stripping a poisoned corridor, keeping the route", () => {
     const pack = buildRoutePack({ id: "plan-backup", name: "Backup route", geometry });
     const honest = JSON.parse(serializeRoutePackBackup(pack)) as { pack: typeof pack };
     honest.pack = {
       ...honest.pack,
       corridor: { ...honest.pack.corridor!, routeId: "someone-else" },
     };
-    expect(backupParseError(parseRoutePackBackup(JSON.stringify(honest)))).toMatch(/terrain corridor/);
+    const parsed = parseRoutePackBackup(JSON.stringify(honest));
+    expect(backupParseError(parsed)).toBeNull();
+    if ("pack" in parsed) {
+      expect(parsed.pack.geometry).toEqual(pack.geometry);
+      expect(parsed.pack.corridor).toBeUndefined();
+    }
   });
 });

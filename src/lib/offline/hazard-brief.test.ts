@@ -176,6 +176,10 @@ describe("hazard brief validation and freshness", () => {
 
   it("marks the snapshot stale after six hours and never as live weather", () => {
     expect(hazardBriefFreshness(brief, NOW + 60_000).kind).toBe("fresh");
+    expect(hazardBriefFreshness(brief, NOW - 3_600_000)).toMatchObject({
+      kind: "unavailable",
+      reason: expect.stringMatching(/clock/i),
+    });
     expect(hazardBriefFreshness(brief, NOW + HAZARD_BRIEF_MAX_AGE_MS + 1)).toMatchObject({
       kind: "stale",
       reason: expect.stringMatching(/older than 6 hours/i),

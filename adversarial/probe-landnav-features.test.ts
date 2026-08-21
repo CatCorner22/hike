@@ -90,13 +90,18 @@ describe("landnav feature probes", () => {
     expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, disclaimer: "safe to drink" } })).toContain("corridor features");
   });
 
-  it("rejects a pack backup that drops the device-only disclaimer or wraps a foreign corridor", () => {
+  it("rejects a forged backup disclaimer and strips a foreign corridor on import", () => {
     const geometry: GeoJSON.LineString = { type: "LineString", coordinates: [[-119.5, 37.7], [-119.4, 37.8]] };
     const pack = buildRoutePack({ id: "plan-honest", name: "Honest", geometry });
     const honest = JSON.parse(serializeRoutePackBackup(pack)) as { disclaimer: string; pack: typeof pack };
     expect(backupParseError(parseRoutePackBackup(JSON.stringify({ ...honest, disclaimer: "Synced to cloud. You are safe." })))).toMatch(/disclaimer/);
     honest.pack = { ...honest.pack, corridor: { ...honest.pack.corridor!, routeId: "plan-foreign" } };
-    expect(backupParseError(parseRoutePackBackup(JSON.stringify(honest)))).toMatch(/terrain corridor/);
+    const imported = parseRoutePackBackup(JSON.stringify(honest));
+    expect(backupParseError(imported)).toBeNull();
+    if ("pack" in imported) {
+      expect(imported.pack.geometry).toEqual(geometry);
+      expect(imported.pack.corridor).toBeUndefined();
+    }
   });
 
   it("rejects a poisoned forecast brief on an otherwise valid pack", () => {
