@@ -8,7 +8,7 @@ import {
 describe("device heading", () => {
   it("reads iOS webkitCompassHeading", () => {
     expect(
-      headingFromOrientationEvent({ webkitCompassHeading: 90 } as DeviceOrientationEvent),
+      headingFromOrientationEvent({ webkitCompassHeading: 90 } as unknown as DeviceOrientationEvent),
     ).toBe(90);
   });
 

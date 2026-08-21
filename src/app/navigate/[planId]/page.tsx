@@ -14,6 +14,7 @@ import { formatOfflineRouteStorageError } from "@/components/offline/offline-rea
 import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
+import { useDeviceHeading } from "@/hooks/use-device-heading";
 import { fuseNavHeading, headingSourceLabel } from "@/lib/safety/device-heading";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatElevation } from "@/lib/geo";

@@ -30,7 +30,7 @@ describe("landnav feature probes", () => {
   });
 
   it("ignores non-finite orientation values", () => {
-    expect(headingFromOrientationEvent({ webkitCompassHeading: NaN } as DeviceOrientationEvent)).toBeNull();
+    expect(headingFromOrientationEvent({ webkitCompassHeading: NaN } as unknown as DeviceOrientationEvent)).toBeNull();
     expect(fuseNavHeading({ device: Infinity, gps: 90 })).toEqual({ heading: 90, source: "gps" });
   });
 });
