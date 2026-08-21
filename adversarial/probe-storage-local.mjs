@@ -79,9 +79,9 @@ async function main() {
   const wrongShapeRaw = await readFile(STORE, "utf8");
   if (
     !log(
-    "valid-wrong-shape-is-preserved",
-    wrongShape.stdout === "REJECTED LocalStoreCorruptionError" && wrongShapeRaw === JSON.stringify({ data: good }),
-    `status=${wrongShape.status}; ${wrongShape.stdout}; ${wrongShape.stderr}; preserved=${wrongShapeRaw === JSON.stringify({ data: good })}`,
+      "valid-wrong-shape-is-preserved",
+      wrongShape.stdout === "REJECTED LocalStoreCorruptionError" && wrongShapeRaw === JSON.stringify({ data: good }),
+      `status=${wrongShape.status}; ${wrongShape.stdout}; ${wrongShape.stderr}; preserved=${wrongShapeRaw === JSON.stringify({ data: good })}`,
     )
   ) failed += 1;
 
@@ -121,9 +121,9 @@ async function main() {
   );
   if (
     !log(
-    "point-queue-reserves-route-pack-space",
-    queue.stdout === "PENDING 0 REJECTED OfflinePointQueueFullError",
-    `status=${queue.status}; ${queue.stdout}; ${queue.stderr}`,
+      "point-queue-reserves-route-pack-space",
+      queue.stdout === "PENDING 0 REJECTED OfflinePointQueueFullError",
+      `status=${queue.status}; ${queue.stdout}; ${queue.stderr}`,
     )
   ) failed += 1;
 

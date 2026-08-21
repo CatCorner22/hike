@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
 import { unwrapLongitude } from "@/lib/geo/antimeridian";
-import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
+import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -142,29 +142,41 @@ export function SafetyNavMap({
           ctx.font = "12px sans-serif";
           ctx.fillText("UTM grid unavailable at this latitude", 12, topInsetPx + 38);
         } else {
-        const step = 100;
-        const reach = 500;
-        const startE = Math.floor((u.easting - reach) / step) * step;
-        const startN = Math.floor((u.northing - reach) / step) * step;
-        for (let e = startE; e <= startE + reach * 2; e += step) {
-          ctx.beginPath();
-          for (let n = startN, i = 0; n <= startN + reach * 2; n += step, i++) {
-            const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = toPx(geo.lng, geo.lat);
-            if (i === 0) ctx.moveTo(p.x, p.y);
-            else ctx.lineTo(p.x, p.y);
+        const drawUtmLines = (step: number, lineWidth: number, alpha: number) => {
+          ctx.lineWidth = lineWidth;
+          ctx.globalAlpha = alpha;
+          const reach = step >= 1000 ? 1500 : 500;
+          const startE = Math.floor((u.easting - reach) / step) * step;
+          const startN = Math.floor((u.northing - reach) / step) * step;
+          for (let e = startE; e <= startE + reach * 2; e += step) {
+            ctx.beginPath();
+            for (let n = startN, i = 0; n <= startN + reach * 2; n += step, i++) {
+              const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
+              const p = toPx(geo.lng, geo.lat);
+              if (i === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
           }
-          ctx.stroke();
-        }
-        for (let n = startN; n <= startN + reach * 2; n += step) {
-          ctx.beginPath();
-          for (let e = startE, i = 0; e <= startE + reach * 2; e += step, i++) {
-            const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = toPx(geo.lng, geo.lat);
-            if (i === 0) ctx.moveTo(p.x, p.y);
-            else ctx.lineTo(p.x, p.y);
+          for (let n = startN; n <= startN + reach * 2; n += step) {
+            ctx.beginPath();
+            for (let e = startE, i = 0; e <= startE + reach * 2; e += step, i++) {
+              const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
+              const p = toPx(geo.lng, geo.lat);
+              if (i === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
           }
-          ctx.stroke();
+          ctx.globalAlpha = 1;
+        };
+        drawUtmLines(1000, 1.75, 0.55);
+        drawUtmLines(100, 1, 0.35);
+        const mgrsLabel = formatUsng(user.lat, user.lng, 3);
+        if (mgrsLabel) {
+          ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#cbd5e1";
+          ctx.font = "10px sans-serif";
+          ctx.fillText(`1 km · ${mgrsLabel}`, 12, topInsetPx + 38);
         }
         }
       } else {
