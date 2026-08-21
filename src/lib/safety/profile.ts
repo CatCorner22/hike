@@ -52,12 +52,48 @@ interface SafetyDB extends DBSchema {
   checkinSettings: { key: string; value: CheckinSettings & { id: string } };
 }
 
-let dbPromise: Promise<IDBPDatabase<SafetyDB>> | null = null;
+const SAFETY_DB_VERSION = 2;
 
-export function getSafetyDb() {
+/**
+ * Opening IndexedDB can hang indefinitely: if another tab still holds an older
+ * version open, the upgrade blocks and the promise simply never settles. Past
+ * this, degrade instead of waiting — callers all handle a null database.
+ */
+const DB_OPEN_TIMEOUT_MS = 5_000;
+
+let dbPromise: Promise<IDBPDatabase<SafetyDB> | null> | null = null;
+let openAttempt: Promise<IDBPDatabase<SafetyDB>> | null = null;
+let liveDb: IDBPDatabase<SafetyDB> | null = null;
+
+/**
+ * The safety database, or null if this device cannot give us one right now.
+ *
+ * Both failure modes here used to be permanent and silent. A rejected `openDB`
+ * — storage denied in a private window, quota exhausted, a corrupt store — was
+ * cached in `dbPromise` forever, and every later call re-threw it. A blocked
+ * upgrade never settled at all. No caller has a `catch`: `readiness-gate` and
+ * the safety panel simply never set their state, and `unlockIfReady` on the
+ * navigate page never reached `setNavUnlocked(true)`, so **Navigate stayed
+ * locked with nothing on screen explaining why**.
+ *
+ * Now a failure resolves to null (which every caller already handles as "no
+ * stored profile") and clears the cache so the next call genuinely retries.
+ */
+export function getSafetyDb(): Promise<IDBPDatabase<SafetyDB> | null> | null {
   if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<SafetyDB>("hike-safety", 2, {
+  if (!dbPromise) dbPromise = openSafetyDb();
+  return dbPromise;
+}
+
+function forgetSafetyDb() {
+  dbPromise = null;
+  openAttempt = null;
+  liveDb = null;
+}
+
+async function openSafetyDb(): Promise<IDBPDatabase<SafetyDB> | null> {
+  if (!openAttempt) {
+    openAttempt = openDB<SafetyDB>("hike-safety", SAFETY_DB_VERSION, {
       upgrade(db, oldVersion) {
         if (oldVersion < 1) {
           db.createObjectStore("profile", { keyPath: "id" });
@@ -71,13 +107,63 @@ export function getSafetyDb() {
           db.createObjectStore("checkinSettings", { keyPath: "id" });
         }
       },
+      // This tab is the one holding an older version open somewhere else. Let go,
+      // or the other tab is the one that hangs.
+      blocking() {
+        const live = liveDb;
+        const pending = openAttempt;
+        forgetSafetyDb();
+        if (live) {
+          live.close();
+          return;
+        }
+        // `blocking` can land in the microtasks between openDB resolving and the
+        // assignment below, so close whatever the open produces instead.
+        void pending?.then((db) => db.close(), () => {});
+      },
+      terminated() {
+        forgetSafetyDb();
+      },
+    });
+    // Attach the handler now, so a rejection can never surface as an unhandled
+    // one, and drop the attempt so a later call opens a fresh connection.
+    openAttempt.catch(() => {
+      openAttempt = null;
     });
   }
-  return dbPromise;
+
+  const attempt = openAttempt;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const db = await Promise.race([
+      attempt,
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), DB_OPEN_TIMEOUT_MS);
+      }),
+    ]);
+    if (!db) {
+      // Still blocked. Keep `openAttempt` so a retry re-awaits the same pending
+      // open rather than stacking a second connection on top of it.
+      dbPromise = null;
+      return null;
+    }
+    liveDb = db;
+    return db;
+  } catch {
+    forgetSafetyDb();
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function getDb() {
   return getSafetyDb();
+}
+
+/** Exposed for tests: drop the cached connection so the next call re-opens. */
+export function __resetSafetyDbForTest() {
+  forgetSafetyDb();
 }
 
 const EMPTY_PROFILE: IceProfile = {
@@ -94,10 +180,24 @@ export async function getIceProfile(): Promise<IceProfile> {
   return (await db.get("profile", "me")) ?? EMPTY_PROFILE;
 }
 
-export async function saveIceProfile(profile: IceProfile) {
+/**
+ * Returns false if the profile did not reach storage.
+ *
+ * This used to be fire-and-forget: the caller does `void saveIceProfile(next)`, so a
+ * quota error or an aborted transaction became an unhandled rejection and the hiker
+ * kept looking at their ICE contact sitting in React state, gone on next launch. The
+ * phone most likely to be out of quota is the one that has been caching map tiles all
+ * week, which is the same phone this is meant to protect.
+ */
+export async function saveIceProfile(profile: IceProfile): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
-  await db.put("profile", { ...profile, id: "me" });
+  if (!db) return false;
+  try {
+    await db.put("profile", { ...profile, id: "me" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function dropWaypoint(
@@ -224,20 +324,32 @@ export function resolveLocalDateTime(
   }
 }
 
-export async function setOverdueAlarm(returnTime: ResolvedLocalTime | null) {
+/**
+ * Returns false if the deadline did not reach storage.
+ *
+ * The panel printed "Deadline: ..." before awaiting this, so a failed write left an
+ * overdue alarm that looked armed and did nothing — the same failure `overdueStatus`
+ * was hardened against from the other direction.
+ */
+export async function setOverdueAlarm(returnTime: ResolvedLocalTime | null): Promise<boolean> {
   const db = await getDb();
-  if (!db) return;
-  if (!returnTime) {
-    await db.delete("overdue", "current");
-    return;
+  if (!db) return false;
+  try {
+    if (!returnTime) {
+      await db.delete("overdue", "current");
+      return true;
+    }
+    await db.put("overdue", {
+      id: "current",
+      returnAt: returnTime.instant.toISOString(),
+      resolvedLocal: returnTime.resolvedLocal,
+      timeZone: returnTime.timeZone,
+      utcOffset: returnTime.utcOffset,
+    });
+    return true;
+  } catch {
+    return false;
   }
-  await db.put("overdue", {
-    id: "current",
-    returnAt: returnTime.instant.toISOString(),
-    resolvedLocal: returnTime.resolvedLocal,
-    timeZone: returnTime.timeZone,
-    utcOffset: returnTime.utcOffset,
-  });
 }
 
 export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {

@@ -32,3 +32,16 @@ describe("sitrep / mist", () => {
     expect(imsafeWarning(["fatigue", "illness"])).toMatch(/fatigue/);
   });
 });
+
+describe("SITREP grid fallback", () => {
+  /** A null grid used to be read over the radio as "null (LAST KNOWN)". */
+  it("falls back to lat/long rather than the word null", () => {
+    const out = sitrep({ lat: 86.2, lng: -60, stale: true });
+    expect(out).not.toMatch(/null/);
+    expect(out).toMatch(/NO GRID — LAT\/LONG 86\.20000 -60\.00000 \(LAST KNOWN\)/);
+  });
+
+  it("keeps the grid when there is one", () => {
+    expect(sitrep({ lat: 37.7, lng: -119.6 })).toMatch(/11S/);
+  });
+});

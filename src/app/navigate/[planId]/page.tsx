@@ -1049,7 +1049,7 @@ export default function NavigatePage() {
                 </button>
                 {navFix && (
                   <p className="navigate-grid-readout font-mono text-sm font-semibold tabular-nums text-foreground">
-                    {formatUsng(navFix.lat, navFix.lng)}
+                    {formatUsng(navFix.lat, navFix.lng) ?? "grid unavailable"}
                     {gpsDenied
                       ? ` · DR ±${drErrorM ?? 25} m`
                       : !gpsTrusted

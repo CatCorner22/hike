@@ -1,3 +1,5 @@
+import { isValidCoordinate } from "@/lib/geo/coords";
+
 /** Synodic month. New moon near 2000-01-06 18:14 UTC. */
 const SYNODIC = 29.530588;
 const NEW_MOON_MS = Date.UTC(2000, 0, 6, 18, 14);
@@ -75,11 +77,44 @@ export function shadowStickHeading(sunAzimuth: number): { shadowToward: number; 
   };
 }
 
+/**
+ * A rounded bearing that stays inside [0, 360).
+ *
+ * `Math.round(359.6)` is 360, and "shadow points ~360°" is a compass reading that
+ * does not exist. Same slip as a full circle rendering as 6400 mils.
+ */
+export function roundBearing(deg: number): number {
+  return Math.round(((deg % 360) + 360) % 360) % 360;
+}
+
+/**
+ * Above this the sun is too near overhead for a shadow to carry a direction.
+ *
+ * At 80° a one-metre stick still throws 18 cm. At 89° — Key West at noon in June,
+ * Hawaii on a Lahaina Noon — it throws **2 cm**, and the bearing of that stub sweeps
+ * **11° per minute**, so it has moved further than a compass rose is marked before you
+ * have finished laying the stick down.
+ */
+export const SHADOW_MAX_ELEVATION_DEG = 80;
+
+/** Shadow thrown by a stick of `stickMetres`, in centimetres. */
+export function shadowLengthCm(elevationDeg: number, stickMetres = 1): number | null {
+  if (!Number.isFinite(elevationDeg) || elevationDeg <= 0 || elevationDeg >= 90) return null;
+  return (stickMetres * 100) / Math.tan((elevationDeg * Math.PI) / 180);
+}
+
+/** Why the sun is no use as a direction right now, when it is nearly overhead. */
+export function overheadSunNote(elevationDeg: number): string {
+  const shadow = shadowLengthCm(elevationDeg);
+  const length = shadow == null ? "almost no" : `only ~${Math.round(shadow)} cm of`;
+  return `Sun is ${Math.round(elevationDeg)}° up — nearly overhead. A 1 m stick throws ${length} shadow and its bearing swings fast this close to noon, so neither the shadow nor a watch dial is a direction now. Use the compass, or wait an hour.`;
+}
+
 export function sunCompassHint(date: Date, lat: number, lng: number): string | null {
   const pos = sunPosition(date, lat, lng);
   if (!pos) return "Sun position unavailable — use a compass.";
   if (pos.elevation < 5) return "Sun too low or below horizon — use moon, stars, or compass.";
+  if (pos.elevation > SHADOW_MAX_ELEVATION_DEG) return overheadSunNote(pos.elevation);
   const stick = shadowStickHeading(pos.azimuth);
-  return `Sun ~${Math.round(pos.azimuth)}° true (elev ${Math.round(pos.elevation)}°). Shadow points ~${Math.round(stick.shadowToward)}° — check your compass against that.`;
+  return `Sun ~${roundBearing(pos.azimuth)}° true (elev ${Math.round(pos.elevation)}°). Shadow points ~${roundBearing(stick.shadowToward)}° — check your compass against that.`;
 }
-import { isValidCoordinate } from "@/lib/geo/coords";

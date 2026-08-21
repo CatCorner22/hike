@@ -13,10 +13,14 @@ import {
   resection,
   resection3,
   timeSpeedDistance,
+  deadReckonUncertaintyM,
+  fixUncertaintyM,
+  greatCircleFix,
 } from "./landnav";
 import { gmAngleCard, toTrueBearing } from "./declination";
 import { formatMgrs10, parseUsng, phonetic } from "./usng";
 import { nineLineMedevac } from "./medevac";
+import * as turf from "@turf/turf";
 
 describe("land nav math", () => {
   it("converts degrees to NATO mils", () => {
@@ -181,5 +185,257 @@ describe("timeSpeedDistance", () => {
     expect(solved).not.toBeNull();
     expect(solved!.minutes).toBe(10);
     expect(solved!.distanceM).toBeCloseTo((5 * 10) / 60 * 1000);
+  });
+});
+
+/** deadReckon is nullable on invalid input; these fixtures are all valid. */
+function at(start: { lat: number; lng: number }, heading: number, metres: number) {
+  const point = deadReckon(start, heading, metres);
+  if (!point) throw new Error(`deadReckon returned null for ${heading}deg / ${metres}m`);
+  return point;
+}
+
+/**
+ * Bearing fixes used to be cut with turf.lineIntersect, a *planar* crossing of
+ * raw lng/lat degrees, while the rays themselves were great circles. The bias
+ * grew with range and latitude and pointed the same way for every pair, so the
+ * three-point spread stayed small while the fix drifted. These cases are
+ * measured against a truth position with perfect, error-free bearings: any
+ * residual here is the code, not the compass.
+ */
+describe("bearing fix geometry", () => {
+  const bearingTo = (from: { lat: number; lng: number }, to: { lat: number; lng: number }) =>
+    (turf.bearing(turf.point([from.lng, from.lat]), turf.point([to.lng, to.lat])) + 360) % 360;
+  const metresApart = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+    turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), { units: "meters" });
+
+  it("resects the exact position from exact bearings, at range and at latitude", () => {
+    // Previously: 65 m out at 10 km / 37.7 N, 328 m at 20 km / 61.2 N,
+    // 1412 m at 50 km / 70 N.
+    for (const truth of [
+      { lat: 37.7, lng: -119.6 },
+      { lat: 61.2, lng: -149.9 },
+      { lat: 70.0, lng: -150.0 },
+      { lat: -41.3, lng: 174.8 },
+      { lat: 0, lng: -70 },
+      { lat: 37.7, lng: 179.98 },
+    ]) {
+      for (const rangeM of [1_000, 10_000, 20_000, 50_000]) {
+        const a = at(truth, 20, rangeM);
+        const b = at(truth, 110, rangeM);
+        const fix = resection(a, bearingTo(truth, a), b, bearingTo(truth, b));
+        expect(fix, `${truth.lat} @ ${rangeM} m`).not.toBeNull();
+        expect(metresApart(truth, fix!.point), `${truth.lat} @ ${rangeM} m`).toBeLessThan(1);
+      }
+    }
+  });
+
+  it("intersects two observer rays on the exact unknown", () => {
+    const target = { lat: 61.2, lng: -149.9 };
+    const a = at(target, 200, 18_000);
+    const b = at(target, 290, 18_000);
+    const hit = intersection(a, bearingTo(a, target), b, bearingTo(b, target));
+    expect(hit).not.toBeNull();
+    expect(metresApart(target, hit!.point)).toBeLessThan(1);
+  });
+
+  it("refuses a cut that is parallel, behind the shooter, or past sight range", () => {
+    const a = { lat: 37.7, lng: -119.6 };
+    const b = { lat: 37.7, lng: -119.5 };
+    expect(greatCircleFix(a, 90, b, 90)).toBeNull();
+    expect(greatCircleFix(a, Number.NaN, b, 90)).toBeNull();
+    // Both rays head away from the crossing.
+    expect(greatCircleFix(a, 270, b, 90, 80_000)).toBeNull();
+    const far = at(a, 45, 900_000);
+    expect(greatCircleFix(a, 45, far, 225)).toBeNull();
+  });
+});
+
+/**
+ * The cocked-hat trap: how tightly three cuts close says almost nothing about
+ * how far the fix is from the party. Bearings off by 0, +3 and -3 degrees put
+ * all three cuts within half a metre of each other, 499 m from the truth — and
+ * the readout called that "Fix spread ~0 m" with no warning.
+ */
+describe("resection confidence", () => {
+  const bearingTo = (from: { lat: number; lng: number }, to: { lat: number; lng: number }) =>
+    (turf.bearing(turf.point([from.lng, from.lat]), turf.point([to.lng, to.lat])) + 360) % 360;
+  const metresApart = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+    turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), { units: "meters" });
+
+  it("does not let three agreeing cuts understate a fix that is far off", () => {
+    const truth = { lat: 37.7, lng: -119.6 };
+    const known = [30, 150, 270].map((brg) => at(truth, brg, 8_000));
+    const fix = resection3([
+      { known: known[0], bearingTo: bearingTo(truth, known[0]) },
+      { known: known[1], bearingTo: (bearingTo(truth, known[1]) + 3) % 360 },
+      { known: known[2], bearingTo: (bearingTo(truth, known[2]) + 357) % 360 },
+    ]);
+    expect(fix).not.toBeNull();
+    const actualError = metresApart(truth, fix!.point);
+    // The trap itself: the cuts really do agree, and the fix really is far off.
+    expect(fix!.spreadM).toBeLessThan(5);
+    expect(actualError).toBeGreaterThan(400);
+    // The quoted radius has to cover it anyway, because it comes from the
+    // geometry rather than from the agreement.
+    expect(fix!.uncertaintyM).not.toBeNull();
+    expect(fix!.uncertaintyM!).toBeGreaterThan(actualError);
+  });
+
+  it("quotes a radius that grows with range and with a shallow cut", () => {
+    const near = fixUncertaintyM(2_000, 2_000, 90)!;
+    const far = fixUncertaintyM(20_000, 20_000, 90)!;
+    const shallow = fixUncertaintyM(2_000, 2_000, 10)!;
+    expect(far / near).toBeCloseTo(10, 1);
+    expect(shallow).toBeGreaterThan(near * 5);
+    // 2 km known points, square cut: hundreds of metres, not tens.
+    expect(near).toBeGreaterThan(150);
+    expect(near).toBeLessThan(400);
+    expect(fixUncertaintyM(2_000, 2_000, 0)).toBeNull();
+    expect(fixUncertaintyM(Number.NaN, 2_000, 90)).toBeNull();
+  });
+
+  it("carries a radius on two-point and intersection fixes too", () => {
+    const truth = { lat: 37.0, lng: -119.0 };
+    const a = at(truth, 20, 4_000);
+    const b = at(truth, 110, 4_000);
+    const fix = resection(a, bearingTo(truth, a), b, bearingTo(truth, b));
+    expect(fix!.uncertaintyM).toBeGreaterThan(0);
+    const hit = intersection(a, bearingTo(a, truth), b, bearingTo(b, truth));
+    expect(hit!.uncertaintyM).toBeGreaterThan(0);
+  });
+});
+
+describe("land-nav readouts that must not mislead", () => {
+  it("reports a full circle as north rather than 6400 mils", () => {
+    expect(degreesToMils(359.99)).toBe(0);
+    expect(degreesToMils(360)).toBe(0);
+    expect(degreesToMils(0)).toBe(0);
+    for (let d = 0; d < 360; d += 0.37) {
+      const mils = degreesToMils(d)!;
+      expect(mils).toBeGreaterThanOrEqual(0);
+      expect(mils).toBeLessThan(6400);
+    }
+  });
+
+  it("never shrinks the dead-reckon ring as the heading error widens", () => {
+    let previous = 0;
+    for (const headingErrorDeg of [0, 15, 45, 80, 89, 90, 120, 179, 400]) {
+      const ring = deadReckonUncertaintyM({ distanceM: 1_000, lastAccuracyM: 10, headingErrorDeg });
+      expect(Number.isFinite(ring), `${headingErrorDeg} deg`).toBe(true);
+      expect(ring, `${headingErrorDeg} deg`).toBeGreaterThanOrEqual(previous);
+      previous = ring;
+    }
+    // Past 90 deg tan() went infinite and then negative: a 120 deg heading
+    // error reported a ring of -1622 m, and 179 deg reported less than 15 deg.
+    expect(deadReckonUncertaintyM({ distanceM: 1_000, lastAccuracyM: 10, headingErrorDeg: 120 }))
+      .toBeGreaterThan(deadReckonUncertaintyM({ distanceM: 1_000, lastAccuracyM: 10, headingErrorDeg: 15 }));
+  });
+
+  it("does not tell the party to turn when no offset was applied", () => {
+    const from = { lat: 37.0, lng: -119.0 };
+    const to = { lat: 37.01, lng: -119.0 };
+    // A negative or non-finite offset is refused outright.
+    for (const offset of [-100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(deliberateOffset(from, to, offset, "right"), `${offset}`).toBeNull();
+    }
+    // Zero still resolves, and must not invent a side to turn toward.
+    const zero = deliberateOffset(from, to, 0, "right");
+    expect(zero).not.toBeNull();
+    expect(zero!.label).not.toMatch(/turn (left|right)/i);
+    expect(zero!.aim.lat).toBeCloseTo(to.lat, 6);
+    expect(zero!.aim.lng).toBeCloseTo(to.lng, 6);
+    expect(deliberateOffset(from, to, 100, "right")!.label).toMatch(/turn left/i);
+  });
+});
+
+describe("dead reckoning across the antimeridian", () => {
+  /**
+   * turf.destination walks straight past +/-180 rather than wrapping, so every leg
+   * that crossed the seam came back as e.g. 180.019 and was thrown away by the
+   * on-globe validator. Dead reckoning returned null for the whole crossing — in the
+   * western Aleutians, Fiji and the Chathams — with no GPS to fall back on, which is
+   * the only situation dead reckoning exists for.
+   */
+  it("wraps rather than discarding a leg that crosses the seam", () => {
+    for (const [lat, lng, heading, metres] of [
+      [37.7, 179.98, 20, 10_000],
+      [51.9, 179.9, 90, 20_000],
+      [-16.5, -179.95, 270, 15_000],
+      [52.0, -179.99, 270, 5_000],
+    ] as const) {
+      const point = deadReckon({ lat, lng }, heading, metres);
+      expect(point, `${lat},${lng} ${heading}deg`).not.toBeNull();
+      expect(Math.abs(point!.lng), `${lat},${lng}`).toBeLessThanOrEqual(180);
+      expect(Math.abs(point!.lat)).toBeLessThanOrEqual(90);
+      // The wrapped point is still the right distance away.
+      const back = rangeAzimuth({ lat, lng }, point!);
+      expect(back).not.toBeNull();
+      expect(back!.meters, `${lat},${lng}`).toBeCloseTo(metres, -1);
+    }
+  });
+
+  it("still refuses genuinely invalid input", () => {
+    expect(deadReckon({ lat: 37, lng: -119 }, Number.NaN, 100)).toBeNull();
+    expect(deadReckon({ lat: 37, lng: -119 }, 20, -100)).toBeNull();
+    expect(deadReckon({ lat: Number.NaN, lng: -119 }, 20, 100)).toBeNull();
+  });
+});
+
+/**
+ * Found by review on PR #35, verified before fixing.
+ */
+describe("bearing fixes near the seam and at high latitude", () => {
+  const bearingTo = (from: { lat: number; lng: number }, to: { lat: number; lng: number }) =>
+    (turf.bearing(turf.point([from.lng, from.lat]), turf.point([to.lng, to.lat])) + 360) % 360;
+  const metresApart = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+    turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), { units: "meters" });
+
+  /**
+   * The three-point fix averaged raw longitudes. With cuts straddling +/-180 —
+   * -180.0000, +180.0000, -180.0000 — that mean is **-60**, a fix 9 619 km away
+   * in the Atlantic, which SafetyPanel hands straight to `onGoto`.
+   */
+  it("averages cuts that straddle the antimeridian without crossing the planet", () => {
+    for (const lng of [-179.9999, 180, 179.9999, 179.99]) {
+      const truth = { lat: 37.7, lng };
+      const known = [30, 150, 270].map((brg) => at(truth, brg, 8_000));
+      for (const errors of [[0.02, -0.02, 0.01], [0.05, -0.05, 0.03], [0.1, -0.1, 0.05]]) {
+        const fix = resection3(
+          known.map((point, index) => ({
+            known: point,
+            bearingTo: (bearingTo(truth, point) + errors[index] + 360) % 360,
+          })) as Parameters<typeof resection3>[0],
+        );
+        expect(fix, `${lng} / ${errors}`).not.toBeNull();
+        expect(Math.abs(fix!.point.lng)).toBeLessThanOrEqual(180);
+        expect(metresApart(truth, fix!.point), `${lng} / ${errors}`).toBeLessThan(100);
+      }
+    }
+  });
+
+  /**
+   * `intersection` warns that observers should be 30-150 deg apart "as seen from
+   * the target", but measured the angle between the bearings shot at the two
+   * observers. Over a curved Earth those differ — a true 90 deg cut read as 95.8
+   * at 83 N with observers 79 km out — which can flip the warning near the
+   * threshold and skews the radius derived from it.
+   */
+  it("measures an intersection cut where the rays actually meet", () => {
+    for (const [lat, rangeKm, separation] of [
+      [83, 79, 160],
+      [83, 79, 90],
+      [70, 50, 120],
+      [37.7, 8, 120],
+    ] as const) {
+      const target = { lat, lng: -100 };
+      const a = at(target, 0, rangeKm * 1_000);
+      const b = at(target, separation, rangeKm * 1_000);
+      const hit = intersection(a, bearingTo(a, target), b, bearingTo(b, target));
+      expect(hit, `${lat} / ${separation}`).not.toBeNull();
+      let trueCut = Math.abs(((bearingTo(target, a) - bearingTo(target, b)) % 360 + 360) % 360);
+      if (trueCut > 180) trueCut = 360 - trueCut;
+      expect(hit!.cutDeg, `${lat} / ${separation}`).toBeCloseTo(trueCut, 1);
+    }
   });
 });

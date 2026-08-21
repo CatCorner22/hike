@@ -397,6 +397,31 @@ async function run() {
 
     // Now go offline and cold-open the navigate screen for the first time.
     await context.setOffline(true);
+
+    // Prove the network is actually cut before judging B3, rather than assuming
+    // setOffline did what it says. Cold offline navigate is the app's single most
+    // important promise, and a B3 that passes because the worker quietly reached the
+    // live server would be a green light proving nothing. Offline enforcement for
+    // service-worker fetches is environment-dependent, so check it instead of
+    // trusting it: /api/ is NetworkOnly in the worker, so any response at all here
+    // means the worker still has a network and B3's result is not evidence.
+    const workerStillOnline = await page
+      .evaluate(async (url) => {
+        try {
+          const response = await fetch(url, { cache: "no-store" });
+          return response.status > 0;
+        } catch {
+          return false;
+        }
+      }, `${BASE}/api/trails/search?q=offline-probe-network-check`)
+      .catch(() => false);
+    if (workerStillOnline) {
+      log(
+        "B3b offline is not enforced for the service worker",
+        "WARN",
+        "setOffline did not cut the worker's network, so B3 below does not prove the cached shell was used. Run the CI job, or stop the server before the cold open, to test this for real.",
+      );
+    }
     const navUrl = `${BASE}/navigate/plan-${planId}`;
     let navError = null;
     await page
@@ -410,7 +435,61 @@ async function run() {
     const cold = navError
       ? { ok: false, excerpt: `navigation threw: ${navError}` }
       : await assessNavigateScreen(page);
-    log("B3 cold offline navigate", cold.ok ? "PASS" : "FAIL", cold.excerpt);
+    log(
+      "B3 cold offline navigate",
+      cold.ok ? (workerStillOnline ? "PASS*" : "PASS") : "FAIL",
+      workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt,
+    );
+    if (!cold.ok) {
+      // B1 already proved the shell is in Cache Storage, so a failure here means the
+      // service worker's own lookup disagreed with the probe's. Report the state it
+      // would have seen rather than leaving the next reader to guess: this scenario
+      // passes locally and has only ever failed on a slower CI runner.
+      const why = await page
+        .evaluate(async (url) => {
+          const out = { controller: null, registration: null, cacheNames: [], shellKeys: [], entry: null };
+          try {
+            out.controller = navigator.serviceWorker?.controller?.scriptURL ?? null;
+            const reg = await navigator.serviceWorker?.getRegistration?.();
+            out.registration = reg
+              ? {
+                  scope: reg.scope,
+                  installing: reg.installing?.state ?? null,
+                  waiting: reg.waiting?.state ?? null,
+                  active: reg.active?.state ?? null,
+                }
+              : null;
+          } catch (error) {
+            out.registration = `threw: ${String(error)}`;
+          }
+          try {
+            out.cacheNames = await caches.keys();
+            const cache = await caches.open("hike-navigate-shell");
+            out.shellKeys = (await cache.keys()).map((k) => (typeof k === "string" ? k : k.url));
+            const hit = await cache.match(url, { ignoreSearch: true, ignoreVary: true });
+            if (hit) {
+              const body = await hit.clone().text();
+              out.entry = {
+                status: hit.status,
+                contentType: hit.headers.get("content-type"),
+                markerHeader: hit.headers.get("x-hike-navigate-shell"),
+                bytes: body.length,
+                markerInBody: body.includes("hike-navigate-shell-v2"),
+                // The predicate sw.ts actually gates on.
+                looksLikeNavigateHtml:
+                  body.length >= 512 &&
+                  /<!doctype html|<html[\s>]/i.test(body) &&
+                  /_next\/|self\.__next_f|<body[\s>]/i.test(body),
+              };
+            }
+          } catch (error) {
+            out.entry = `threw: ${String(error)}`;
+          }
+          return out;
+        }, navUrl)
+        .catch((error) => ({ evaluateFailed: String(error) }));
+      log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 1200));
+    }
     results.push(["B: cold offline navigate", cold.ok]);
 
     // Storage durability.
