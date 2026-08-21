@@ -1237,6 +1237,58 @@ succeeds. Two mutations — restoring the alternating sideways step, and restori
 
 ---
 
+## Fifteenth pass — the route card (`route-card.ts`)
+
+The route card is printed onto the SAR paper backup, so its legs are what a searcher
+plots when the phone is dead.
+
+### RC1. Each leg paired a trail distance with a straight-line bearing
+
+`meters` is the distance **along the trail** since the last leg point. `trueDeg` is the
+bearing of the **straight line** between those points. The card printed them as one
+leg — `L1 7° true / 254 m` — as though they described the same thing.
+
+On a straight route they do. On a switchbacked one they are nowhere near each other:
+
+| route shape | printed distance | actual chord | plotting error |
+|---|---|---|---|
+| straight, 2 km | 250 m | 250 m | 0% |
+| gentle arc, 1.3 km | 251 m | 250 m | 0% |
+| **switchbacks, 3 km** | **254 m** | **176 m** | **+44%** |
+| | 269 m | 180 m | +50% |
+
+Switchbacks are what a mountain trail *is*, which is exactly when this card gets
+carried. A searcher plotting `7° true / 254 m` off the paper sheet draws that leg 78 m
+too long, and the error compounds down all twelve legs.
+
+Both numbers are real and a party needs both — the chord is what pairs with the bearing,
+the trail distance is what a pace count measures — so the card now prints both and says
+which is which, and only adds the second number where the leg actually bends:
+
+```
+Each leg: bearing pairs with the STRAIGHT distance; the trail distance is what you pace.
+L1 7° true / 176 m straight (254 m along the trail) cum 254 m 11S KB 7445 8116
+```
+
+A straight route still reads `L1 90° true / 334 m cum 334 m …` with no second figure.
+
+### Also checked, and found sound
+
+`routeCardLegs` samples by path distance rather than flattened chords, keeps
+MultiLineString components independent so no leg is fabricated across a gap the hiker
+cannot walk, warns when the route is discontinuous, and reports honestly when the printed
+legs are only a prefix of the route. A null `rangeAzimuth` rolls the distance into the
+next leg rather than dropping it. `formatRangeAzimuth` already accepts null.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 702/702 green, `npm run build`
+succeeds. Two mutations — making the chord equal the path distance, and printing only the
+trail distance beside the bearing — are each caught.
+
+
+---
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

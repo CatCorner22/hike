@@ -72,3 +72,58 @@ describe("route card safety summary", () => {
     expect(lines).not.toContain("I am safe");
   });
 });
+
+describe("a leg bearing and its distance must be the same measurement", () => {
+  const M_LAT = 111_132;
+  const mPerLng = (lat: number) => 111_320 * Math.cos((lat * Math.PI) / 180);
+  const at = (northM: number, eastM: number): GeoJSON.Position => [
+    -119.6 + eastM / mPerLng(37.7),
+    37.7 + northM / M_LAT,
+  ];
+
+  /** A climbing traverse that reverses every 75 m of gain — an ordinary mountain trail. */
+  function switchbacks(): GeoJSON.LineString {
+    const coordinates: GeoJSON.Position[] = [];
+    for (let i = 0; i <= 80; i++) {
+      const east = (Math.floor(i / 3) % 2 === 0 ? 1 : -1) * 40 * ((i % 3) / 2);
+      coordinates.push(at(i * 25, east));
+    }
+    return { type: "LineString", coordinates };
+  }
+
+  /**
+   * The card paired the distance *along the trail* with the bearing of the
+   * straight line, and printed them as one leg. On switchbacks the trail
+   * distance runs 44-50% longer than the chord, so a searcher plotting these
+   * legs off the paper backup drew every one of them too long, compounding down
+   * the sheet.
+   */
+  it("reports the chord beside the bearing, and says which is which", () => {
+    const legs = routeCardLegs(switchbacks(), 250, 25);
+    expect(legs.length).toBeGreaterThan(5);
+    const bendy = legs.filter((leg) => leg.meters - leg.chordMeters > 20);
+    expect(bendy.length, "the fixture must actually bend").toBeGreaterThan(3);
+    for (const leg of bendy) {
+      expect(leg.chordMeters).toBeLessThan(leg.meters);
+    }
+
+    const card = formatRouteCard("Switchback trail", legs);
+    expect(card).toMatch(/m straight \(\d+ m along the trail\)/);
+    expect(card).toMatch(/bearing pairs with the STRAIGHT distance/);
+    // The printed straight distance has to be the chord, not the path.
+    const first = bendy[0];
+    expect(card).toContain(`${Math.round(first.chordMeters)} m straight (${Math.round(first.meters)} m along the trail)`);
+  });
+
+  it("does not clutter a straight route with a second number", () => {
+    const card = formatRouteCard("Straight route", routeCardLegs(longLine(2_000)));
+    expect(card).not.toMatch(/along the trail\)/);
+    expect(card).toMatch(/° true \/ \d+ m cum/);
+  });
+
+  it("keeps chord and trail distance equal when the route does not bend", () => {
+    for (const leg of routeCardLegs(longLine(2_000))) {
+      expect(leg.chordMeters).toBeCloseTo(leg.meters, 0);
+    }
+  });
+});
