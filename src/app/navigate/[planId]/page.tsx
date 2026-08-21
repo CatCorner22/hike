@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain, Radio } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { CompassHud } from "@/components/navigate/compass-hud";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
 import { ReadinessGate } from "@/components/offline/readiness-gate";
@@ -13,6 +14,8 @@ import { formatOfflineRouteStorageError } from "@/components/offline/offline-rea
 import { SosBeacon } from "@/components/offline/sos-beacon";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
+import { useDeviceHeading } from "@/hooks/use-device-heading";
+import { fuseNavHeading, headingSourceLabel } from "@/lib/safety/device-heading";
 import { useGps } from "@/hooks/use-gps";
 import { formatDistance, formatElevation } from "@/lib/geo";
 import {
@@ -42,6 +45,7 @@ import {
 } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
 import { hikeReadiness } from "@/lib/safety/readiness";
+import { wayfindingAssessment } from "@/lib/safety/wayfinding";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
@@ -161,6 +165,7 @@ export default function NavigatePage() {
   >([]);
 
   const gps = useGps();
+  const deviceHeading = useDeviceHeading(true);
 
   useEffect(() => {
     const tick = () => {
@@ -243,6 +248,22 @@ export default function NavigatePage() {
   const batteryWarning = useBatteryWarning();
   const battery = useBatteryStatus();
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
+  const navHeadingFusion = useMemo(
+    () =>
+      fuseNavHeading({
+        manual: gpsDenied ? parseTypedHeading(deniedHeadingText) : null,
+        device: deviceHeading.heading,
+        gps: gpsTrusted ? gps.fix?.heading : undefined,
+        gpsDenied,
+      }),
+    [
+      gpsDenied,
+      deniedHeadingText,
+      deviceHeading.heading,
+      gpsTrusted,
+      gps.fix?.heading,
+    ],
+  );
 
   const drFix = useMemo(() => {
     if (!gpsDenied || !deniedAnchor) return null;
@@ -259,6 +280,9 @@ export default function NavigatePage() {
     gpsDenied && drFix ? "deadReckon" : gpsTrusted ? "gps" : "lastKnown";
 
   function resolveDeniedHeading(): number | null {
+    if (deviceHeading.heading != null && Number.isFinite(deviceHeading.heading)) {
+      return deviceHeading.heading;
+    }
     const live = gps.fix?.heading;
     if (live != null && Number.isFinite(live)) return live;
     return parseTypedHeading(deniedHeadingText);
@@ -583,6 +607,11 @@ export default function NavigatePage() {
     stationaryMin: stillMin,
     hasSignal: gpsTrusted,
   });
+  const wayfindingWarning = wayfindingAssessment({
+    offTrail: severity === "critical" || severity === "warn",
+    visibilityPoor: Boolean(daylight?.isDark),
+    hasBackstop: backtrackOn,
+  });
   const gpsSpoof = gpsTrusted ? gpsAnomalyWarning(trackPoints) : null;
   const buddyWarn =
     trusted && navFix ? buddySeparationWarning({ lat: navFix.lat, lng: navFix.lng }, waypoints) : null;
@@ -680,6 +709,7 @@ export default function NavigatePage() {
   for (const [key, text] of [
     ["spoof", gpsSpoof],
     ["sere", sereWarning],
+    ["wayfinding", wayfindingWarning],
     ["avy", avyWarn],
     ["profile-avy", routeProfileWarnings.avalanche],
     ["profile-alt", routeProfileWarnings.altitude],
@@ -875,7 +905,8 @@ export default function NavigatePage() {
   const fixOnRoute = Boolean(
     gps.fix && isFixNearRouteBbox(gps.fix.lat, gps.fix.lng, pack.bbox),
   );
-  const navHeading = gpsDenied ? drFix?.heading : gpsTrusted ? gps.fix?.heading : undefined;
+  const navHeading = navHeadingFusion.heading ?? undefined;
+  const navHeadingSource = navHeadingFusion.source;
   const drUncertainty =
     gpsDenied && drFix
       ? deadReckonUncertaintyM({
@@ -1105,17 +1136,23 @@ export default function NavigatePage() {
       </div>
 
       <div className="shrink-0 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-        <div className="mb-2 flex items-center justify-between">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Radio
-              className={`size-3.5 ${gps.status === "live" ? "text-primary" : "text-muted-foreground"}`}
-            />
-            {gpsDenied
-              ? "GPS denied — compass / pace"
-              : gps.fix
-                ? gpsAccuracyLabel(gps.fix.accuracy)
-                : "Waiting for GPS…"}
-          </div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <CompassHud
+            headingTrue={navHeading}
+            lat={navFix?.lat}
+            lng={navFix?.lng}
+            headingUp={headingUp}
+            nightMode={nightMode}
+            sourceLabel={headingSourceLabel(navHeadingSource)}
+            compassPrompt={
+              deviceHeading.permission === "prompt" ? deviceHeading.message : null
+            }
+            onEnableCompass={
+              deviceHeading.permission === "prompt"
+                ? () => void deviceHeading.requestPermission()
+                : undefined
+            }
+          />
           <div className="flex flex-wrap items-center justify-end gap-2">
             {/*
               Only when dead reckoning actually needs a heading. The previous
@@ -1162,7 +1199,13 @@ export default function NavigatePage() {
             </Button>
           </div>
         </div>
-
+        <p className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          {gpsDenied
+            ? "GPS denied — compass / pace"
+            : gps.fix
+              ? gpsAccuracyLabel(gps.fix.accuracy)
+              : "Waiting for GPS…"}
+        </p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat
             icon={MapPin}
