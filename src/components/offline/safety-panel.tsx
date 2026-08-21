@@ -80,6 +80,7 @@ import {
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { buildPaperBackup } from "@/lib/safety/paper-backup";
+import { GuardianShare } from "@/components/safety/guardian-share";
 import { formatPackWeatherNote, isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
 import {
   aceReport,
@@ -998,6 +999,24 @@ export function SafetyPanel({
               Paper backup
             </Button>
           </div>
+          <GuardianShare
+            trailName={trailName}
+            profile={profile}
+            returnAt={
+              returnResolution?.instant
+                ? returnResolution.instant.toISOString()
+                : returnLocal && Number.isFinite(Date.parse(returnLocal))
+                  ? new Date(returnLocal).toISOString()
+                  : null
+            }
+            geometry={geometry}
+            lat={lat}
+            lng={lng}
+            accuracyM={accuracyM}
+            offTrailM={offTrailM}
+            positionSource={positionSource}
+            lastUpdateAt={recordedAt}
+          />
           <p className="text-xs text-muted-foreground">
             Pace beads: {beadsInfo.label}
             {gmt ? ` · ${gmt}` : ""}

@@ -1,7 +1,9 @@
 "use client";
 
 import { APP_NAME } from "@/lib/brand";
-import { useMemo, useState } from "react";
+import { GuardianShare } from "@/components/safety/guardian-share";
+import { getIceProfile, getOverdueAlarm, type IceProfile } from "@/lib/safety/profile";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, MapPinned, ShieldAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +22,7 @@ interface Waypoint { name: string; lat: number; lng: number }
 
 interface PreDeparturePanelProps {
   planId: string;
+  trailName?: string;
   plannedDate?: string | null;
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   waypoints?: Waypoint[] | null;
@@ -60,9 +63,25 @@ function localDeparture(plannedDate: string | null | undefined, time: string): D
   return Number.isFinite(value.getTime()) ? value : null;
 }
 
-export function PreDeparturePanel({ planId, plannedDate, geometry, waypoints = [] }: PreDeparturePanelProps) {
+export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, waypoints = [] }: PreDeparturePanelProps) {
   const [departureTime, setDepartureTime] = useState("");
   const [paceMph, setPaceMph] = useState("2.0");
+  const [profile, setProfile] = useState<IceProfile>({
+    name: "",
+    iceName: "",
+    icePhone: "",
+    medical: "",
+    partySize: 1,
+  });
+  const [returnAt, setReturnAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    void (async () => {
+      const [p, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
+      setProfile(p);
+      setReturnAt(alarm?.returnAt ?? null);
+    })();
+  }, []);
 
   const routeLength = useMemo(() => lineLengthMeters(geometry), [geometry]);
   const corridor = useMemo(() => buildTerrainCorridorSpec({ routeId: `plan-${planId}`, geometry }), [planId, geometry]);
@@ -196,6 +215,22 @@ export function PreDeparturePanel({ planId, plannedDate, geometry, waypoints = [
               <AlertDescription>Add a waypoint beginning with “Bailout:” or “Exit:” only after you have verified a real trail/road exit. {APP_NAME} will not invent a straight-line shortcut.</AlertDescription>
             </Alert>
           )}
+        </div>
+
+        <Separator />
+
+        <div className="space-y-2">
+          <h3 className="font-medium">Leave-behind and Trip Guardian</h3>
+          <p className="text-xs text-muted-foreground">
+            Print a card for the fridge before you lose signal. Guardian texts to ICE never treat a missed update as proof of distress.
+          </p>
+          <GuardianShare
+            trailName={trailName || `Plan ${planId.slice(0, 8)}`}
+            profile={profile}
+            returnAt={returnAt}
+            geometry={geometry}
+            compact
+          />
         </div>
 
         <Separator />

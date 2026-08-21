@@ -212,7 +212,7 @@ export default function PlanDetailPage() {
           <div className="h-64 overflow-hidden rounded-xl border">
             <MapView trailGeometry={geometry} fitBounds={trail?.bbox} />
           </div>
-          <PreDeparturePanel planId={plan.id} plannedDate={plan.plannedDate} geometry={geometry} waypoints={plan.waypoints} />
+          <PreDeparturePanel planId={plan.id} trailName={plan.name} plannedDate={plan.plannedDate} geometry={geometry} waypoints={plan.waypoints} />
         </>
       )}
 
