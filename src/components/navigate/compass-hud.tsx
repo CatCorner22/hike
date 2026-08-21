@@ -9,6 +9,8 @@ export interface CompassHudProps {
   headingUp?: boolean;
   nightMode?: "off" | "red" | "nvg";
   sourceLabel?: string;
+  /** Shown when compass and GPS course diverge — metal interference, slow travel, etc. */
+  headingWarning?: string | null;
   compassPrompt?: string | null;
   onEnableCompass?: () => void;
   className?: string;
@@ -26,6 +28,7 @@ export function CompassHud({
   headingUp = false,
   nightMode = "off",
   sourceLabel,
+  headingWarning,
   compassPrompt,
   onEnableCompass,
   className = "",
@@ -117,6 +120,9 @@ export function CompassHud({
             )}
             <p>{readout.cardinal}</p>
             {sourceLabel && <p className="text-[9px] opacity-80">{sourceLabel}</p>}
+            {headingWarning && (
+              <p className="mt-0.5 font-medium text-amber-600 dark:text-amber-400">{headingWarning}</p>
+            )}
           </>
         ) : (
           <p>No heading</p>

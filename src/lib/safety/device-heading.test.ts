@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   fuseNavHeading,
+  headingAngularDifference,
+  headingDisagreement,
   headingFromOrientationEvent,
   headingSourceLabel,
 } from "./device-heading";
@@ -30,5 +32,18 @@ describe("device heading", () => {
 
   it("labels sources for the HUD", () => {
     expect(headingSourceLabel("compass")).toMatch(/compass/i);
+  });
+
+  it("measures angular difference across the 360° wrap", () => {
+    expect(headingAngularDifference(350, 10)).toBe(20);
+    expect(headingAngularDifference(10, 350)).toBe(20);
+  });
+
+  it("warns when compass and GPS diverge beyond threshold", () => {
+    const warn = headingDisagreement({ compass: 10, gps: 90 });
+    expect(warn.disagrees).toBe(true);
+    expect(warn.deltaDeg).toBe(80);
+    expect(warn.message).toMatch(/differ by 80°/);
+    expect(headingDisagreement({ compass: 10, gps: 30 }).disagrees).toBe(false);
   });
 });

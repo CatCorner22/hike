@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fuseNavHeading, headingFromOrientationEvent } from "@/lib/safety/device-heading";
+import { fuseNavHeading, headingFromOrientationEvent, headingDisagreement } from "@/lib/safety/device-heading";
 import { formatCompassCard } from "@/lib/safety/compass-display";
 import { formatMgrsGridCard } from "@/lib/safety/mgrs-grid";
 import { formatWayfindingCard } from "@/lib/safety/wayfinding";
@@ -32,5 +32,10 @@ describe("landnav feature probes", () => {
   it("ignores non-finite orientation values", () => {
     expect(headingFromOrientationEvent({ webkitCompassHeading: NaN } as unknown as DeviceOrientationEvent)).toBeNull();
     expect(fuseNavHeading({ device: Infinity, gps: 90 })).toEqual({ heading: 90, source: "gps" });
+  });
+
+  it("flags large compass/GPS disagreement", () => {
+    expect(headingDisagreement({ compass: 10, gps: 200 }).disagrees).toBe(true);
+    expect(headingDisagreement({ compass: 10, gps: 20 }).disagrees).toBe(false);
   });
 });

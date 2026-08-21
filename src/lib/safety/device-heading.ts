@@ -42,6 +42,43 @@ export function fuseNavHeading(input: {
   return { heading: null, source: "none" };
 }
 
+/** Smallest angle between two headings (0–180°). */
+export function headingAngularDifference(a: number, b: number): number {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  const na = normalizeHeading(a);
+  const nb = normalizeHeading(b);
+  if (na == null || nb == null) return 0;
+  return Math.abs(((na - nb + 540) % 360) - 180);
+}
+
+const DEFAULT_HEADING_DISAGREEMENT_DEG = 45;
+
+/** Warn when phone compass and GPS course diverge — common near metal, steep terrain, or slow travel. */
+export function headingDisagreement(input: {
+  compass?: number | null;
+  gps?: number | null;
+  thresholdDeg?: number;
+}): { disagrees: boolean; deltaDeg: number | null; message: string | null } {
+  const threshold = input.thresholdDeg ?? DEFAULT_HEADING_DISAGREEMENT_DEG;
+  if (
+    input.compass == null ||
+    input.gps == null ||
+    !Number.isFinite(input.compass) ||
+    !Number.isFinite(input.gps)
+  ) {
+    return { disagrees: false, deltaDeg: null, message: null };
+  }
+  const delta = headingAngularDifference(input.compass, input.gps);
+  if (delta <= threshold) {
+    return { disagrees: false, deltaDeg: delta, message: null };
+  }
+  return {
+    disagrees: true,
+    deltaDeg: delta,
+    message: `Compass and GPS course differ by ${Math.round(delta)}° — verify with map and terrain; calibrate compass away from metal.`,
+  };
+}
+
 export function headingSourceLabel(source: NavHeadingSource): string {
   switch (source) {
     case "manual":
