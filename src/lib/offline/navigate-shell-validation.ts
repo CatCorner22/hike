@@ -1,4 +1,7 @@
 export const NAVIGATE_SHELL_MARKER = "hike-navigate-shell-v2";
+export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
+/** Must match `cacheName` for /_next/static/ in src/sw.ts. */
+export const NAVIGATE_ASSETS_CACHE = "hike-navigate-assets";
 export const MIN_NAVIGATE_DOCUMENT_BYTES = 512;
 
 /** Same predicate the service worker uses before serving a cached navigate document. */

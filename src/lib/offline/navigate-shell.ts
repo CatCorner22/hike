@@ -1,11 +1,12 @@
 import {
   isValidNavigateShellDocument,
+  NAVIGATE_ASSETS_CACHE,
+  NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
-export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
-export { NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
+export { NAVIGATE_ASSETS_CACHE, NAVIGATE_SHELL_CACHE, NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
 export interface WarmNavigateShellResult { ok: boolean; cachedAssets: number; error?: string; }
 
@@ -73,13 +74,17 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
     const html = await response.clone().text();
     const marked = ownMarkedDocument(response, html);
     if (!marked) return { ok: false, cachedAssets: 0, error: "Navigation screen response failed its integrity check." };
-    const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-    await cache.put(url.toString(), marked);
+    const shellCache = await caches.open(NAVIGATE_SHELL_CACHE);
+    const assetCache = await caches.open(NAVIGATE_ASSETS_CACHE);
+    await shellCache.put(url.toString(), marked);
     let cachedAssets = 0;
     await Promise.all(nextStaticUrls(html, url).map(async (assetUrl) => {
       try {
         const asset = await fetch(assetUrl.toString(), { cache: "no-store", credentials: "same-origin" });
-        if (asset.ok) { await cache.put(assetUrl.toString(), asset); cachedAssets += 1; }
+        if (asset.ok) {
+          await assetCache.put(assetUrl.toString(), asset);
+          cachedAssets += 1;
+        }
       } catch { /* precache may still provide this asset */ }
     }));
     // Slow CI runners can read Cache Storage before the put is visible to the SW.
