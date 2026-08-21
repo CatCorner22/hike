@@ -21,21 +21,21 @@ import {
 
 async function requestCorridorFeatures(
   routeId: string,
-  bbox: [number, number, number, number],
+  bboxes: Array<[number, number, number, number]>,
 ): Promise<CorridorFeatureSet | null> {
   try {
     const response = await withNetworkTimeout(
       (signal) => fetch("/api/corridor/features", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ routeId, bbox }),
+        body: JSON.stringify({ routeId, bboxes }),
         signal,
       }),
       12_000,
     );
     if (!response.ok) return null;
     const data = await response.json() as { features?: unknown };
-    return validCorridorFeatures(data.features, routeId, bbox) ? data.features : null;
+    return validCorridorFeatures(data.features, routeId, bboxes) ? data.features : null;
   } catch {
     return null;
   }
@@ -128,7 +128,7 @@ export function PrepareOffline({
       const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
       const [weather, corridorFeatures] = await Promise.all([
         fetchPackWeather(center.lat, center.lng),
-        requestCorridorFeatures(packId, corridor.bbox),
+        requestCorridorFeatures(packId, corridor.bboxes),
       ]);
       const pack: RoutePack = buildRoutePack({
         id: packId,

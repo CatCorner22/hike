@@ -1,4 +1,5 @@
 import { bboxFromGeometry } from "@/lib/geo";
+import type { BboxLngLat } from "@/lib/geo/bbox";
 
 export const CORRIDOR_LAYER_NAMES = [
   "contours",
@@ -16,7 +17,8 @@ export type CorridorLayer = (typeof CORRIDOR_LAYER_NAMES)[number];
 export interface TerrainCorridorSpec {
   routeId: string;
   bufferMeters: number;
-  bbox: [number, number, number, number];
+  /** One ordinary bbox, or two non-wrapping bboxes when the route crosses the antimeridian. */
+  bboxes: BboxLngLat[];
   layers: CorridorLayer[];
   generatedAt: string;
 }
@@ -41,17 +43,61 @@ export const CORRIDOR_BYTES_PER_KM2: Record<CorridorLayer, number> = {
 
 const LAYER_SET = new Set<string>(CORRIDOR_LAYER_NAMES);
 
-function clampCorridorBbox(bbox: [number, number, number, number]): [number, number, number, number] {
-  const clamped: [number, number, number, number] = [
-    Math.max(-180, Math.min(180, bbox[0])),
-    Math.max(-90, Math.min(90, bbox[1])),
-    Math.max(-180, Math.min(180, bbox[2])),
-    Math.max(-90, Math.min(90, bbox[3])),
-  ];
-  if (clamped[0] > clamped[2] || clamped[1] > clamped[3]) {
+function validBbox(value: unknown): value is BboxLngLat {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite)) return false;
+  const [minLng, minLat, maxLng, maxLat] = value;
+  return minLng >= -180 && maxLng <= 180 && minLat >= -90 && maxLat <= 90 && minLng <= maxLng && minLat <= maxLat;
+}
+
+/** Convert the local unwrapped longitude interval into one or two ordinary GeoJSON bboxes. */
+function splitCorridorBbox(bbox: [number, number, number, number]): BboxLngLat[] {
+  let [minLng, minLat, maxLng, maxLat] = bbox;
+  minLat = Math.max(-90, Math.min(90, minLat));
+  maxLat = Math.max(-90, Math.min(90, maxLat));
+  if (minLat > maxLat || ![minLng, minLat, maxLng, maxLat].every(Number.isFinite)) {
     throw new Error("Route bounds are unavailable.");
   }
-  return clamped;
+
+  const width = maxLng - minLng;
+  if (width < 0) throw new Error("Route bounds are unavailable.");
+  if (width >= 360) return [[-180, minLat, 180, maxLat]];
+
+  while (minLng < -180) {
+    minLng += 360;
+    maxLng += 360;
+  }
+  while (minLng > 180) {
+    minLng -= 360;
+    maxLng -= 360;
+  }
+
+  const bboxes: BboxLngLat[] = maxLng <= 180
+    ? [[minLng, minLat, maxLng, maxLat]]
+    : [
+      [minLng, minLat, 180, maxLat],
+      [-180, minLat, maxLng - 360, maxLat],
+    ];
+  if (!bboxes.every(validBbox)) throw new Error("Route bounds are unavailable.");
+  return bboxes;
+}
+
+export function terrainCorridorBboxesForGeometry(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+  bufferMeters: number,
+): BboxLngLat[] {
+  const latPadding = bufferMeters / 111_320;
+  const routeBbox = bboxFromGeometry(geometry, 0);
+  if (!routeBbox) throw new Error("Route bounds are unavailable.");
+  const maxBufferedLatitude = Math.min(89.9, Math.max(Math.abs(routeBbox[1]), Math.abs(routeBbox[3])) + latPadding);
+  const longitudeScale = Math.max(0.001, Math.cos((maxBufferedLatitude * Math.PI) / 180));
+  const longitudePadding = bufferMeters / (111_320 * longitudeScale);
+  const bbox: [number, number, number, number] = [
+    routeBbox[0] - longitudePadding,
+    routeBbox[1] - latPadding,
+    routeBbox[2] + longitudePadding,
+    routeBbox[3] + latPadding,
+  ];
+  return splitCorridorBbox(bbox);
 }
 
 export function buildTerrainCorridorSpec(input: {
@@ -67,9 +113,6 @@ export function buildTerrainCorridorSpec(input: {
   if (typeof input.routeId !== "string" || input.routeId.length === 0 || input.routeId.length > 256) {
     throw new Error("Offline terrain corridor route id is invalid.");
   }
-  const latPadding = bufferMeters / 111_320;
-  const bbox = bboxFromGeometry(input.geometry, latPadding);
-  if (!bbox) throw new Error("Route bounds are unavailable.");
   const layers = input.layers ?? [...CORRIDOR_LAYER_NAMES];
   if (!validCorridorLayers(layers)) {
     throw new Error("Offline terrain corridor layers are invalid.");
@@ -77,7 +120,7 @@ export function buildTerrainCorridorSpec(input: {
   return {
     routeId: input.routeId,
     bufferMeters,
-    bbox: clampCorridorBbox(bbox),
+    bboxes: terrainCorridorBboxesForGeometry(input.geometry, bufferMeters),
     layers,
     generatedAt: new Date().toISOString(),
   };
@@ -94,7 +137,16 @@ function validCorridorLayers(layers: unknown): layers is CorridorLayer[] {
   return layers.every((layer) => LAYER_SET.has(layer));
 }
 
-export function validTerrainCorridor(value: unknown, expectedRouteId?: string): value is TerrainCorridorSpec {
+function sameBboxes(actual: BboxLngLat[], expected: BboxLngLat[], epsilon = 1e-9): boolean {
+  return actual.length === expected.length && actual.every((bbox, index) =>
+    bbox.every((value, coordinate) => Math.abs(value - expected[index][coordinate]) <= epsilon));
+}
+
+export function validTerrainCorridor(
+  value: unknown,
+  expectedRouteId?: string,
+  expectedGeometry?: GeoJSON.LineString | GeoJSON.MultiLineString,
+): value is TerrainCorridorSpec {
   if (!value || typeof value !== "object") return false;
   const spec = value as TerrainCorridorSpec;
   if (typeof spec.routeId !== "string" || spec.routeId.length === 0 || spec.routeId.length > 256) return false;
@@ -102,10 +154,13 @@ export function validTerrainCorridor(value: unknown, expectedRouteId?: string): 
   if (!Number.isFinite(spec.bufferMeters) || spec.bufferMeters <= 0 || spec.bufferMeters > MAX_TERRAIN_CORRIDOR_METERS) {
     return false;
   }
-  if (!Array.isArray(spec.bbox) || spec.bbox.length !== 4 || !spec.bbox.every(Number.isFinite)) return false;
-  const [minLng, minLat, maxLng, maxLat] = spec.bbox;
-  if (minLng < -180 || maxLng > 180 || minLat < -90 || maxLat > 90 || minLng > maxLng || minLat > maxLat) {
-    return false;
+  if (!Array.isArray(spec.bboxes) || spec.bboxes.length < 1 || spec.bboxes.length > 2 || !spec.bboxes.every(validBbox)) return false;
+  if (expectedGeometry) {
+    try {
+      if (!sameBboxes(spec.bboxes, terrainCorridorBboxesForGeometry(expectedGeometry, spec.bufferMeters))) return false;
+    } catch {
+      return false;
+    }
   }
   if (!validCorridorLayers(spec.layers)) return false;
   if (typeof spec.generatedAt !== "string") return false;
@@ -117,7 +172,7 @@ export function validTerrainCorridor(value: unknown, expectedRouteId?: string): 
 }
 
 /** Equirectangular bbox area. Overestimates a tight trail buffer — that is intentional. */
-export function corridorBboxAreaKm2(bbox: TerrainCorridorSpec["bbox"]): number {
+export function corridorBboxAreaKm2(bbox: BboxLngLat): number {
   const [minLng, minLat, maxLng, maxLat] = bbox;
   const midLat = (minLat + maxLat) / 2;
   const kmPerDegLat = 111.32;
@@ -130,7 +185,7 @@ export function corridorBboxAreaKm2(bbox: TerrainCorridorSpec["bbox"]): number {
 }
 
 export function estimateCorridorBytes(spec: TerrainCorridorSpec): number {
-  const areaKm2 = corridorBboxAreaKm2(spec.bbox);
+  const areaKm2 = spec.bboxes.reduce((total, bbox) => total + corridorBboxAreaKm2(bbox), 0);
   if (areaKm2 <= 0) return 0;
   let total = 0;
   for (const layer of spec.layers) {

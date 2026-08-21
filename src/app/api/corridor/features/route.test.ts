@@ -23,11 +23,11 @@ describe("POST /api/corridor/features", () => {
     expect(missing.status).toBe(400);
   });
 
-  it("returns a null snapshot when the bbox is too large", async () => {
+  it("returns a null snapshot when the corridor bounds are too large", async () => {
     const response = await POST(new Request("http://localhost/api/corridor/features", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ routeId: "plan-1", bbox: [-120, 30, -100, 50] }),
+      body: JSON.stringify({ routeId: "plan-1", bboxes: [[-120, 30, -100, 50]] }),
     }));
     expect(response.status).toBe(200);
     const body = await response.json() as { features: unknown; reason?: string };

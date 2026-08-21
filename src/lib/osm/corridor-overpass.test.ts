@@ -5,13 +5,22 @@ const bbox: [number, number, number, number] = [-83.92, 35.96, -83.90, 35.98];
 
 describe("corridor overpass", () => {
   it("queries Overpass using south,west,north,east and vector layers only", () => {
-    const query = buildCorridorOverpassQuery(bbox);
+    const query = buildCorridorOverpassQuery([bbox]);
     expect(query).toContain("35.96000,-83.92000,35.98000,-83.90000");
     expect(query).toContain("highway");
     expect(query).toContain("waterway");
     expect(query).toContain("shelter");
     expect(query).not.toContain("hillshade");
     expect(query).not.toContain("contour");
+  });
+
+  it("queries both non-wrapping halves of a dateline corridor", () => {
+    const query = buildCorridorOverpassQuery([
+      [179.8, 10, 180, 10.2],
+      [-180, 10, -179.8, 10.2],
+    ]);
+    expect(query).toContain("10.00000,179.80000,10.20000,180.00000");
+    expect(query).toContain("10.00000,-180.00000,10.20000,-179.80000");
   });
 
   it("classifies ways and nodes and downsamples long lines", () => {
@@ -21,7 +30,7 @@ describe("corridor overpass", () => {
     }));
     const set = parseCorridorOverpassResponse({
       routeId: "r1",
-      bbox,
+      bboxes: [bbox],
       elements: [
         { type: "way", id: 1, tags: { highway: "path" }, geometry },
         { type: "way", id: 2, tags: { highway: "track" }, geometry: geometry.slice(0, 3) },

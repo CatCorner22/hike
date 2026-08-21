@@ -46,8 +46,21 @@ describe("terrain corridor", () => {
   it("scales the estimate with corridor bbox area", () => {
     const narrow = buildTerrainCorridorSpec({ routeId: "r1", geometry: route, bufferMeters: 800 });
     const wide = buildTerrainCorridorSpec({ routeId: "r1", geometry: route, bufferMeters: 3200 });
-    expect(corridorBboxAreaKm2(wide.bbox)).toBeGreaterThan(corridorBboxAreaKm2(narrow.bbox) * 3);
+    const area = (spec: typeof narrow) => spec.bboxes.reduce((total, bbox) => total + corridorBboxAreaKm2(bbox), 0);
+    expect(area(wide)).toBeGreaterThan(area(narrow) * 3);
     expect(estimateCorridorBytes(wide)).toBeGreaterThan(estimateCorridorBytes(narrow) * 3);
+  });
+
+  it("splits a dateline corridor without dropping either side", () => {
+    const dateline: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: [[179.9, 10], [-179.9, 10.1]],
+    };
+    const spec = buildTerrainCorridorSpec({ routeId: "dateline", geometry: dateline });
+    expect(spec.bboxes).toHaveLength(2);
+    expect(spec.bboxes.some(([minLng, , maxLng]) => minLng <= 179.9 && maxLng >= 179.9)).toBe(true);
+    expect(spec.bboxes.some(([minLng, , maxLng]) => minLng <= -179.9 && maxLng >= -179.9)).toBe(true);
+    expect(estimateCorridorBytes(spec)).toBeGreaterThan(0);
   });
 
   it("rejects a corridor that belongs to another route or carries unknown layers", () => {
@@ -57,5 +70,6 @@ describe("terrain corridor", () => {
     expect(validTerrainCorridor({ ...spec, layers: [...spec.layers, "secrets"] }, "r1")).toBe(false);
     expect(validTerrainCorridor({ ...spec, bufferMeters: 99_000 }, "r1")).toBe(false);
     expect(validTerrainCorridor({ ...spec, generatedAt: "not-a-date" }, "r1")).toBe(false);
+    expect(validTerrainCorridor({ ...spec, bboxes: [[0, 0, 0, 0]] }, "r1", route)).toBe(false);
   });
 });

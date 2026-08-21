@@ -67,27 +67,32 @@ function simplifyLine(coordinates: GeoJSON.Position[]): GeoJSON.Position[] {
   return sampled;
 }
 
-export function buildCorridorOverpassQuery(bbox: BboxLngLat): string {
-  const [south, west, north, east] = toSouthWestNorthEast(bbox).map((value) => value.toFixed(5));
-  const box = `${south},${west},${north},${east}`;
+export function buildCorridorOverpassQuery(bboxes: BboxLngLat[]): string {
+  const clauses = bboxes.flatMap((bbox) => {
+    const [south, west, north, east] = toSouthWestNorthEast(bbox).map((value) => value.toFixed(5));
+    const box = `${south},${west},${north},${east}`;
+    return [
+      `way["highway"~"^(path|footway|steps|bridleway)$"](${box});`,
+      `way["highway"~"^(track|unclassified|residential|service|tertiary)$"](${box});`,
+      `way["waterway"~"^(river|stream|canal)$"](${box});`,
+      `way["natural"="water"](${box});`,
+      `node["amenity"="shelter"](${box});`,
+      `node["tourism"~"^(wilderness_hut|alpine_hut|camp_site)$"](${box});`,
+      `node["natural"="peak"](${box});`,
+      `node["information"="guidepost"](${box});`,
+      `node["tourism"="viewpoint"](${box});`,
+    ];
+  });
   return `[out:json][timeout:20];
 (
-  way["highway"~"^(path|footway|steps|bridleway)$"](${box});
-  way["highway"~"^(track|unclassified|residential|service|tertiary)$"](${box});
-  way["waterway"~"^(river|stream|canal)$"](${box});
-  way["natural"="water"](${box});
-  node["amenity"="shelter"](${box});
-  node["tourism"~"^(wilderness_hut|alpine_hut|camp_site)$"](${box});
-  node["natural"="peak"](${box});
-  node["information"="guidepost"](${box});
-  node["tourism"="viewpoint"](${box});
+  ${clauses.join("\n  ")}
 );
 out geom;`;
 }
 
 export function parseCorridorOverpassResponse(input: {
   routeId: string;
-  bbox: BboxLngLat;
+  bboxes: BboxLngLat[];
   elements: OverpassElement[];
   fetchedAt?: string;
 }): CorridorFeatureSet {
@@ -133,7 +138,7 @@ export function parseCorridorOverpassResponse(input: {
     routeId: input.routeId,
     fetchedAt: input.fetchedAt ?? new Date().toISOString(),
     source: CORRIDOR_FEATURES_SOURCE,
-    bbox: input.bbox,
+    bboxes: input.bboxes,
     layersIncluded,
     featureCount: features.length,
     disclaimer: CORRIDOR_FEATURE_DISCLAIMER,
@@ -143,13 +148,13 @@ export function parseCorridorOverpassResponse(input: {
 
 export async function fetchCorridorFeatureSet(
   routeId: string,
-  bbox: BboxLngLat,
+  bboxes: BboxLngLat[],
 ): Promise<{ features: CorridorFeatureSet | null; reason?: string }> {
-  const allowed = corridorQueryAllowed(bbox);
+  const allowed = corridorQueryAllowed(bboxes);
   if (!allowed.ok) return { features: null, reason: allowed.reason };
   try {
-    const data = await runOverpass(buildCorridorOverpassQuery(bbox), 8_000);
-    return { features: parseCorridorOverpassResponse({ routeId, bbox, elements: data.elements ?? [] }) };
+    const data = await runOverpass(buildCorridorOverpassQuery(bboxes), 8_000);
+    return { features: parseCorridorOverpassResponse({ routeId, bboxes, elements: data.elements ?? [] }) };
   } catch (error) {
     return {
       features: null,

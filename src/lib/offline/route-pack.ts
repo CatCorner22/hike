@@ -206,12 +206,12 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
     return "Saved route weather snapshot is invalid.";
   }
-  if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id)) {
+  if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id, pack.geometry)) {
     return "Saved route terrain corridor is invalid.";
   }
   if (pack.corridorFeatures !== undefined) {
     if (!pack.corridor) return "Saved route corridor features are missing a corridor record.";
-    if (!validCorridorFeatures(pack.corridorFeatures, pack.id, pack.corridor.bbox)) {
+    if (!validCorridorFeatures(pack.corridorFeatures, pack.id, pack.corridor.bboxes)) {
       return "Saved route corridor features are invalid.";
     }
   }

@@ -191,7 +191,7 @@ describe("route pack integrity boundaries", () => {
     const pack = buildRoutePack({ id: "plan-features", name: "Feature route", geometry });
     const features = parseCorridorOverpassResponse({
       routeId: "plan-features",
-      bbox: pack.corridor!.bbox,
+      bboxes: pack.corridor!.bboxes,
       elements: [{
         type: "node",
         id: 99,
@@ -234,6 +234,10 @@ describe("route pack integrity boundaries", () => {
     expect(validateRoutePack({
       ...pack,
       corridor: { ...pack.corridor!, bufferMeters: 50_000 },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bboxes: [[0, 0, 0, 0]] },
     })).toContain("terrain corridor");
   });
 

@@ -32,7 +32,8 @@ export interface CorridorFeatureSet {
   routeId: string;
   fetchedAt: string;
   source: typeof CORRIDOR_FEATURES_SOURCE;
-  bbox: BboxLngLat;
+  /** The exact non-wrapping request bounds, including both halves of a dateline corridor. */
+  bboxes: BboxLngLat[];
   layersIncluded: CorridorFeatureLayer[];
   featureCount: number;
   disclaimer: string;
@@ -60,6 +61,11 @@ function bboxWithin(inner: BboxLngLat, outer: BboxLngLat, epsilon = 0.0001): boo
     inner[2] <= outer[2] + epsilon &&
     inner[3] <= outer[3] + epsilon
   );
+}
+
+function sameBboxes(actual: BboxLngLat[], expected: BboxLngLat[], epsilon = 0.0001): boolean {
+  return actual.length === expected.length && actual.every((bbox, index) => bboxWithin(bbox, expected[index], epsilon) &&
+    bboxWithin(expected[index], bbox, epsilon));
 }
 
 function finitePosition(position: unknown): position is GeoJSON.Position {
@@ -108,9 +114,11 @@ function validFeature(feature: unknown): feature is GeoJSON.Feature<GeoJSON.Poin
   return false;
 }
 
-export function corridorQueryAllowed(bbox: BboxLngLat): { ok: true } | { ok: false; reason: string } {
-  if (!validBbox(bbox)) return { ok: false, reason: "Corridor bounds are invalid." };
-  const area = corridorBboxAreaKm2(bbox);
+export function corridorQueryAllowed(bboxes: BboxLngLat[]): { ok: true } | { ok: false; reason: string } {
+  if (!Array.isArray(bboxes) || bboxes.length < 1 || bboxes.length > 2 || !bboxes.every(validBbox)) {
+    return { ok: false, reason: "Corridor bounds are invalid." };
+  }
+  const area = bboxes.reduce((total, bbox) => total + corridorBboxAreaKm2(bbox), 0);
   if (area <= 0) return { ok: false, reason: "Corridor bounds are empty." };
   if (area > MAX_CORRIDOR_QUERY_KM2) {
     return {
@@ -124,7 +132,7 @@ export function corridorQueryAllowed(bbox: BboxLngLat): { ok: true } | { ok: fal
 export function validCorridorFeatures(
   value: unknown,
   expectedRouteId?: string,
-  corridorBbox?: BboxLngLat,
+  corridorBboxes?: BboxLngLat[],
 ): value is CorridorFeatureSet {
   if (!value || typeof value !== "object") return false;
   const set = value as CorridorFeatureSet;
@@ -137,8 +145,8 @@ export function validCorridorFeatures(
   if (!Number.isFinite(fetchedAt) || fetchedAt < Date.UTC(2020, 0, 1) || fetchedAt > Date.now() + 5 * 60_000) {
     return false;
   }
-  if (!validBbox(set.bbox)) return false;
-  if (corridorBbox && !bboxWithin(set.bbox, corridorBbox)) return false;
+  if (!Array.isArray(set.bboxes) || set.bboxes.length < 1 || set.bboxes.length > 2 || !set.bboxes.every(validBbox)) return false;
+  if (corridorBboxes && !sameBboxes(set.bboxes, corridorBboxes)) return false;
   if (!Array.isArray(set.layersIncluded)) return false;
   if (new Set(set.layersIncluded).size !== set.layersIncluded.length) return false;
   if (set.layersIncluded.some((layer) => !LAYER_SET.has(layer))) return false;

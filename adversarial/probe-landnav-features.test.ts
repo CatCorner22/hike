@@ -81,7 +81,7 @@ describe("landnav feature probes", () => {
     const pack = buildRoutePack({ id: "plan-honest", name: "Honest", geometry });
     const features = parseCorridorOverpassResponse({
       routeId: "plan-honest",
-      bbox: pack.corridor!.bbox,
+      bboxes: pack.corridor!.bboxes,
       elements: [{ type: "node", id: 1, tags: { amenity: "shelter" }, lat: 37.75, lon: -119.45 }],
     });
     expect(validateRoutePack({ ...pack, corridorFeatures: { ...features, routeId: "plan-foreign" } })).toContain("corridor features");
