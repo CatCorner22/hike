@@ -10,6 +10,11 @@ import {
   validCorridorFeatures,
   type CorridorFeatureSet,
 } from "@/lib/offline/corridor-features";
+import {
+  describeHazardBrief,
+  fetchRouteHazardBrief,
+  packWeatherFromHazardBrief,
+} from "@/lib/offline/hazard-brief";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
@@ -126,10 +131,13 @@ export function PrepareOffline({
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
       const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
-      const [weather, corridorFeatures] = await Promise.all([
-        fetchPackWeather(center.lat, center.lng),
+      const [corridorFeatures, hazardBrief] = await Promise.all([
         requestCorridorFeatures(packId, corridor.bboxes),
+        fetchRouteHazardBrief({ routeId: packId, geometry }),
       ]);
+      const weather = hazardBrief
+        ? packWeatherFromHazardBrief(hazardBrief)
+        : await fetchPackWeather(center.lat, center.lng);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -140,6 +148,7 @@ export function PrepareOffline({
         weather: weather ?? undefined,
         corridor,
         corridorFeatures: corridorFeatures ?? undefined,
+        hazardBrief: hazardBrief ?? undefined,
       });
       const saved = await persistRoutePack(pack);
       if (!await refreshReady()) {
@@ -167,10 +176,13 @@ export function PrepareOffline({
       const featureNote = saved.corridorFeatures
         ? describeCorridorFeatures(saved.corridorFeatures)
         : "OSM corridor features were not stored (Overpass unavailable, or the bbox is too large for one snapshot).";
+      const hazardNote = saved.hazardBrief
+        ? describeHazardBrief(saved.hazardBrief)
+        : "Route forecast snapshot was not stored (Open-Meteo unavailable).";
       setMessage(
         warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${featureNote} ${weatherNote}`,
+          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`
+          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`,
       );
     } catch (error) {
       setReady(false);

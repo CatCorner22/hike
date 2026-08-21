@@ -15,7 +15,7 @@ describe("corridor decisions", () => {
   it("keeps OSM features that meet the route and drops features that would require an invented walk", () => {
     const features = parseCorridorOverpassResponse({
       routeId: "plan-1",
-      bbox,
+      bboxes: [bbox],
       elements: [
         { type: "node", id: 1, tags: { amenity: "shelter", name: "Near hut" }, lat: 35.9602, lon: -83.91 },
         { type: "node", id: 2, tags: { amenity: "shelter", name: "Far hut" }, lat: 36.00, lon: -83.91 },

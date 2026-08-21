@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type React from "react";
-import { CheckCircle2, CircleAlert, HardDriveDownload, Mountain, Route, ScreenShare } from "lucide-react";
+import { CheckCircle2, CircleAlert, CloudSun, HardDriveDownload, Mountain, Route, ScreenShare } from "lucide-react";
 import {
   getRoutePackStatus,
   type RoutePackStatus,
@@ -10,6 +10,7 @@ import {
 import { isNavigateShellCached } from "@/lib/offline/navigate-shell";
 import { isStoragePersistent, storageEstimate } from "@/lib/offline/storage";
 import { describeCorridorFeatures, type CorridorFeatureSet } from "@/lib/offline/corridor-features";
+import { describeHazardBrief, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
 import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -22,6 +23,7 @@ interface ReadinessState {
   quota?: number;
   corridor?: TerrainCorridorSpec | null;
   corridorFeatures?: CorridorFeatureSet | null;
+  hazardBrief?: RouteHazardBrief | null;
 }
 
 const EMPTY_READINESS: ReadinessState = {
@@ -31,6 +33,7 @@ const EMPTY_READINESS: ReadinessState = {
   persistent: false,
   corridor: null,
   corridorFeatures: null,
+  hazardBrief: null,
 };
 
 /**
@@ -130,6 +133,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
           quota: estimateResult.status === "fulfilled" ? estimateResult.value?.quota : undefined,
           corridor: pack.pack?.corridor ?? null,
           corridorFeatures: pack.pack?.corridorFeatures ?? null,
+          hazardBrief: pack.pack?.hazardBrief ?? null,
         });
       }
     };
@@ -200,6 +204,22 @@ export function OfflineReadiness({ packId }: { packId: string }) {
                 : packReady
                   ? "This pack has no corridor record. Update the offline pack while online to store coverage and the planned download size."
                   : "Save the route pack to record the planned terrain corridor. Terrain tiles themselves are not downloaded yet."
+            }
+          />
+          <CheckRow
+            icon={<CloudSun className="mt-0.5 h-4 w-4" />}
+            title={
+              packReady && state.hazardBrief
+                ? "Route forecast snapshot recorded"
+                : "Route forecast snapshot missing — update the pack while online"
+            }
+            ok={Boolean(packReady && state.hazardBrief)}
+            detail={
+              packReady && state.hazardBrief
+                ? describeHazardBrief(state.hazardBrief)
+                : packReady
+                  ? "This pack has no along-route forecast snapshot. Update it while online, or enter field weather in Safety. Cached weather is not current weather."
+                  : "Save the route pack to store a 24-hour forecast snapshot along the route. Navigation still works without it."
             }
           />
           <CheckRow

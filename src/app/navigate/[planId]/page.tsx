@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CompassHud } from "@/components/navigate/compass-hud";
 import { NextDecisionCard } from "@/components/navigate/next-decision-card";
+import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
 import { RescueCard } from "@/components/navigate/rescue-card";
 import { SafetyNavMap } from "@/components/map/safety-nav-map";
 import { SafetyPanel } from "@/components/offline/safety-panel";
@@ -1161,6 +1162,10 @@ export default function NavigatePage() {
       </div>
 
       <div className="shrink-0 border-t border-border bg-card p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <HazardBriefCard
+          compact
+          brief={loadState.status === "ready" ? loadState.pack.hazardBrief : null}
+        />
         <NextDecisionCard
           point={nextDecision}
           aheadMeters={

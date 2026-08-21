@@ -6,6 +6,10 @@ import {
   type CorridorFeatureSet,
 } from "@/lib/offline/corridor-features";
 import {
+  validHazardBrief,
+  type RouteHazardBrief,
+} from "@/lib/offline/hazard-brief";
+import {
   buildTerrainCorridorSpec,
   validTerrainCorridor,
   type TerrainCorridorSpec,
@@ -54,6 +58,11 @@ export interface RoutePack {
    * when Overpass answers; legacy packs and failed fetches stay navigable.
    */
   corridorFeatures?: CorridorFeatureSet;
+  /**
+   * Along-route forecast snapshot at prepare time. Optional — prepare stores it
+   * when Open-Meteo answers; legacy packs and failed fetches stay navigable.
+   */
+  hazardBrief?: RouteHazardBrief;
 }
 
 interface RoutePackAlias {
@@ -215,6 +224,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
       return "Saved route corridor features are invalid.";
     }
   }
+  if (pack.hazardBrief !== undefined && !validHazardBrief(pack.hazardBrief, pack.id, pack.bbox)) {
+    return "Saved route hazard briefing is invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -304,6 +316,7 @@ export function buildRoutePack(input: {
   weather?: PackWeather;
   corridor?: TerrainCorridorSpec;
   corridorFeatures?: CorridorFeatureSet;
+  hazardBrief?: RouteHazardBrief;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -328,6 +341,7 @@ export function buildRoutePack(input: {
     weather: input.weather,
     corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
     corridorFeatures: input.corridorFeatures,
+    hazardBrief: input.hazardBrief,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);

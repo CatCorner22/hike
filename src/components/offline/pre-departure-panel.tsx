@@ -11,9 +11,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
 import { formatDistance, lineLengthMeters } from "@/lib/geo";
 import { CORRIDOR_DECISION_DISCLAIMER, deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
-import { sampleRouteByDistance } from "@/lib/offline/route-hazard";
+import { selectHazardSamplePoints, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
 import { getRoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
@@ -54,6 +55,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
   });
   const [returnAt, setReturnAt] = useState<string | null>(null);
   const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
+  const [hazardBrief, setHazardBrief] = useState<RouteHazardBrief | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -71,6 +73,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         geometry,
         features: pack?.corridorFeatures,
       }));
+      setHazardBrief(pack?.hazardBrief ?? null);
     });
     return () => {
       cancelled = true;
@@ -79,7 +82,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
 
   const routeLength = useMemo(() => lineLengthMeters(geometry), [geometry]);
   const corridor = useMemo(() => buildTerrainCorridorSpec({ routeId: `plan-${planId}`, geometry }), [planId, geometry]);
-  const hazardSamples = useMemo(() => sampleRouteByDistance(geometry, 5000), [geometry]);
+  const hazardSamples = useMemo(() => selectHazardSamplePoints(geometry), [geometry]);
   const userBailouts = useMemo(() => explicitBailoutCandidates(waypoints ?? [], geometry), [waypoints, geometry]);
   const bailouts = useMemo(
     () => bailoutDecisionPoints([...userBailouts, ...osmBailouts]),
@@ -120,11 +123,24 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
             </p>
           </div>
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Hazard coverage</p>
-            <p className="mt-1 text-lg font-semibold">{hazardSamples.length} sample points</p>
-            <p className="text-xs text-muted-foreground">Spaced by route distance, not GPX point density.</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Forecast samples</p>
+            <p className="mt-1 text-lg font-semibold">
+              {hazardBrief ? `${hazardBrief.samples.length} stored` : `${hazardSamples.length} planned`}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {hazardBrief
+                ? "Along-route Open-Meteo snapshot from Prepare. Not current weather."
+                : "Prepare offline to store a 24-hour forecast snapshot at these route-distance samples."}
+            </p>
           </div>
         </div>
+
+        {hazardBrief && (
+          <>
+            <Separator />
+            <HazardBriefCard brief={hazardBrief} />
+          </>
+        )}
 
         <Separator />
 

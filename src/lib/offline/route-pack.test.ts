@@ -217,6 +217,48 @@ describe("route pack integrity boundaries", () => {
     })).toContain("corridor features");
   });
 
+  it("persists a hazard briefing and still accepts packs without one", async () => {
+    const { buildHazardBrief } = await import("@/lib/offline/hazard-brief");
+    const pack = buildRoutePack({ id: "plan-hazard", name: "Hazard route", geometry });
+    const brief = buildHazardBrief({
+      routeId: "plan-hazard",
+      samples: [{
+        distanceMeters: 0,
+        lat: geometry.coordinates[0][1],
+        lng: geometry.coordinates[0][0],
+        hours: [{
+          time: "2026-08-21T12:00",
+          tempC: 18,
+          rhPct: 40,
+          precipMm: 0,
+          precipProb: 10,
+          windKph: 8,
+          gustKph: 12,
+          weatherCode: 1,
+        }],
+      }],
+      now: Date.now() - 60_000,
+    });
+    const withBrief = buildRoutePack({
+      id: "plan-hazard",
+      name: "Hazard route",
+      geometry,
+      hazardBrief: brief,
+    });
+    await saveRoutePack(withBrief);
+    const loaded = await getRoutePack("plan-hazard");
+    expect(loaded?.hazardBrief?.samples).toHaveLength(1);
+    expect(validateRoutePack({ ...withBrief, hazardBrief: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, routeId: "someone-else" },
+    })).toContain("hazard briefing");
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, disclaimer: "Live weather. Safe to go." },
+    })).toContain("hazard briefing");
+  });
+
   it("persists a terrain corridor and still accepts legacy packs without one", async () => {
     const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
     expect(pack.corridor?.routeId).toBe("plan-corridor");

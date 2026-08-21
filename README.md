@@ -17,6 +17,7 @@ The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). 
 - **Activities** — Start/stop/pause work offline. Pause stops GPS. Points queue in IndexedDB and replay when you are back online
 - **Camping** — NPS / RIDB / state parks / OSM. Search does **not** auto-sync the world on an empty result; pass `?sync=true` to refresh
 - **Weather snapshot** — Pack-time conditions are cached with explicit freshness semantics; cached weather is never presented as live weather
+- **Route forecast briefing** — Prepare stores an along-route Open-Meteo snapshot (heat/cold/wind/precip/thunderstorm thresholds plus sunrise/sunset). It expires after 6 hours and is never shown as current weather. Smoke, AQI, and land-manager alerts are not included
 - **Decision-support primitives** — deterministic daylight/ETA margin, ordered decision points/bailouts, and an overdue Trip Guardian state that never equates a missing update with proof of distress
 - **Research** — Optional AI brief. Reservation and source links are **https only**
 
