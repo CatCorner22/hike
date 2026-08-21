@@ -4,8 +4,12 @@ import {
   flushPendingPoints,
   getPendingPointCount,
   getOfflineDb,
+  getPendingPoints,
+  ESTIMATED_PENDING_POINT_BYTES,
   MAX_PENDING_POINT_COUNT,
+  MAX_PENDING_POINTS_PER_ACTIVITY,
   OfflinePointQueueFullError,
+  ROUTE_PACK_STORAGE_RESERVE_BYTES,
   queueActivityPoint,
   __resetOfflineDbForTests,
 } from "./index";
@@ -24,7 +28,10 @@ async function queue(count: number, activityId = ACTIVITY) {
 }
 
 function respondWith(status: number) {
-  return vi.fn(async () => new Response(status === 200 ? "{}" : "", { status }));
+  return vi.fn(async (...args: Parameters<typeof fetch>) => {
+    void args;
+    return new Response(status === 200 ? "{}" : "", { status });
+  });
 }
 
 beforeEach(async () => {
@@ -36,8 +43,83 @@ afterEach(() => {
 });
 
 describe("point sync failure handling", () => {
+  it("keeps recording beyond the old 2,000-point global cutoff when storage is available", async () => {
+    await queue(2_001);
+    expect(await getPendingPointCount()).toBe(2_001);
+  });
+
+  it.each([
+    ["generous", ROUTE_PACK_STORAGE_RESERVE_BYTES + 10_000, true],
+    ["exactly the reserved boundary", ROUTE_PACK_STORAGE_RESERVE_BYTES + ESTIMATED_PENDING_POINT_BYTES, true],
+    ["one byte below the reserved boundary", ROUTE_PACK_STORAGE_RESERVE_BYTES + ESTIMATED_PENDING_POINT_BYTES - 1, false],
+  ] as const)("handles %s storage headroom", async (_label, available, accepted) => {
+    vi.stubGlobal("navigator", {
+      storage: { estimate: vi.fn(async () => ({ usage: 1_000, quota: 1_000 + available })) },
+    });
+    const write = queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(),
+    });
+    if (accepted) await expect(write).resolves.toBeUndefined();
+    else await expect(write).rejects.toBeInstanceOf(OfflinePointQueueFullError);
+  });
+
+  it("falls back to fixed queue bounds when storage estimates fail", async () => {
+    vi.stubGlobal("navigator", {
+      storage: { estimate: vi.fn(async () => { throw new Error("estimate unavailable"); }) },
+    });
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(),
+    })).resolves.toBeUndefined();
+  });
+
+  it("falls back to fixed queue bounds when StorageManager is unavailable", async () => {
+    vi.stubGlobal("navigator", {});
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(),
+    })).resolves.toBeUndefined();
+  });
+
+  it("serializes concurrent writes at the per-activity boundary", async () => {
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const count = vi.spyOn(db, "countFromIndex")
+      .mockResolvedValueOnce(MAX_PENDING_POINTS_PER_ACTIVITY - 1)
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(MAX_PENDING_POINTS_PER_ACTIVITY);
+
+    const first = queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(1_700_000_000_000),
+    });
+    const second = queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37.001,
+      lng: -119,
+      recordedAt: new Date(1_700_000_001_000),
+    });
+    await expect(first).resolves.toBeUndefined();
+    await expect(second).rejects.toBeInstanceOf(OfflinePointQueueFullError);
+    count.mockRestore();
+    expect(await getPendingPointCount()).toBe(1);
+  });
+
   it("rejects a point at the recording budget instead of consuming route-pack capacity", async () => {
-    await queue(MAX_PENDING_POINT_COUNT);
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const count = vi.spyOn(db, "countFromIndex")
+      .mockResolvedValueOnce(0)
+      .mockResolvedValueOnce(MAX_PENDING_POINT_COUNT);
 
     await expect(queueActivityPoint({
       activityId: ACTIVITY,
@@ -48,7 +130,24 @@ describe("point sync failure handling", () => {
       name: "OfflinePointQueueFullError",
       message: expect.stringContaining("GPS point was not saved"),
     });
-    expect(await getPendingPointCount()).toBe(MAX_PENDING_POINT_COUNT);
+    count.mockRestore();
+    expect(await getPendingPointCount()).toBe(0);
+  });
+
+  it("keeps one activity aligned with the server point ceiling", async () => {
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const count = vi.spyOn(db, "countFromIndex")
+      .mockResolvedValueOnce(MAX_PENDING_POINTS_PER_ACTIVITY);
+
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 38,
+      lng: -120,
+      recordedAt: new Date(),
+    })).rejects.toBeInstanceOf(OfflinePointQueueFullError);
+    count.mockRestore();
+    expect(await getPendingPointCount()).toBe(0);
   });
 
   it("surfaces an IndexedDB quota failure as a recorder-safe error", async () => {
@@ -75,10 +174,18 @@ describe("point sync failure handling", () => {
 
   it("syncs points when the server accepts them", async () => {
     await queue(3);
-    vi.stubGlobal("fetch", respondWith(200));
+    const accepted = respondWith(200);
+    vi.stubGlobal("fetch", accepted);
     const result = await flushPendingPoints();
     expect(result.synced).toBe(3);
     expect(result.pending).toBe(0);
+    const body = JSON.parse(String(accepted.mock.calls[0][1]?.body)) as {
+      points: Array<{ clientPointId?: string }>;
+    };
+    expect(body.points).toHaveLength(3);
+    expect(body.points.every((point) => /^[0-9a-f-]{36}$/i.test(point.clientPointId ?? ""))).toBe(true);
+    const stored = await getPendingPoints(ACTIVITY);
+    expect(stored).toHaveLength(0);
   });
 
   it("keeps points for a retryable failure so nothing is lost offline", async () => {

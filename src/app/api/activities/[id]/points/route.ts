@@ -8,7 +8,7 @@ import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, latLngPointSchema, parseJsonBody } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
-import { addActivityPoint, getActivity, listActivityPoints } from "@/lib/store/local";
+import { addActivityPoints, getActivity, listActivityPoints } from "@/lib/store/local";
 
 const pointSchema = latLngPointSchema.extend({
   elevation: z.number().finite().nullable().optional(),
@@ -19,6 +19,7 @@ const pointRequestSchema = z.union([
   pointSchema,
   z.object({ points: z.array(pointSchema).min(1).max(500) }),
 ]);
+type PointInput = z.infer<typeof pointSchema>;
 
 /**
  * Points have no owner column of their own; they belong to whoever owns the parent
@@ -42,12 +43,41 @@ function sameFallbackPoint(
     recordedAt: Date | string;
     clientPointId?: string | null;
   },
-  point: z.infer<typeof pointSchema>,
+  point: PointInput,
 ): boolean {
   if (point.clientPointId && candidate.clientPointId === point.clientPointId) return true;
   return candidate.lat === point.lat
     && candidate.lng === point.lng
     && new Date(candidate.recordedAt).getTime() === new Date(point.recordedAt).getTime();
+}
+
+function pointTupleKey(point: PointInput): string {
+  return `${new Date(point.recordedAt).getTime()}\u0000${point.lat}\u0000${point.lng}`;
+}
+
+/** Count rows this request would add, excluding stored and intra-request duplicates. */
+function countNovelPoints(
+  points: PointInput[],
+  isStored: (point: PointInput) => boolean,
+): number {
+  const novelClientIds = new Set<string>();
+  const novelTuples = new Set<string>();
+  let count = 0;
+
+  for (const point of points) {
+    const tuple = pointTupleKey(point);
+    if (
+      (point.clientPointId && novelClientIds.has(point.clientPointId))
+      || novelTuples.has(tuple)
+      || isStored(point)
+    ) {
+      continue;
+    }
+    count += 1;
+    if (point.clientPointId) novelClientIds.add(point.clientPointId);
+    novelTuples.add(tuple);
+  }
+  return count;
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -72,6 +102,38 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           columns: { endedAt: true },
         });
         if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+        // Capacity is a batch invariant. Checking it inside the insert loop allowed a
+        // request at cap - 1 to persist its first point and then return 413 for the
+        // whole batch. The offline client correctly treats 413 as permanent, so that
+        // mixed result lost the rejected suffix. Count only genuinely novel points and
+        // reject before the first mutation.
+        const existingBefore = await db.query.activityPoints.findMany({
+          where: eq(activityPoints.activityId, id),
+          columns: {
+            id: true,
+            clientPointId: true,
+            lat: true,
+            lng: true,
+            recordedAt: true,
+          },
+        });
+        const novelPointCount = countNovelPoints(
+          points,
+          (point) => existingBefore.some((candidate) => sameFallbackPoint(candidate, point)),
+        );
+        if (activity.endedAt && novelPointCount > 0) {
+          return NextResponse.json(
+            { error: "Activity is finalized; no further GPS points can be added" },
+            { status: 409 },
+          );
+        }
+        if (
+          novelPointCount > 0
+          && existingBefore.length + novelPointCount > MAX_ACTIVITY_POINTS
+        ) {
+          return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+        }
 
         const saved = [];
         for (const point of points) {
@@ -99,21 +161,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
             saved.push(existing);
             continue;
           }
-          if (activity.endedAt) {
-            return NextResponse.json(
-              { error: "Activity is finalized; no further GPS points can be added" },
-              { status: 409 },
-            );
-          }
-
-          const count = await db.query.activityPoints.findMany({
-            where: eq(activityPoints.activityId, id),
-            columns: { id: true },
-          });
-          if (count.length >= MAX_ACTIVITY_POINTS) {
-            return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
-          }
-
           // The activity's open state is part of the INSERT predicate. A separate
           // read followed by INSERT would let another server finalize between them and
           // still return 200 for a fix that belongs to no completed track.
@@ -177,37 +224,61 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
       const activity = await getActivity(id, owner.ownerId);
       if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
-      const saved = [];
-      for (const point of points) {
-        const existing = await listActivityPoints(id);
-        const duplicate = existing.find((candidate) =>
-          sameFallbackPoint(candidate as typeof candidate & { clientPointId?: string }, point),
+      const existingBefore = await listActivityPoints(id);
+      const novelPointCount = countNovelPoints(
+        points,
+        (point) => existingBefore.some((candidate) =>
+          sameFallbackPoint(
+            candidate as typeof candidate & { clientPointId?: string },
+            point,
+          )),
+      );
+      if (activity.endedAt && novelPointCount > 0) {
+        return NextResponse.json(
+          { error: "Activity is finalized; no further GPS points can be added" },
+          { status: 409 },
         );
-        if (duplicate) {
-          saved.push(duplicate);
+      }
+      if (
+        novelPointCount > 0
+        && existingBefore.length + novelPointCount > MAX_ACTIVITY_POINTS
+      ) {
+        return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+      }
+
+      const responseRefs: Array<(typeof existingBefore)[number] | number> = [];
+      const staged = [];
+      for (const point of points) {
+        const storedDuplicate = existingBefore.find((candidate) =>
+          sameFallbackPoint(candidate, point),
+        );
+        if (storedDuplicate) {
+          responseRefs.push(storedDuplicate);
           continue;
         }
-        if (activity.endedAt) {
-          return NextResponse.json(
-            { error: "Activity is finalized; no further GPS points can be added" },
-            { status: 409 },
-          );
+        const stagedDuplicate = staged.findIndex((candidate) =>
+          sameFallbackPoint(candidate, point),
+        );
+        if (stagedDuplicate >= 0) {
+          responseRefs.push(stagedDuplicate);
+          continue;
         }
-        if (existing.length >= MAX_ACTIVITY_POINTS) {
-          return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
-        }
-        // local.ts preserves unknown JSON fields, allowing the fallback file to retain
-        // the same durable client key as Postgres without a second competing store.
-        const pointForFallbackStore = {
+        responseRefs.push(staged.length);
+        staged.push({
           activityId: id,
           clientPointId: point.clientPointId,
           lat: point.lat,
           lng: point.lng,
           elevation: point.elevation ?? null,
           recordedAt: point.recordedAt,
-        };
-        saved.push(await addActivityPoint(pointForFallbackStore));
+        });
       }
+      // One file replacement makes the fallback batch all-or-nothing even if the
+      // filesystem fails while persisting it.
+      const inserted = await addActivityPoints(staged);
+      const saved = responseRefs.map((reference) =>
+        typeof reference === "number" ? inserted[reference] : reference,
+      );
       return NextResponse.json("points" in body ? { points: saved } : saved[0]);
     });
   } catch (error) {

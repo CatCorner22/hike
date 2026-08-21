@@ -30,6 +30,31 @@ describe("amsAssessment", () => {
     expect(r.warning).toBeNull();
   });
 
+  it.each(["headache", "nausea", "dizziness", "insomnia"] as const)(
+    "does not label ordinary %s as AMS without meaningful altitude exposure",
+    (symptom) => {
+      const r = amsAssessment({ altitudeM: 1500, gainLastHourM: 400, symptoms: [symptom] });
+      expect(r.level).toBe("none");
+      expect(r.warning).toBeNull();
+    },
+  );
+
+  it("does not let a large ordinary symptom score bypass the exposure gate", () => {
+    const r = amsAssessment({
+      altitudeM: 0,
+      symptoms: ["headache", "nausea", "fatigue", "dizziness", "insomnia"],
+    });
+    expect(r.level).toBe("none");
+    expect(r.warning).toBeNull();
+  });
+
+  it("classifies ordinary symptoms once meaningful exposure is present", () => {
+    expect(amsAssessment({ altitudeM: 2500, symptoms: ["headache"] }).level).toBe("mild");
+    expect(
+      amsAssessment({ altitudeM: 2000, gainLastHourM: 300, symptoms: ["headache"] }).level,
+    ).toBe("mild");
+  });
+
   // Regression: altitude and ascent rate were scored into the same total as symptoms, so
   // a well hiker at 3500 m after a fast climb was told they had "Moderate altitude
   // illness". Exposure must still warn, but it is not a diagnosis.
@@ -49,23 +74,35 @@ describe("amsAssessment", () => {
   });
 
   /**
-   * The 3600 m case asserted "severe" and was updated deliberately.
+   * The 3 600 m case asserted "severe" on main and is changed here deliberately.
    *
-   * Severity was thresholded on symptoms *plus* exposure, so a single headache at
-   * 3 600 m after a 500 m/hr climb came back "Possible HACE/HAPE ... descend
-   * immediately. This is an emergency." A headache at that elevation is the most
-   * common altitude symptom there is and is textbook mild AMS; the standard advice
-   * is to stop ascending, rest and hydrate. Exposure still escalates it — the fast
-   * climb makes it moderate rather than mild — but altitude alone must not
-   * manufacture an emergency, which is the same false alarm this function already
-   * separates exposure from symptoms to avoid.
+   * PR #38 added the gate above — ordinary symptoms are not AMS without meaningful
+   * altitude exposure — but did not touch the severity thresholds, which ran on
+   * symptoms *plus* exposure. So a single headache at 3 600 m after a 500 m/hr climb
+   * scored 8 and came back "Possible HACE/HAPE ... descend immediately. This is an
+   * emergency." A headache at that elevation is the most common altitude symptom there
+   * is and is textbook mild AMS; the standard advice is to stop ascending, rest and
+   * hydrate. Exposure still escalates it — the fast climb makes it moderate rather than
+   * mild — but altitude alone must not manufacture an emergency.
    */
-  it("does report illness once symptoms are present, at a severity the symptoms support", () => {
+  it("does report altitude-exposed symptoms at a severity the symptoms support", () => {
     expect(amsAssessment({ altitudeM: 3600, gainLastHourM: 500, symptoms: ["headache"] }).level).toBe(
       "moderate",
     );
     expect(amsAssessment({ altitudeM: 2600, symptoms: ["headache"] }).level).toBe("mild");
-    expect(amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] }).level).toBe("severe");
+  });
+
+  it("treats low-altitude ataxia as an emergency without labeling it altitude illness", () => {
+    const r = amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] });
+    expect(r.level).toBe("severe");
+    expect(r.warning).toMatch(/emergency medical help/i);
+    expect([r.warning, ...r.actions].join(" ")).not.toMatch(/HACE|HAPE|descend|altitude/i);
+  });
+
+  it("retains altitude-specific emergency guidance for ataxia after meaningful exposure", () => {
+    const r = amsAssessment({ altitudeM: 3200, symptoms: ["ataxia"] });
+    expect(r.level).toBe("severe");
+    expect(r.warning).toMatch(/HACE|HAPE|descend/i);
   });
 
   it("never calls an emergency on altitude alone", () => {
@@ -81,7 +118,8 @@ describe("amsAssessment", () => {
   });
 
   it("escalates by one step for exposure, never three", () => {
-    const low = amsAssessment({ altitudeM: 1500, symptoms: ["headache", "nausea"] });
+    // 1 500 m is below the exposure gate entirely, so compare two exposed altitudes.
+    const low = amsAssessment({ altitudeM: 2600, symptoms: ["headache", "nausea"] });
     const high = amsAssessment({ altitudeM: 4200, gainLastHourM: 500, symptoms: ["headache", "nausea"] });
     expect(low.level).toBe("mild");
     expect(high.level).toBe("moderate");

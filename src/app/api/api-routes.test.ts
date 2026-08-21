@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +12,7 @@ import { GET as listPlans, POST as createPlanRoute } from "./plans/route";
 import { GET as getPlan, DELETE as deletePlanRoute } from "./plans/[id]/route";
 import { GET as getActivity } from "./activities/[id]/route";
 import { POST as addPoints } from "./activities/[id]/points/route";
+import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import { OWNER_COOKIE, newOwnerId, signOwnerToken } from "@/lib/auth/owner";
 
 let directory: string;
@@ -231,6 +232,22 @@ describe("activity integrity races", () => {
     return (await response.json()) as { id: string };
   }
 
+  async function seedActivityPoints(activityId: string, count: number) {
+    const storePath = process.env.LOCAL_STORE_PATH!;
+    const store = JSON.parse(await readFile(storePath, "utf8")) as {
+      points: Array<Record<string, unknown>>;
+    };
+    store.points = Array.from({ length: count }, (_, index) => ({
+      id: `seed-${index}`,
+      activityId,
+      lat: 35 + index / 1_000_000,
+      lng: -84,
+      elevation: null,
+      recordedAt: new Date(1_700_000_000_000 + index * 1_000).toISOString(),
+    }));
+    await writeFile(storePath, JSON.stringify(store));
+  }
+
   it("returns the first point for concurrent tuple retries and client-key retries", async () => {
     const activity = await createOwnedActivity();
     const params = { params: Promise.resolve({ id: activity.id }) };
@@ -280,6 +297,97 @@ describe("activity integrity races", () => {
       params,
     ).then((response) => response.json())) as { points: unknown[] };
     expect(listed.points).toHaveLength(2);
+  });
+
+  it("rejects a mixed over-cap batch before persisting any novel point", async () => {
+    const activity = await createOwnedActivity();
+    const params = { params: Promise.resolve({ id: activity.id }) };
+    const storePath = process.env.LOCAL_STORE_PATH!;
+    await seedActivityPoints(activity.id, MAX_ACTIVITY_POINTS - 1);
+
+    const response = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({
+          points: [
+            {
+              lat: 35,
+              lng: -84,
+              recordedAt: new Date(1_700_000_000_000).toISOString(),
+            },
+            { lat: 36, lng: -84, recordedAt: "2026-08-20T20:00:00.000Z" },
+            { lat: 36.001, lng: -84, recordedAt: "2026-08-20T20:00:01.000Z" },
+          ],
+        }),
+      ),
+      params,
+    );
+    expect(response.status).toBe(413);
+
+    const after = JSON.parse(await readFile(storePath, "utf8")) as {
+      points: Array<{ lat: number }>;
+    };
+    expect(after.points).toHaveLength(MAX_ACTIVITY_POINTS - 1);
+    expect(after.points.some((point) => point.lat === 36 || point.lat === 36.001)).toBe(false);
+  });
+
+  it("allows duplicate-only batches at the cap without adding rows", async () => {
+    const activity = await createOwnedActivity();
+    const params = { params: Promise.resolve({ id: activity.id }) };
+    await seedActivityPoints(activity.id, MAX_ACTIVITY_POINTS);
+    const duplicate = {
+      lat: 35,
+      lng: -84,
+      recordedAt: new Date(1_700_000_000_000).toISOString(),
+    };
+
+    const response = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({ points: [duplicate, duplicate] }),
+      ),
+      params,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { points: Array<{ id: string }> };
+    expect(body.points.map((point) => point.id)).toEqual(["seed-0", "seed-0"]);
+
+    const store = JSON.parse(await readFile(process.env.LOCAL_STORE_PATH!, "utf8")) as {
+      points: unknown[];
+    };
+    expect(store.points).toHaveLength(MAX_ACTIVITY_POINTS);
+  });
+
+  it("stores an intra-batch duplicate once while preserving response order", async () => {
+    const activity = await createOwnedActivity();
+    const params = { params: Promise.resolve({ id: activity.id }) };
+    const point = {
+      clientPointId: "same-device-fix",
+      lat: 37.5,
+      lng: -119.5,
+      recordedAt: "2026-08-20T20:01:00.000Z",
+    };
+
+    const response = await addPoints(
+      jsonRequest(
+        `http://localhost/api/activities/${activity.id}/points`,
+        "POST",
+        JSON.stringify({ points: [point, point] }),
+      ),
+      params,
+    );
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { points: Array<{ id: string }> };
+    expect(body.points).toHaveLength(2);
+    expect(body.points[0].id).toBe(body.points[1].id);
+
+    const listed = (await listPoints(
+      getRequest(`http://localhost/api/activities/${activity.id}/points`),
+      params,
+    ).then((result) => result.json())) as { points: unknown[] };
+    expect(listed.points).toHaveLength(1);
   });
 
   it("rejects a point after finalization and returns geometry derived from accepted points", async () => {
