@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { backtrackProgress, rapidAscentWarning, reverseTrackLine, stationaryMinutes } from "./backtrack";
+import {
+  backtrackProgress,
+  gainLastHourM,
+  rapidAscentWarning,
+  reverseTrackLine,
+  stationaryMinutes,
+} from "./backtrack";
 import { overdueStatus } from "./profile";
 
 describe("backtrack", () => {
@@ -73,5 +79,96 @@ describe("overdueStatus", () => {
       expect(status.label).toMatch(/invalid/i);
       expect(status.label).not.toMatch(/NaN/);
     }
+  });
+});
+
+describe("track points that cannot be trusted", () => {
+  const now = Date.parse("2026-08-21T02:00:00Z");
+  const at = (minutesAgo: number, extra: Record<string, unknown> = {}) => ({
+    lat: 37.7,
+    lng: -119.6,
+    recordedAt: new Date(now - minutesAgo * 60_000).toISOString(),
+    ...extra,
+  });
+  const climb = [
+    at(55, { altitude: 2000 }),
+    at(40, { altitude: 2200 }),
+    at(20, { altitude: 2500 }),
+    at(0, { altitude: 2900 }),
+  ];
+
+  /**
+   * `sampleTime` guards `Date.parse` with `Number.isFinite`; `stationaryMinutes`, in the
+   * same file, called it raw. One unparseable timestamp made `oldest` NaN and the whole
+   * result NaN — and NaN compares false against every threshold, so the not-moving
+   * warning silently stopped firing rather than reporting anything wrong.
+   */
+  it("does not return NaN minutes when one timestamp is corrupt", () => {
+    const clean = stationaryMinutes([at(40), at(20), at(0)], now);
+    expect(clean).toBe(40);
+    for (const corrupt of ["not-a-date", "2026-13-45T99:99:99Z", "undefined"]) {
+      const result = stationaryMinutes(
+        [at(40), { lat: 37.7, lng: -119.6, recordedAt: corrupt }, at(0)],
+        now,
+      );
+      expect(Number.isFinite(result), corrupt).toBe(true);
+      expect(result).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  /**
+   * `altitude != null` lets NaN through, and one NaN poisons Math.min. A real 900 m
+   * ascent came back NaN, which deleted the warning entirely and zeroed the
+   * altitude-illness exposure that feeds `amsAssessment`.
+   */
+  it("keeps the rapid-ascent warning when one altitude sample is NaN", () => {
+    expect(gainLastHourM(climb, now)).toBeCloseTo(900, 0);
+    expect(rapidAscentWarning(climb, now)).toMatch(/gained ~900 m/);
+
+    const poisoned = [
+      ...climb.slice(0, 2),
+      at(30, { altitude: Number.NaN }),
+      ...climb.slice(2),
+    ];
+    expect(gainLastHourM(poisoned, now)).toBeCloseTo(900, 0);
+    expect(rapidAscentWarning(poisoned, now)).toMatch(/gained ~900 m/);
+  });
+
+  /**
+   * The window test was `now - t <= windowMs`, which any future timestamp satisfies.
+   * A point dated 90 minutes ahead at 9 000 m produced "You gained ~7000 m in the last
+   * hour" — an impossible rate, and the kind of false alarm that trains a party to stop
+   * believing the warning bar.
+   */
+  it("ignores points dated in the future", () => {
+    const withFuture = [...climb, at(-90, { altitude: 9000 })];
+    expect(gainLastHourM(withFuture, now)).toBeCloseTo(900, 0);
+    expect(rapidAscentWarning(withFuture, now)).toMatch(/gained ~900 m/);
+    expect(rapidAscentWarning(withFuture, now)).not.toMatch(/7000/);
+    // A little clock skew is still tolerated rather than discarding good data.
+    const slightlyAhead = [...climb.slice(0, 3), at(-1, { altitude: 2900 })];
+    expect(gainLastHourM(slightlyAhead, now)).toBeCloseTo(900, 0);
+  });
+
+  /**
+   * A corrupt timestamp must be dropped from the altitude window, not read as "now".
+   * Treated as current it sorts to the end and becomes the *latest* altitude, so one
+   * unparseable sample at 5 000 m turned a 900 m ascent into a reported 3 000 m.
+   */
+  it("drops a corrupt-timestamped altitude instead of treating it as the current one", () => {
+    const poisoned = [
+      ...climb,
+      { lat: 37.7, lng: -119.6, recordedAt: "not-a-date", altitude: 5000 },
+    ];
+    expect(gainLastHourM(poisoned, now)).toBeCloseTo(900, 0);
+    expect(rapidAscentWarning(poisoned, now)).toMatch(/gained ~900 m/);
+    expect(rapidAscentWarning(poisoned, now)).not.toMatch(/3000/);
+  });
+
+  it("still reports nothing rather than guessing when the window is empty", () => {
+    expect(gainLastHourM([], now)).toBe(0);
+    expect(rapidAscentWarning([], now)).toBeNull();
+    expect(stationaryMinutes([], now)).toBe(0);
+    expect(gainLastHourM(climb, Number.NaN)).toBe(0);
   });
 });
