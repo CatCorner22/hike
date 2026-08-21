@@ -52,11 +52,15 @@ export function amsAssessment(input: {
   const score = exposure + symptomScore;
 
   let level: AmsLevel = "none";
-  if (input.symptoms.length > 0) {
-    if (input.symptoms.includes("ataxia") || score >= 8) level = "severe";
-    // Fatigue alone at low elevation is not altitude illness. Calling it AMS would
-    // misdirect a hiker from other causes while giving a confident false diagnosis.
-    else if (alt < 2500 && input.symptoms.every((symptom) => symptom === "fatigue")) level = "none";
+  // Ordinary symptoms are not AMS without meaningful altitude exposure. Ataxia stays
+  // urgent at every elevation because new loss of coordination requires immediate
+  // action even when altitude illness is not the cause.
+  const hasAtaxia = input.symptoms.includes("ataxia");
+  const hasMeaningfulExposure = alt >= 2500 || (alt >= 2000 && gain >= 300);
+  if (hasAtaxia) {
+    level = "severe";
+  } else if (hasMeaningfulExposure && input.symptoms.length > 0) {
+    if (score >= 8) level = "severe";
     else if (score >= 5) level = "moderate";
     else level = "mild";
   }
@@ -64,7 +68,12 @@ export function amsAssessment(input: {
   const actions: string[] = [];
   let warning: string | null = null;
 
-  if (level === "severe") {
+  if (level === "severe" && hasAtaxia && !hasMeaningfulExposure) {
+    warning =
+      "New loss of coordination — stop moving, stay with a buddy, and seek emergency medical help.";
+    actions.push("Call emergency services or activate your SOS device now.");
+    actions.push("Keep the person warm and still; do not let them continue alone.");
+  } else if (level === "severe") {
     warning =
       "Possible HACE/HAPE — stop ascent, give O₂ if available, descend immediately. This is an emergency.";
     actions.push("Descend at least 300–500 m if you can do so safely.");

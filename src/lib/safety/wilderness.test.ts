@@ -30,6 +30,31 @@ describe("amsAssessment", () => {
     expect(r.warning).toBeNull();
   });
 
+  it.each(["headache", "nausea", "dizziness", "insomnia"] as const)(
+    "does not label ordinary %s as AMS without meaningful altitude exposure",
+    (symptom) => {
+      const r = amsAssessment({ altitudeM: 1500, gainLastHourM: 400, symptoms: [symptom] });
+      expect(r.level).toBe("none");
+      expect(r.warning).toBeNull();
+    },
+  );
+
+  it("does not let a large ordinary symptom score bypass the exposure gate", () => {
+    const r = amsAssessment({
+      altitudeM: 0,
+      symptoms: ["headache", "nausea", "fatigue", "dizziness", "insomnia"],
+    });
+    expect(r.level).toBe("none");
+    expect(r.warning).toBeNull();
+  });
+
+  it("classifies ordinary symptoms once meaningful exposure is present", () => {
+    expect(amsAssessment({ altitudeM: 2500, symptoms: ["headache"] }).level).toBe("mild");
+    expect(
+      amsAssessment({ altitudeM: 2000, gainLastHourM: 300, symptoms: ["headache"] }).level,
+    ).toBe("mild");
+  });
+
   // Regression: altitude and ascent rate were scored into the same total as symptoms, so
   // a well hiker at 3500 m after a fast climb was told they had "Moderate altitude
   // illness". Exposure must still warn, but it is not a diagnosis.
@@ -48,12 +73,24 @@ describe("amsAssessment", () => {
     }
   });
 
-  it("does report illness once symptoms are present", () => {
+  it("does report illness once altitude-exposed symptoms are present", () => {
     expect(amsAssessment({ altitudeM: 3600, gainLastHourM: 500, symptoms: ["headache"] }).level).toBe(
       "severe",
     );
     expect(amsAssessment({ altitudeM: 2600, symptoms: ["headache"] }).level).toBe("mild");
-    expect(amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] }).level).toBe("severe");
+  });
+
+  it("treats low-altitude ataxia as an emergency without labeling it altitude illness", () => {
+    const r = amsAssessment({ altitudeM: 1500, symptoms: ["ataxia"] });
+    expect(r.level).toBe("severe");
+    expect(r.warning).toMatch(/emergency medical help/i);
+    expect([r.warning, ...r.actions].join(" ")).not.toMatch(/HACE|HAPE|descend|altitude/i);
+  });
+
+  it("retains altitude-specific emergency guidance for ataxia after meaningful exposure", () => {
+    const r = amsAssessment({ altitudeM: 3200, symptoms: ["ataxia"] });
+    expect(r.level).toBe("severe");
+    expect(r.warning).toMatch(/HACE|HAPE|descend/i);
   });
 });
 

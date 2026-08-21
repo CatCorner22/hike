@@ -1,12 +1,12 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
 const store = {
-  points: [] as Array<{ activityId: string; lat: number; lng: number; synced?: boolean }>,
+  points: [] as Array<{ id?: string; activityId: string; lat: number; lng: number; synced?: boolean }>,
 };
 
 vi.mock("@/lib/offline", () => ({
   getOfflineDb: async () => null,
-  queueActivityPoint: async (point: { activityId: string; lat: number; lng: number }) => {
+  queueActivityPoint: async (point: { id?: string; activityId: string; lat: number; lng: number }) => {
     store.points.push({ ...point, synced: false });
   },
 }));
@@ -19,12 +19,11 @@ describe("saveActivityPoint", () => {
   });
 
   it("queues when the network throws", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => {
-        throw new Error("offline");
-      }),
-    );
+    const request = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      throw new Error("offline");
+    });
+    vi.stubGlobal("fetch", request);
     const ok = await saveActivityPoint("act-1", {
       activityId: "act-1",
       lat: 37,
@@ -33,6 +32,9 @@ describe("saveActivityPoint", () => {
     });
     expect(ok).toBe(false);
     expect(store.points).toHaveLength(1);
+    const sent = JSON.parse(String(request.mock.calls[0][1]?.body)) as { clientPointId: string };
+    expect(sent.clientPointId).toMatch(/^[0-9a-f-]{36}$/i);
+    expect(store.points[0].id).toBe(sent.clientPointId);
     vi.unstubAllGlobals();
   });
 
