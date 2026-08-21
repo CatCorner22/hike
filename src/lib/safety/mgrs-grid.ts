@@ -84,6 +84,8 @@ export function gridSquareCorners(
   if (!sw || !se || !ne || !nw) return null;
   return [sw, se, ne, nw];
 }
+
+/** Neighboring grid cells (N/E/S/W) for land-nav confirmation. */
 export function adjacentGridSquares(
   lat: number,
   lng: number,
