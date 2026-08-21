@@ -18,7 +18,8 @@
 | API ownership & bounds | `adversarial/api-probe.mjs` | **PASS** (16/16) |
 | Concurrent writes | `adversarial/retest-concurrency.mjs` | **PASS** (50/50 retained) |
 | CSP / map shell | `adversarial/csp-check.mjs` | **PASS** |
-| Unit regressions | `npx vitest run` | **PASS** (702 tests) |
+| Pause/resume distance | `adversarial/probe-new-activity-pause.mjs` | **PASS** (1/1) |
+| Unit regressions | `npx vitest run` | **PASS** (737 tests) |
 
 All previously documented critical offline findings (alias pointer mismatch, cache poisoning, stale “saved” UI after eviction, silent JSON fallback overwrite, unbounded point queue) are **fixed and verified** by the probes above.
 
@@ -176,9 +177,12 @@ The `offline-navigation` job runs:
 - `adversarial/gps-adversarial.mjs`
 - `adversarial/probe-storage-browser.mjs` *(new)*
 - `adversarial/probe-storage-local.mjs` *(new)*
+- `adversarial/probe-new-activity-pause.mjs` *(new)*
 - `adversarial/api-probe.mjs`
 - `adversarial/retest-concurrency.mjs`
 - `adversarial/csp-check.mjs`
+
+`probe-storage-weather-stall.mjs` passes locally but is not yet wired into CI.
 
 ## Conclusion
 
