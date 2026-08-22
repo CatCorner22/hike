@@ -9,6 +9,7 @@ import {
   geoJsonLineOrMultiLineStringSchema,
   isoDatetimeSchema,
   parseJsonBody,
+  waypointsSchema,
 } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import { deletePlan, getPlan, updatePlan } from "@/lib/store/local";
@@ -18,7 +19,7 @@ const planPatchSchema = z.object({
   trailId: z.string().uuid().nullable().optional(),
   plannedDate: isoDatetimeSchema.nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
-  waypoints: z.unknown().nullable().optional(),
+  waypoints: waypointsSchema.nullable().optional(),
   campgroundIds: z.array(z.string().min(1)).max(100).nullable().optional(),
   customGeometry: geoJsonLineOrMultiLineStringSchema.nullable().optional(),
   // The edit page sends the revision it received with its full snapshot.

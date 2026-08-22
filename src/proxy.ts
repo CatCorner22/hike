@@ -12,10 +12,11 @@ import {
  * Mints the signed owner cookie on first contact so a browser always has an identity
  * before it calls the API.
  *
- * Route handlers re-verify the signature themselves, so this is a convenience, not the
- * security boundary — the docs note Proxy may be deployed to a CDN separately from the
- * render code, and a request that somehow skips it gets no session rather than an
- * unscoped one.
+ * This is the only Next 16 proxy file. A leftover root `middleware.ts` / `proxy.ts`
+ * pair used a different cookie name and minted sessions on every API call; it must
+ * not be reintroduced. Route handlers re-verify the signature themselves, so this
+ * is a convenience, not the security boundary — a request that somehow skips it
+ * gets no session rather than an unscoped one.
  *
  * (Next 16 renamed the `middleware` file convention to `proxy`.)
  */

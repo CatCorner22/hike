@@ -3,12 +3,20 @@ import { eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trailResearch, trails } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
+import { rateLimit } from "@/lib/api/rate-limit";
 import { parseOsmTrailId } from "@/lib/ids";
+import { requireOwner } from "@/lib/auth/owner";
 import { researchTrail } from "@/lib/research/agent";
 import { findOrCreateTrail } from "@/lib/trails/service";
 
 const REFRESH_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 export async function GET(request: Request, { params }: { params: Promise<{ trailId: string }> }) {
+  const limited = rateLimit(request, "research", 6);
+  if (limited) return limited;
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
+
   const { trailId } = await params;
   const refresh = new URL(request.url).searchParams.get("refresh") === "true";
   try {
