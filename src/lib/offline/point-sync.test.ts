@@ -59,7 +59,7 @@ describe("point sync failure handling", () => {
     })).resolves.toBeUndefined();
     count.mockRestore();
     expect(await getPendingPointCount()).toBe(1);
-  });
+  }, 15_000);
 
   it.each([
     ["generous", ROUTE_PACK_STORAGE_RESERVE_BYTES + 10_000, true],

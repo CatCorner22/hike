@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MissingSessionSecretError,
+  resolveOwnerId,
   newOwnerId,
   readCookie,
   requireOwner,
@@ -150,4 +151,67 @@ describe("readCookie tolerates malformed cookies", () => {
     });
     expect(readCookie(request, "hike_owner")).toBe("abc-def");
   });
+});
+
+describe("bearer transport", () => {
+  const secret = "test-secret";
+  const withEnv = async (fn: () => Promise<void>) => {
+    vi.stubEnv("SESSION_SECRET", secret);
+    try {
+      await fn();
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  };
+
+  /**
+   * The native shell runs on capacitor://localhost — the SameSite cookie is never sent
+   * cross-origin, and the proxy mints cookies only on document navigations, which a
+   * native client never performs. Authorization: Bearer is therefore the ONLY way a
+   * wrapped app can authenticate; these pin that path onto the same token format and
+   * the same verifier the cookie uses.
+   */
+  it("resolves an owner from Authorization: Bearer", async () =>
+    withEnv(async () => {
+      const token = await signOwnerToken("owner-bearer-1");
+      const request = new Request("http://x/api/plans", {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(await resolveOwnerId(request)).toBe("owner-bearer-1");
+    }));
+
+  it("prefers a valid bearer over a cookie for a different owner", async () =>
+    withEnv(async () => {
+      const bearerToken = await signOwnerToken("owner-from-bearer");
+      const cookieToken = await signOwnerToken("owner-from-cookie");
+      const request = new Request("http://x/api/plans", {
+        headers: {
+          authorization: `Bearer ${bearerToken}`,
+          cookie: `hike_owner=${cookieToken}`,
+        },
+      });
+      expect(await resolveOwnerId(request)).toBe("owner-from-bearer");
+    }));
+
+  it("falls through to the cookie when the bearer is invalid, and to null when both are", async () =>
+    withEnv(async () => {
+      const cookieToken = await signOwnerToken("owner-cookie-2");
+      const bad = new Request("http://x/api/plans", {
+        headers: { authorization: "Bearer owner-cookie-2.forged", cookie: `hike_owner=${cookieToken}` },
+      });
+      expect(await resolveOwnerId(bad)).toBe("owner-cookie-2");
+      const none = new Request("http://x/api/plans", {
+        headers: { authorization: "Bearer not-even-a-token" },
+      });
+      expect(await resolveOwnerId(none)).toBeNull();
+    }));
+
+  it("ignores non-bearer Authorization schemes", async () =>
+    withEnv(async () => {
+      const cookieToken = await signOwnerToken("owner-basic");
+      const request = new Request("http://x/api/plans", {
+        headers: { authorization: "Basic dXNlcjpwYXNz", cookie: `hike_owner=${cookieToken}` },
+      });
+      expect(await resolveOwnerId(request)).toBe("owner-basic");
+    }));
 });

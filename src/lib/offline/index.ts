@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api/client";
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import type { LocalActivity } from "@/lib/offline/activity-sync";
@@ -247,7 +248,7 @@ async function flushActivityPoints(
     const batch = points.slice(index, index + 100);
     let response: Response;
     try {
-      response = await fetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
+      response = await apiFetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -149,3 +149,63 @@ describe("single identity proxy", () => {
     expect(existsSync(path.join(root, "proxy.ts"))).toBe(false);
   });
 });
+
+describe("CORS for the native shell", () => {
+  /**
+   * The shell fetches from capacitor://localhost with a Bearer header. Without these
+   * headers WebKit blocks the response before auth is consulted. The grant must echo
+   * only allowlisted origins, and must NOT include Allow-Credentials — the cookie stays
+   * unreachable cross-origin by design.
+   */
+  it("answers a preflight from an allowed origin", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost/api/plans", {
+        method: "OPTIONS",
+        headers: {
+          origin: "capacitor://localhost",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization,content-type",
+        },
+      }),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+    expect(response.headers.get("access-control-allow-headers")).toContain("authorization");
+    expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+    expect(response.headers.get("vary")).toMatch(/origin/i);
+  });
+
+  it("stamps the allow-origin header on an actual API response", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost/api/plans", {
+        headers: { origin: "capacitor://localhost" },
+      }),
+    );
+    expect(response.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+  });
+
+  it("grants nothing to an origin outside the allowlist", async () => {
+    for (const origin of ["https://evil.example", "http://localhost:3000"]) {
+      const preflight = await proxy(
+        new NextRequest("http://localhost/api/plans", {
+          method: "OPTIONS",
+          headers: { origin, "access-control-request-method": "GET" },
+        }),
+      );
+      expect(preflight.headers.get("access-control-allow-origin"), origin).toBeNull();
+      const actual = await proxy(
+        new NextRequest("http://localhost/api/plans", { headers: { origin } }),
+      );
+      expect(actual.headers.get("access-control-allow-origin"), origin).toBeNull();
+    }
+  });
+
+  it("leaves non-API and originless requests untouched", async () => {
+    const page = await proxy(
+      new NextRequest("http://localhost/guide", { headers: { origin: "capacitor://localhost" } }),
+    );
+    expect(page.headers.get("access-control-allow-origin")).toBeNull();
+    const plain = await proxy(new NextRequest("http://localhost/api/plans"));
+    expect(plain.headers.get("access-control-allow-origin")).toBeNull();
+  });
+});

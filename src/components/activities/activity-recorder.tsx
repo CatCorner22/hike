@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -87,7 +88,7 @@ export function ActivityRecorder({
     if (!id || statusRef.current === "idle") return;
     const current = { ...statsRef.current, durationSeconds: activeDurationSec() };
     try {
-      await fetch(`/api/activities/${encodeURIComponent(id)}`, {
+      await apiFetch(`/api/activities/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stats: current }),

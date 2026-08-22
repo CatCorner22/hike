@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
@@ -396,18 +397,18 @@ export default function NavigatePage() {
       }
       try {
         if (target.kind === "trail") {
-          const res = await withNetworkTimeout((signal) => fetch(`/api/trails/${target.id}`, { signal }), 8000);
+          const res = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${target.id}`, { signal }), 8000);
           if (!res.ok) throw new Error("Trail not found on server");
           const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
           complete({ status: "ready", pack, source: "network" });
           return;
         }
-        const planRes = await withNetworkTimeout((signal) => fetch(`/api/plans/${target.id}`, { signal }), 8000);
+        const planRes = await withNetworkTimeout((signal) => apiFetch(`/api/plans/${target.id}`, { signal }), 8000);
         if (!planRes.ok) throw new Error("Plan not found on server");
         const plan = await planRes.json();
         let trail = null;
         if (plan.trailId) {
-          const trailRes = await withNetworkTimeout((signal) => fetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          const trailRes = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
           if (trailRes.ok) trail = await trailRes.json();
         }
         const built = packFromPlanApi(navId, plan, trail);

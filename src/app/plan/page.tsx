@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
@@ -23,7 +24,7 @@ export default function PlansPage() {
   const router = useRouter();
 
   useEffect(() => {
-    fetch("/api/plans")
+    apiFetch("/api/plans")
       .then((r) => r.json())
       .then((d) => setPlans(d.plans || []))
       .finally(() => setLoading(false));
@@ -33,7 +34,7 @@ export default function PlansPage() {
     const name = prompt("Plan name:");
     if (!name) return;
 
-    const response = await fetch("/api/plans", {
+    const response = await apiFetch("/api/plans", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),

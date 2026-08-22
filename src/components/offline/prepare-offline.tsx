@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -38,7 +39,7 @@ async function requestCorridorFeatures(
 ): Promise<CorridorFeatureSet | null> {
   try {
     const response = await withNetworkTimeout(
-      (signal) => fetch("/api/corridor/features", {
+      (signal) => apiFetch("/api/corridor/features", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ routeId, bboxes }),
@@ -67,7 +68,7 @@ async function requestOfficialAlerts(
   if (!points.length) return null;
   try {
     const response = await withNetworkTimeout(
-      (signal) => fetch("/api/official-alerts", {
+      (signal) => apiFetch("/api/official-alerts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ routeId, parkCode: parkCode ?? null, points }),

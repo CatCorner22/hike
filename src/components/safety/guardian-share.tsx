@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -188,7 +189,7 @@ export function GuardianShare({
       const restored: unknown = raw ? JSON.parse(raw) : null;
       if (!isGuardianControl(restored)) return;
       const token = sessionStorage.getItem(tokenStorageKey(shareKey)) ?? undefined;
-      void fetch(`/api/guardian/${encodeURIComponent(restored.shareId)}`, {
+      void apiFetch(`/api/guardian/${encodeURIComponent(restored.shareId)}`, {
         cache: "no-store",
       }).then(async (response) => {
         if (cancelled) return;
@@ -233,7 +234,7 @@ export function GuardianShare({
     publishInFlight.current = true;
     if (!quiet) setLinkBusy(true);
     try {
-      const response = await fetch(`/api/guardian/${encodeURIComponent(control.shareId)}`, {
+      const response = await apiFetch(`/api/guardian/${encodeURIComponent(control.shareId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -291,7 +292,7 @@ export function GuardianShare({
     setLinkBusy(true);
     setLinkNotice(null);
     try {
-      const response = await fetch("/api/guardian", {
+      const response = await apiFetch("/api/guardian", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
@@ -343,7 +344,7 @@ export function GuardianShare({
     setLinkBusy(true);
     setLinkNotice(null);
     try {
-      const response = await fetch(`/api/guardian/${encodeURIComponent(link.shareId)}`, {
+      const response = await apiFetch(`/api/guardian/${encodeURIComponent(link.shareId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",

@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -23,7 +24,7 @@ export default function ActivitiesPage() {
   const [activities, setActivities] = useState<Activity[]>([]);
 
   useEffect(() => {
-    fetch("/api/activities")
+    apiFetch("/api/activities")
       .then((r) => r.json())
       .then((d) => setActivities(d.activities || []));
   }, []);

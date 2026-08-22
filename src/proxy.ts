@@ -36,7 +36,57 @@ function isDocumentRequest(request: NextRequest): boolean {
   return (request.headers.get("accept") ?? "").includes("text/html");
 }
 
+/**
+ * Origins the native shell loads from. A WKWebView app is a different origin from the
+ * API, so without these headers the browser engine blocks every cross-origin `fetch`
+ * before auth is even consulted — the shell could hold a perfectly valid Bearer token
+ * and still be unable to use it.
+ *
+ * Deliberately NO `Access-Control-Allow-Credentials`: the shell authenticates with a
+ * Bearer header, never the cookie, so the cookie stays unreachable cross-origin and
+ * the CORS grant is as narrow as it can be.
+ */
+const DEFAULT_APP_ORIGINS = ["capacitor://localhost", "https://localhost"];
+
+function allowedAppOrigins(): Set<string> {
+  const extra = (process.env.ALLOWED_APP_ORIGINS ?? "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return new Set([...DEFAULT_APP_ORIGINS, ...extra]);
+}
+
+function corsOriginFor(request: NextRequest): string | null {
+  const origin = request.headers.get("origin");
+  if (!origin) return null;
+  return allowedAppOrigins().has(origin) ? origin : null;
+}
+
+function applyCorsHeaders(response: NextResponse, origin: string): NextResponse {
+  response.headers.set("Access-Control-Allow-Origin", origin);
+  const vary = response.headers.get("Vary");
+  if (!vary) response.headers.set("Vary", "Origin");
+  else if (!/(^|,\s*)origin(\s*,|$)/i.test(vary)) response.headers.set("Vary", `${vary}, Origin`);
+  return response;
+}
+
+function corsPreflightResponse(origin: string): NextResponse {
+  const response = new NextResponse(null, { status: 204 });
+  response.headers.set("Access-Control-Allow-Origin", origin);
+  response.headers.set("Access-Control-Allow-Methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+  response.headers.set("Access-Control-Allow-Headers", "content-type,authorization");
+  response.headers.set("Access-Control-Max-Age", "86400");
+  response.headers.set("Vary", "Origin");
+  return response;
+}
+
 export async function proxy(request: NextRequest) {
+  const isApi = request.nextUrl.pathname.startsWith("/api/");
+  const corsOrigin = isApi ? corsOriginFor(request) : null;
+  if (isApi && request.method === "OPTIONS" && corsOrigin) {
+    return corsPreflightResponse(corsOrigin);
+  }
+
   let existing: string | null = null;
   try {
     existing = await verifyOwnerToken(request.cookies.get(OWNER_COOKIE)?.value);
@@ -44,12 +94,20 @@ export async function proxy(request: NextRequest) {
     // Without a secret we cannot mint a trustworthy cookie. Pass through and let the
     // route handlers refuse; failing the whole app closed here would take the offline
     // navigate shell down with it.
-    if (error instanceof MissingSessionSecretError) return NextResponse.next();
+    if (error instanceof MissingSessionSecretError) {
+      const response = NextResponse.next();
+      return corsOrigin ? applyCorsHeaders(response, corsOrigin) : response;
+    }
     throw error;
   }
 
-  if (existing) return protectOwnerScopedResponse(request, NextResponse.next());
-  if (!isDocumentRequest(request)) return protectOwnerScopedResponse(request, NextResponse.next());
+  const finish = (response: NextResponse) => {
+    const protectedResponse = protectOwnerScopedResponse(request, response);
+    return corsOrigin ? applyCorsHeaders(protectedResponse, corsOrigin) : protectedResponse;
+  };
+
+  if (existing) return finish(NextResponse.next());
+  if (!isDocumentRequest(request)) return finish(NextResponse.next());
 
   const token = await signOwnerToken(newOwnerId());
   // Set it on the request as well, so a handler in this same request sees the new
@@ -63,7 +121,7 @@ export async function proxy(request: NextRequest) {
   // later visitor, handing them that hiker's plans and recorded tracks. A
   // response that establishes a session must never be shared.
   response.headers.set("Cache-Control", "private, no-store, max-age=0");
-  return protectOwnerScopedResponse(request, response);
+  return finish(response);
 }
 
 /**

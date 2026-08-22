@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -83,12 +84,12 @@ export default function PlanDetailPage() {
   const offlineReadiness = useOfflinePackReady(plan ? `plan-${planId}` : null);
 
   useEffect(() => {
-    fetch(`/api/plans/${planId}`)
+    apiFetch(`/api/plans/${planId}`)
       .then((r) => r.json())
       .then(async (p) => {
         setPlan(p);
         if (p.trailId) {
-          const tr = await fetch(`/api/trails/${p.trailId}`).then((r) => r.json());
+          const tr = await apiFetch(`/api/trails/${p.trailId}`).then((r) => r.json());
           if (tr.geometry) {
             setTrail(tr);
             const built = packFromPlanApi(`plan-${planId}`, p, tr);
@@ -118,7 +119,7 @@ export default function PlanDetailPage() {
   async function save(updates: Partial<Plan>) {
     if (!plan) return;
     setSaving(true);
-    const response = await fetch(`/api/plans/${planId}`, {
+    const response = await apiFetch(`/api/plans/${planId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...plan, ...updates }),
@@ -129,7 +130,7 @@ export default function PlanDetailPage() {
 
   async function deletePlan() {
     if (!confirm("Delete this plan?")) return;
-    await fetch(`/api/plans/${planId}`, { method: "DELETE" });
+    await apiFetch(`/api/plans/${planId}`, { method: "DELETE" });
     router.push("/plan");
   }
 
@@ -141,7 +142,7 @@ export default function PlanDetailPage() {
       const file = input.files?.[0];
       if (!file) return;
       const gpx = await file.text();
-      const response = await fetch("/api/sync/offline", {
+      const response = await apiFetch("/api/sync/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gpx, name: file.name }),
@@ -242,7 +243,7 @@ export default function PlanDetailPage() {
               setCampSearching(true);
               setCampError(null);
               try {
-                const res = await fetch(`/api/camping/search?q=${encodeURIComponent(campQuery.trim())}`);
+                const res = await apiFetch(`/api/camping/search?q=${encodeURIComponent(campQuery.trim())}`);
                 const data = await res.json() as { campgrounds?: CampHit[]; error?: string };
                 if (!res.ok) throw new Error(data.error || `Camping search failed (${res.status}).`);
                 setCampHits(data.campgrounds ?? []);

@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api/client";
 import { getOfflineDb, queueActivityPoint } from "@/lib/offline";
 
 export interface LocalActivity {
@@ -60,7 +61,7 @@ export async function beginActivity(input: {
   };
 
   try {
-    const res = await fetch("/api/activities", {
+    const res = await apiFetch("/api/activities", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -99,7 +100,7 @@ export async function saveActivityPoint(activityId: string, point: QueuedPoint):
         : point.recordedAt.toISOString(),
   };
   try {
-    const res = await fetch(`/api/activities/${activityId}/points`, {
+    const res = await apiFetch(`/api/activities/${activityId}/points`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -122,7 +123,7 @@ export async function saveActivityPoint(activityId: string, point: QueuedPoint):
 async function ensureRemoteId(local: LocalActivity): Promise<string | null> {
   if (local.remoteId) return local.remoteId;
   try {
-    const res = await fetch("/api/activities", {
+    const res = await apiFetch("/api/activities", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -151,7 +152,7 @@ export async function flushPendingPoints(activityId: string): Promise<number> {
   let flushed = 0;
   for (const point of pending) {
     try {
-      const res = await fetch(`/api/activities/${activityId}/points`, {
+      const res = await apiFetch(`/api/activities/${activityId}/points`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -193,7 +194,7 @@ export async function finishActivity(
 
   const id = local.remoteId ?? activityId;
   try {
-    const res = await fetch(`/api/activities/${id}`, {
+    const res = await apiFetch(`/api/activities/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endedAt, stats }),
@@ -228,7 +229,7 @@ export async function flushActivityQueue(): Promise<void> {
     await flushPendingPoints(pointId);
     if (local.pendingStop && local.endedAt) {
       try {
-        const res = await fetch(`/api/activities/${pointId}`, {
+        const res = await apiFetch(`/api/activities/${pointId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ endedAt: local.endedAt, stats: local.stats }),

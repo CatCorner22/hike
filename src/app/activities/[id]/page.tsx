@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -30,7 +31,7 @@ export default function ActivityDetailPage() {
   >([]);
 
   useEffect(() => {
-    fetch(`/api/activities/${activityId}`)
+    apiFetch(`/api/activities/${activityId}`)
       .then((r) => r.json())
       .then((d) => {
         setActivity(d.activity);

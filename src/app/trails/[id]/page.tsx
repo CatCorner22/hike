@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -66,7 +67,7 @@ export default function TrailDetailPage() {
   useEffect(() => {
     async function load() {
       try {
-        const response = await fetch(`/api/trails/${trailId}`);
+        const response = await apiFetch(`/api/trails/${trailId}`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setTrail(data);
@@ -123,7 +124,7 @@ export default function TrailDetailPage() {
     setCreatingPlan(true);
     setPlanError(null);
     try {
-      const response = await fetch("/api/plans", {
+      const response = await apiFetch("/api/plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
