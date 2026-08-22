@@ -167,6 +167,7 @@ const serwist = new Serwist({
         url.pathname,
         request.method,
         request.mode,
+        request.destination,
       ),
       handler: navigateShellHandler,
     },

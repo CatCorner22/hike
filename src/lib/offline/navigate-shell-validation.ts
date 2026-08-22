@@ -32,8 +32,13 @@ export function isNavigateDocumentRequest(
   pathname: string,
   method: string,
   mode: string,
+  destination: string,
 ): boolean {
-  return method === "GET" && mode === "navigate" && pathname.startsWith("/navigate/");
+  return (
+    method === "GET" &&
+    (mode === "navigate" || destination === "document") &&
+    pathname.startsWith("/navigate/")
+  );
 }
 
 function escapeRegExp(value: string): string {

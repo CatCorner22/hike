@@ -60,10 +60,14 @@ describe("navigate shell validation", () => {
     expect(headers.get("content-security-policy")).toBe("default-src 'self'");
   });
 
-  it("handles document navigation without stealing Next data requests", () => {
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "navigate")).toBe(true);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "cors")).toBe(false);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", "navigate")).toBe(false);
-    expect(isNavigateDocumentRequest("/plan/plan-123", "GET", "navigate")).toBe(false);
+  it("handles browser document requests without stealing Next data requests", () => {
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "navigate", "document")).toBe(true);
+    // Some Chromium service-worker navigations have been observed with a
+    // non-navigate mode. The document destination is the stable discriminator.
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "same-origin", "document")).toBe(true);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "cors", "")).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "same-origin", "")).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", "navigate", "document")).toBe(false);
+    expect(isNavigateDocumentRequest("/plan/plan-123", "GET", "navigate", "document")).toBe(false);
   });
 });
