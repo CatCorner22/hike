@@ -91,18 +91,24 @@ function formatBytes(value?: number): string {
 }
 
 function CheckRow({
+  checkId,
   icon,
   title,
   ok,
   detail,
 }: {
+  checkId?: string;
   icon: React.ReactNode;
   title: string;
   ok: boolean;
   detail: string;
 }) {
   return (
-    <li className="flex gap-3 rounded-lg border bg-background p-3">
+    <li
+      className="flex gap-3 rounded-lg border bg-background p-3"
+      data-offline-check={checkId}
+      data-offline-status={ok ? "ready" : "warning"}
+    >
       <span className={ok ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
         {icon}
       </span>
@@ -207,6 +213,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
         <InstallOfflineHint />
         <ul className="space-y-2">
           <CheckRow
+            checkId="route-pack"
             icon={<Route className="mt-0.5 h-4 w-4" />}
             title={packReady ? "Route saved" : "Route missing — prepare it again while online"}
             ok={packReady}
@@ -295,6 +302,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             }
           />
           <CheckRow
+            checkId="storage-persistence"
             icon={<HardDriveDownload className="mt-0.5 h-4 w-4" />}
             title="Saved routes less likely to be removed"
             ok={state.persistent}

@@ -13,6 +13,7 @@ import {
 } from "./activity-sync";
 import {
   __resetOfflineDbForTests,
+  getOfflineDb,
   getPendingPoints,
 } from "./index";
 
@@ -321,6 +322,84 @@ describe("open activity reload recovery", () => {
     });
   });
 
+  it("waits for an unmount snapshot to become durable before recovering its totals", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    const started = await beginActivity({ trailId: "trail-recovery" });
+    const db = await getOfflineDb();
+    if (!db) throw new Error("offline database unavailable");
+
+    let releaseWrite: () => void = () => {};
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let reportWriteStarted: () => void = () => {};
+    const writeStarted = new Promise<void>((resolve) => {
+      reportWriteStarted = resolve;
+    });
+    const originalPut = db.put.bind(db);
+    const put = vi.spyOn(db, "put").mockImplementation(async (...args) => {
+      reportWriteStarted();
+      await writeReleased;
+      return originalPut(...args);
+    });
+
+    // Effect cleanups cannot await. Start the same write and immediately model the
+    // replacement recorder mounting after a client-side route transition.
+    const snapshot = saveLocalActivitySnapshot(started.id, { ...STATS, pointCount: 19 });
+    await writeStarted;
+    await __resetActivitySyncForTests();
+    let recoverySettled = false;
+    const recoveryPromise = loadOpenActivityRecovery({ trailId: "trail-recovery" })
+      .then((recovery) => {
+        recoverySettled = true;
+        return recovery;
+      });
+
+    await Promise.resolve();
+    expect(recoverySettled).toBe(false);
+    releaseWrite();
+    await snapshot;
+
+    await expect(recoveryPromise).resolves.toMatchObject({
+      status: "recovered",
+      activity: {
+        id: started.id,
+        stats: {
+          distanceMeters: STATS.distanceMeters,
+          elevationGainMeters: STATS.elevationGainMeters,
+          durationSeconds: STATS.durationSeconds,
+          pointCount: 19,
+        },
+      },
+    });
+    put.mockRestore();
+  });
+
+  it("blocks an offline local recording that belongs to another route", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    const started = await beginActivity({ trailId: "trail-other" });
+    await saveLocalActivitySnapshot(started.id, { ...STATS, pointCount: 4 });
+    await __resetActivitySyncForTests();
+
+    const recovery = await loadOpenActivityRecovery({ trailId: "trail-current" });
+
+    expect(recovery).toMatchObject({
+      status: "blocked",
+      candidateCount: 1,
+      message: expect.stringContaining("belongs to another route"),
+    });
+    const preserved = await getLocalActivity(started.id);
+    expect(preserved).toMatchObject({
+      trailId: "trail-other",
+      stats: { pointCount: 4 },
+    });
+    expect(preserved).not.toHaveProperty("endedAt");
+  });
+
   it("adopts one server-only open activity under a new stable local ID", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => json({
       openActivities: [{
@@ -348,6 +427,25 @@ describe("open activity reload recovery", () => {
     expect(await getLocalActivity(recovery.activity.id)).toMatchObject({
       remoteId: "remote-recovery",
     });
+  });
+
+  it("blocks a server-only recording that belongs to another route", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({
+      openActivities: [{
+        id: "remote-other-route",
+        trailId: "trail-other",
+        planId: null,
+        startedAt: "2026-08-20T12:00:00.000Z",
+        endedAt: null,
+      }],
+    })));
+
+    await expect(loadOpenActivityRecovery({ trailId: "trail-current" })).resolves.toMatchObject({
+      status: "blocked",
+      candidateCount: 1,
+      message: expect.stringContaining("belongs to another route"),
+    });
+    expect(await listLocalActivities()).toHaveLength(0);
   });
 
   it("matches an offline local activity to the exact server activity without changing its local ID", async () => {

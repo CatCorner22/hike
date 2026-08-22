@@ -78,11 +78,18 @@ export function ActivityRecorder({
   const pointSavesRef = useRef(new PointSaveBarrier());
   const stoppingRef = useRef(false);
 
+  const updateStats = useCallback((update: LiveStats | ((current: LiveStats) => LiveStats)) => {
+    const next = typeof update === "function" ? update(statsRef.current) : update;
+    // Persistence and Stop read the ref because React may not commit state before a
+    // navigation cleanup or a same-turn button action. Keep it current synchronously.
+    statsRef.current = next;
+    setStats(next);
+  }, []);
+
   useEffect(() => {
     statusRef.current = status;
     activityIdRef.current = activityId;
-    statsRef.current = stats;
-  }, [status, activityId, stats]);
+  }, [status, activityId]);
 
   const stopWatch = useCallback(() => {
     if (watchIdRef.current != null) {
@@ -144,7 +151,7 @@ export function ActivityRecorder({
           // Two-stage filter (≥8 m hysteresis): never a raw positive-delta sum.
           const elevationGainMeters =
             recoveredGainBaseRef.current + gainTrackerRef.current.add(point.elevation);
-          setStats((prev) => ({
+          updateStats((prev) => ({
             distanceMeters: prev.distanceMeters + distance,
             elevationGainMeters,
             durationSeconds: activeDurationSec(),
@@ -152,7 +159,7 @@ export function ActivityRecorder({
           }));
         } else {
           gainTrackerRef.current.add(point.elevation);
-          setStats((prev) => ({
+          updateStats((prev) => ({
             ...prev,
             durationSeconds: activeDurationSec(),
             pointCount: prev.pointCount + 1,
@@ -181,7 +188,7 @@ export function ActivityRecorder({
       (err) => setError(err.message),
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
     );
-  }, [activeDurationSec, stopWatch]);
+  }, [activeDurationSec, stopWatch, updateStats]);
 
   useEffect(() => () => stopWatch(), [stopWatch]);
 
@@ -208,10 +215,10 @@ export function ActivityRecorder({
   useEffect(() => {
     if (status !== "recording") return;
     const tick = window.setInterval(() => {
-      setStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
+      updateStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
     }, 1000);
     return () => window.clearInterval(tick);
-  }, [status, activeDurationSec]);
+  }, [status, activeDurationSec, updateStats]);
 
   useEffect(() => {
     let cancelled = false;
@@ -248,7 +255,6 @@ export function ActivityRecorder({
         pointSavesRef.current = new PointSaveBarrier();
         stoppingRef.current = false;
         activityIdRef.current = recovery.activity.id;
-        statsRef.current = recoveredStats;
         statusRef.current = "paused";
         startTimeRef.current = recoveredAt - recoveredStats.durationSeconds * 1000;
         pauseAccumRef.current = 0;
@@ -257,7 +263,7 @@ export function ActivityRecorder({
         recoveredGainBaseRef.current = recoveredStats.elevationGainMeters;
         gainTrackerRef.current = createGainTracker();
         setActivityId(recovery.activity.id);
-        setStats(recoveredStats);
+        updateStats(recoveredStats);
         setOffline(!recovery.activity.remoteId);
         setStatus("paused");
         setRecoveryUi({
@@ -281,7 +287,7 @@ export function ActivityRecorder({
     return () => {
       cancelled = true;
     };
-  }, [planId, recoveryAttempt, trailId]);
+  }, [planId, recoveryAttempt, trailId, updateStats]);
 
   useEffect(() => {
     if (recoveryUi.state === "checking" || recoveryUi.state === "blocked") return;
@@ -300,6 +306,10 @@ export function ActivityRecorder({
       window.removeEventListener("online", onOnline);
       window.removeEventListener("pagehide", onKeepalive);
       document.removeEventListener("visibilitychange", onKeepalive);
+      // Next.js client navigation does not fire pagehide or visibilitychange.
+      // Start the durable snapshot before the replacement recorder can recover
+      // this activity; activity-sync's recovery gate waits for this write.
+      void persistSnapshot(true);
     };
   }, [persistSnapshot, recoveryUi.state]);
 
@@ -323,7 +333,7 @@ export function ActivityRecorder({
     lastPointRef.current = null;
     recoveredGainBaseRef.current = 0;
     gainTrackerRef.current = createGainTracker();
-    setStats(EMPTY_STATS);
+    updateStats(EMPTY_STATS);
     setStatus("recording");
     startWatch();
   };
@@ -333,7 +343,7 @@ export function ActivityRecorder({
     statusRef.current = "paused";
     stopWatch();
     pausedAtRef.current = Date.now();
-    setStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
+    updateStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
     setStatus("paused");
     void flushActivityQueue();
   };
@@ -377,7 +387,7 @@ export function ActivityRecorder({
         ...statsRef.current,
         durationSeconds: activeDurationSec(),
       };
-      setStats(current);
+      updateStats(current);
       const result = await finishActivity(id, current);
       setOffline(!result.synced);
       statusRef.current = "idle";

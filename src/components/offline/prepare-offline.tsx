@@ -287,7 +287,14 @@ export function PrepareOffline({
             : "Prepare offline"}
       </Button>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground">{message}</p>
+        <p
+          className="mt-2 text-xs text-muted-foreground"
+          data-offline-result="complete"
+          role="status"
+          aria-live="polite"
+        >
+          {message}
+        </p>
       )}
       {!compact && <OfflineReadiness packId={packId} />}
     </div>

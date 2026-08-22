@@ -22,7 +22,12 @@ import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import { LocateFixed, Search, Trash2 } from "lucide-react";
 import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { plannedDateOnly, plannedDateToIso } from "@/lib/plans/date-only";
-import { mergeConfirmedEdit } from "@/lib/plans/edit-merge";
+import {
+  acknowledgePendingEdit,
+  accumulatePendingEdit,
+  currentPendingEdit,
+  mergeConfirmedEdit,
+} from "@/lib/plans/edit-merge";
 
 const MapView = dynamic(
   () => import("@/components/map/map-view").then((m) => m.MapView),
@@ -163,6 +168,7 @@ export default function PlanDetailPage() {
   const [pendingSaves, setPendingSaves] = useState(0);
   const [saveAcknowledged, setSaveAcknowledged] = useState(false);
   const [pendingSave, setPendingSave] = useState<Partial<Plan> | null>(null);
+  const pendingSaveRef = useRef<Partial<Plan> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const [actionError, setActionError] = useState<PlanActionError | null>(null);
@@ -242,7 +248,7 @@ export default function PlanDetailPage() {
   async function save(updates: Partial<Plan>): Promise<Plan | null> {
     setPendingSaves((count) => count + 1);
     setSaveAcknowledged(false);
-    setActionError(null);
+    setActionError((current) => pendingSaveRef.current ? current : null);
 
     let resolveResult: (value: Plan | null) => void = () => undefined;
     const result = new Promise<Plan | null>((resolve) => {
@@ -272,12 +278,19 @@ export default function PlanDetailPage() {
         });
         planRef.current = next;
         setPlan(next);
-        setPendingSave(null);
-        setSaveAcknowledged(true);
+        const remaining = acknowledgePendingEdit(pendingSaveRef.current, updates);
+        pendingSaveRef.current = remaining;
+        setPendingSave(remaining);
+        setSaveAcknowledged(remaining === null);
+        if (remaining === null) {
+          setActionError((current) => current?.kind === "save" ? null : current);
+        }
         resolveResult(next);
       })
       .catch((error) => {
-        setPendingSave(updates);
+        const pending = accumulatePendingEdit(pendingSaveRef.current, updates);
+        pendingSaveRef.current = pending;
+        setPendingSave(pending);
         setSaveAcknowledged(false);
         setActionError({
           kind: "save",
@@ -444,7 +457,10 @@ export default function PlanDetailPage() {
                 size="sm"
                 variant="outline"
                 disabled={pendingSaves > 0}
-                onClick={() => void save(pendingSave)}
+                onClick={() => {
+                  const retry = currentPendingEdit(pendingSaveRef.current, planRef.current);
+                  if (retry) void save(retry);
+                }}
               >
                 Retry save
               </Button>
@@ -478,8 +494,11 @@ export default function PlanDetailPage() {
                 variant="ghost"
                 onClick={() => {
                   planRef.current = null;
+                  pendingSaveRef.current = null;
                   setPlan(null);
                   setTrail(null);
+                  setPendingSave(null);
+                  setSaveAcknowledged(false);
                   setActionError(null);
                   setLoadAttempt((attempt) => attempt + 1);
                 }}

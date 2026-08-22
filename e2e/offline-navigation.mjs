@@ -322,7 +322,7 @@ async function run() {
       );
       void mod;
       const btn = [...document.querySelectorAll("button")].find((b) =>
-        /prepare offline|update offline pack/i.test(b.textContent || ""),
+        /prepare offline|update offline (?:pack|route)/i.test(b.textContent || ""),
       );
       if (btn) {
         btn.click();
@@ -436,7 +436,7 @@ async function run() {
     let shellCached = await waitForVerifiedShell(navShellUrl);
     if (!shellCached && prepared.via === "button") {
       log("B1 retry prepare", "....", "verified shell missing after save — warming again");
-      await page.getByRole("button", { name: /prepare offline|update offline pack/i }).click();
+      await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click();
       await page.waitForFunction(
         () =>
           /Route saved|Route and navigation screen saved|Could not save|Navigation screen could not/i.test(

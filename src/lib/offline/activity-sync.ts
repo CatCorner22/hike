@@ -74,7 +74,23 @@ export type OpenActivityRecovery =
 // current page. IndexedDB remains authoritative across reloads.
 const localActivityCache = new Map<string, LocalActivity>();
 const remoteIdPromises = new Map<string, Promise<string | null>>();
+const pendingSnapshotWrites = new Set<Promise<string | null>>();
 let activityQueueFlushPromise: Promise<void> | null = null;
+
+function trackSnapshotWrite(write: Promise<string | null>): Promise<string | null> {
+  pendingSnapshotWrites.add(write);
+  void write.then(
+    () => pendingSnapshotWrites.delete(write),
+    () => pendingSnapshotWrites.delete(write),
+  );
+  return write;
+}
+
+async function waitForPendingSnapshotWrites(): Promise<void> {
+  while (pendingSnapshotWrites.size > 0) {
+    await Promise.allSettled([...pendingSnapshotWrites]);
+  }
+}
 
 async function putLocalActivity(row: LocalActivity) {
   localActivityCache.set(row.id, row);
@@ -131,20 +147,23 @@ function validServerOpenActivity(value: unknown): value is ServerOpenActivity {
 }
 
 /**
- * Reconcile unfinished local sessions with the server after a document reload.
- * Exactly one candidate is adopted in a paused state by the UI. Conflicting or multiple
- * candidates are never guessed at, and a local session whose known server row is already
- * closed is blocked rather than accidentally recording against a finalized activity.
+ * Reconcile every unfinished local/server session after a document reload.
+ * Exactly one candidate is adopted only when it belongs to the current route. A session
+ * from another route, conflicting or multiple candidates, and a local session whose known
+ * server row is closed all block Start instead of allowing overlapping or finalized tracks.
  */
 export async function loadOpenActivityRecovery(context: {
   trailId?: string;
   planId?: string;
 }): Promise<OpenActivityRecovery> {
+  // A client-side route change unmounts the recorder without firing pagehide.
+  // Its cleanup starts an IndexedDB snapshot write, so recovery must not read an
+  // older row (often with no stats) until that durable write has settled.
+  await waitForPendingSnapshotWrites();
   let localRows = await listLocalActivities();
   const pendingStops = localRows.filter((activity) =>
     Boolean(activity.endedAt)
-    && activity.pendingStop
-    && matchesRecoveryContext(activity, context),
+    && activity.pendingStop,
   );
 
   if (pendingStops.length > 0) {
@@ -163,11 +182,10 @@ export async function loadOpenActivityRecovery(context: {
     localRows = await listLocalActivities();
   }
 
-  const localOpen = localRows
-    .filter((activity) => !activity.endedAt && matchesRecoveryContext(activity, context));
-  const locallyFinalized = localRows.filter((activity) =>
-    Boolean(activity.endedAt) && matchesRecoveryContext(activity, context),
-  );
+  // Recovery is a global recording gate. Filtering first by the current page would
+  // let a hiker start a second track while another route's recorder remains open.
+  const localOpen = localRows.filter((activity) => !activity.endedAt);
+  const locallyFinalized = localRows.filter((activity) => Boolean(activity.endedAt));
 
   let serverOpen: ServerOpenActivity[] | null = null;
   try {
@@ -177,7 +195,6 @@ export async function loadOpenActivityRecovery(context: {
     if (!Array.isArray(body.openActivities)) throw new Error("open activity response was invalid");
     serverOpen = body.openActivities
       .filter(validServerOpenActivity)
-      .filter((activity) => matchesRecoveryContext(activity, context))
       // A successful pending Stop is authoritative locally. A stale/read-lagged server
       // list must not be adopted as a new resumable session after we just finalized it.
       .filter((remote) => !locallyFinalized.some((local) =>
@@ -187,12 +204,19 @@ export async function loadOpenActivityRecovery(context: {
     // A single durable local session is still safe to offer while offline. With no local
     // evidence, retaining offline-start capability is preferable to inventing a conflict.
     if (localOpen.length === 0) return { status: "none" };
-    if (localOpen.length === 1) {
+    if (localOpen.length === 1 && matchesRecoveryContext(localOpen[0], context)) {
       return {
         status: "recovered",
         activity: localOpen[0],
         serverVerified: false,
         message: "Recovered an unfinished recording from this device. Server status could not be checked.",
+      };
+    }
+    if (localOpen.length === 1) {
+      return {
+        status: "blocked",
+        candidateCount: 1,
+        message: "An unfinished recording belongs to another route. GPS remains off; return to that route or finish the recording before starting a new one.",
       };
     }
     return {
@@ -231,7 +255,7 @@ export async function loadOpenActivityRecovery(context: {
     return {
       status: "blocked",
       candidateCount: candidates.length,
-      message: `Found ${candidates.length} unfinished or conflicting recordings for this route. GPS remains off because Klandagi cannot safely guess which one to resume.`,
+      message: `Found ${candidates.length} unfinished or conflicting recordings across this account and device. GPS remains off because Klandagi cannot safely guess which one to resume.`,
     };
   }
 
@@ -241,6 +265,15 @@ export async function loadOpenActivityRecovery(context: {
       status: "blocked",
       candidateCount: 1,
       message: "This device has an unfinished recording, but the server says that activity is already closed. GPS remains off to prevent track loss.",
+    };
+  }
+
+  const candidateContext = candidate.local ?? candidate.remote;
+  if (candidateContext && !matchesRecoveryContext(candidateContext, context)) {
+    return {
+      status: "blocked",
+      candidateCount: 1,
+      message: "An unfinished recording belongs to another route. GPS remains off; return to that route or finish the recording before starting a new one.",
     };
   }
 
@@ -290,16 +323,23 @@ export async function resolveRemoteActivityId(id: string): Promise<string | null
   return local ? local.remoteId ?? null : id;
 }
 
-/** Persist live totals locally before an optional server snapshot write. */
-export async function saveLocalActivitySnapshot(
+/**
+ * Persist live totals locally before an optional server snapshot write.
+ *
+ * Registration is synchronous even though IndexedDB is not. Recovery can therefore
+ * wait for a cleanup-triggered write that its caller deliberately cannot await.
+ */
+export function saveLocalActivitySnapshot(
   id: string,
   stats: LocalActivity["stats"],
 ): Promise<string | null> {
-  const local = await resolveLocalActivity(id);
-  if (!local) return id;
-  local.stats = stats;
-  await putLocalActivity(local);
-  return local.remoteId ?? null;
+  return trackSnapshotWrite((async () => {
+    const local = await resolveLocalActivity(id);
+    if (!local) return id;
+    local.stats = stats;
+    await putLocalActivity(local);
+    return local.remoteId ?? null;
+  })());
 }
 
 /** Start an activity even with no network. The returned ID is always the stable local ID. */
