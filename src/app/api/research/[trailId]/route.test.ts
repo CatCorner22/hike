@@ -8,10 +8,10 @@ beforeEach(() => {
   delete process.env.DATABASE_URL;
 });
 
-async function authed(trailId = "missing") {
-  const cookie = `${OWNER_COOKIE}=${await signOwnerToken(newOwnerId())}`;
+async function authed(trailId = "missing", cookie?: string) {
+  const session = cookie ?? `${OWNER_COOKIE}=${await signOwnerToken(newOwnerId())}`;
   return GET(
-    new Request(`http://localhost/api/research/${trailId}`, { headers: { cookie } }),
+    new Request(`http://localhost/api/research/${trailId}`, { headers: { cookie: session } }),
     { params: Promise.resolve({ trailId }) },
   );
 }
@@ -24,11 +24,21 @@ describe("GET /api/research/:trailId", () => {
     expect(response.status).toBe(401);
   });
 
-  it("rate-limits research so a client cannot burn the model quota", async () => {
+  it("rate-limits research per session so one caller cannot burn the model quota", async () => {
+    const cookie = `${OWNER_COOKIE}=${await signOwnerToken(newOwnerId())}`;
     let last = 200;
     for (let i = 0; i < 7; i += 1) {
-      last = (await authed()).status;
+      last = (await authed("missing", cookie)).status;
     }
     expect(last).toBe(429);
+  });
+
+  it("does not let one session exhaust research for another", async () => {
+    const a = `${OWNER_COOKIE}=${await signOwnerToken(newOwnerId())}`;
+    const b = `${OWNER_COOKIE}=${await signOwnerToken(newOwnerId())}`;
+    for (let i = 0; i < 6; i += 1) {
+      expect((await authed("missing", a)).status).not.toBe(429);
+    }
+    expect((await authed("missing", b)).status).toBe(404);
   });
 });

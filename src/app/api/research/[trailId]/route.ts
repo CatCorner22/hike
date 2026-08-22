@@ -12,10 +12,13 @@ import { findOrCreateTrail } from "@/lib/trails/service";
 const REFRESH_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 export async function GET(request: Request, { params }: { params: Promise<{ trailId: string }> }) {
-  const limited = rateLimit(request, "research", 6);
-  if (limited) return limited;
   const owner = await requireOwner(request);
   if (!owner.ok) return owner.response;
+  // Per owner, not per instance: a shared bucket would 429 every hiker after
+  // six trail pages anywhere on the deployment. Cookie-less callers never
+  // reach this, so they cannot fill the quota either.
+  const limited = rateLimit(request, `research:${owner.ownerId}`, 6);
+  if (limited) return limited;
 
   const { trailId } = await params;
   const refresh = new URL(request.url).searchParams.get("refresh") === "true";
