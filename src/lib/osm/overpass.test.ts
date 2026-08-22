@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relationToLineString, type OverpassElement } from "./overpass";
+import { relationToLineString, trailGeometryFromElements, type OverpassElement } from "./overpass";
 
 function way(id: number, coordinates: Array<[number, number]>): OverpassElement {
   return { type: "way", id, geometry: coordinates.map(([lon, lat]) => ({ lon, lat })) };
@@ -41,3 +41,17 @@ describe("relationToLineString", () => {
     expect(result).toMatchObject({ type: "MultiLineString" });
     expect(result?.type === "MultiLineString" ? result.coordinates : []).toHaveLength(5_000);
   });
+
+describe("trailGeometryFromElements", () => {
+  it("builds a line from a standalone way with geometry", () => {
+    expect(trailGeometryFromElements([way(9, [[-119.5, 37.7], [-119.4, 37.8]])], "way", "9")).toEqual({
+      type: "LineString",
+      coordinates: [[-119.5, 37.7], [-119.4, 37.8]],
+    });
+  });
+
+  it("rejects nodes and ways without a usable line", () => {
+    expect(trailGeometryFromElements([{ type: "node", id: 1, lat: 37.7, lon: -119.5 }], "node", "1")).toBeNull();
+    expect(trailGeometryFromElements([way(9, [[-119.5, 37.7]])], "way", "9")).toBeNull();
+  });
+});

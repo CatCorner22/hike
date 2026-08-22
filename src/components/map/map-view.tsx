@@ -25,6 +25,7 @@ export interface MapViewProps {
     label?: string;
   }>;
   onClick?: (coords: { lat: number; lng: number }) => void;
+  onMarkerClick?: (id: string) => void;
   className?: string;
   interactive?: boolean;
   showNavigation?: boolean;
@@ -39,6 +40,7 @@ export function MapView({
   userPosition,
   markers = [],
   onClick,
+  onMarkerClick,
   className = "h-full w-full",
   interactive = true,
   showNavigation = true,
@@ -46,6 +48,24 @@ export function MapView({
 }: MapViewProps) {
   const mapRef = useRef<MapRef>(null);
   const [loaded, setLoaded] = useState(false);
+  const didCenterRef = useRef(false);
+  const initialCenterRef = useRef(center);
+
+  useEffect(() => {
+    if (!loaded || !mapRef.current || fitBounds) return;
+    const moved =
+      center.lat !== initialCenterRef.current.lat ||
+      center.lng !== initialCenterRef.current.lng;
+    if (!didCenterRef.current) {
+      didCenterRef.current = true;
+      if (!moved) return;
+    }
+    mapRef.current.flyTo({
+      center: [center.lng, center.lat],
+      zoom,
+      duration: 600,
+    });
+  }, [center.lat, center.lng, zoom, loaded, fitBounds]);
 
   useEffect(() => {
     if (!loaded || !fitBounds || !mapRef.current) return;
@@ -128,8 +148,21 @@ export function MapView({
         {markers.map((m) => (
           <Marker key={m.id} longitude={m.lng} latitude={m.lat} anchor="bottom">
             <div
-              className="flex flex-col items-center"
+              className={`flex flex-col items-center${onMarkerClick ? " cursor-pointer" : ""}`}
               title={m.label}
+              role={onMarkerClick ? "button" : undefined}
+              tabIndex={onMarkerClick ? 0 : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                onMarkerClick?.(m.id);
+              }}
+              onKeyDown={(event) => {
+                if (!onMarkerClick) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onMarkerClick(m.id);
+                }
+              }}
             >
               <div
                 className="h-3 w-3 rounded-full border border-white shadow"

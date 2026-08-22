@@ -4,12 +4,13 @@ import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
 import { activities } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
-import { isoDatetimeSchema, parseJsonBody } from "@/lib/api/validation";
+import { isoDatetimeSchema, parseJsonBody, trailRefSchema } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import { createActivity, listActivities } from "@/lib/store/local";
+import { postgresTrailFk, resolveStoredTrailId } from "@/lib/trails/service";
 
 const activityCreateSchema = z.object({
-  trailId: z.string().uuid().nullable().optional(),
+  trailId: trailRefSchema.nullable().optional(),
   planId: z.string().uuid().nullable().optional(),
   name: z.string().trim().min(1).max(200).nullable().optional(),
   startedAt: isoDatetimeSchema.optional(),
@@ -51,12 +52,13 @@ export async function POST(request: Request) {
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
   const startedAt = body.startedAt ?? new Date().toISOString();
+  const trailId = await resolveStoredTrailId(body.trailId ?? null);
   try {
     if (hasDatabase()) {
       const db = getDb();
       const [activity] = await db.insert(activities).values({
         ownerId: owner.ownerId,
-        trailId: body.trailId ?? null,
+        trailId: postgresTrailFk(trailId),
         planId: body.planId ?? null,
         name: body.name ?? null,
         startedAt: new Date(startedAt),
@@ -66,7 +68,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json(await createActivity({
       ownerId: owner.ownerId,
-      trailId: body.trailId ?? null,
+      trailId,
       planId: body.planId ?? null,
       name: body.name ?? null,
       startedAt,

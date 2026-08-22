@@ -115,6 +115,10 @@ export default function CampingPage() {
               color: CAMPING_TYPE_COLORS[c.campingType] || "#64748b",
               label: c.name,
             }))}
+            onMarkerClick={(id) => {
+              const camp = campgrounds.find((c) => c.id === id);
+              if (camp) setSelected(camp);
+            }}
           />
         </div>
 
