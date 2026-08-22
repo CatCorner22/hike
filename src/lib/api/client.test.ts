@@ -108,3 +108,44 @@ describe("apiFetch", () => {
     expect(await mintSession()).toBeNull();
   });
 });
+
+describe("concurrent session minting", () => {
+  beforeEach(() => {
+    vi.stubGlobal("fetch", fetchMock);
+    fetchMock.mockReset();
+    setTokenStore(null);
+  });
+  afterEach(() => {
+    nativeOff();
+    vi.unstubAllGlobals();
+    setTokenStore(null);
+  });
+
+  /**
+   * Cold install: several screens call the API at once with no stored token. Each mint
+   * of a credential-less caller returns a DIFFERENT owner, so two mints would split the
+   * user's data across two identities and orphan whichever lost the token write. All
+   * concurrent callers must share ONE mint.
+   */
+  it("two concurrent cold-start calls perform exactly one mint and share the owner", async () => {
+    nativeOn();
+    setTokenStore(memoryStore(null));
+    let mintCalls = 0;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).endsWith("/api/session")) {
+        mintCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return ok({ token: `owner-${mintCalls}.sig` });
+      }
+      return ok([]);
+    });
+    const [a, b] = await Promise.all([apiFetch("/api/plans"), apiFetch("/api/activities")]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(mintCalls).toBe(1);
+    const authHeaders = fetchMock.mock.calls
+      .filter(([url]) => !String(url).endsWith("/api/session"))
+      .map(([, init]) => (init.headers as Record<string, string>).Authorization);
+    expect(new Set(authHeaders).size).toBe(1);
+  });
+});

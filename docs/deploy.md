@@ -16,7 +16,7 @@ talks to the same API over HTTPS with a bearer token.
 
    | Variable | Production value | Preview value | Notes |
    |---|---|---|---|
-   | `DATABASE_URL` | Neon main branch string | Neon `preview` branch string | optional — app falls back to a JSON file store without it, but you want it |
+   | `DATABASE_URL` | Neon main branch string | Neon `preview` branch string | **REQUIRED in production.** The JSON-file fallback is dev-only: `isLocalStoreEnabled()` refuses it when `NODE_ENV=production`, so without a database every user-data route answers 503 and the smoke check fails. (`ALLOW_LOCAL_STORE_IN_PRODUCTION=true` exists as a single-node escape hatch; do not use it on Vercel — serverless instances don't share a filesystem.) |
    | `SESSION_SECRET` | 32+ random bytes (`openssl rand -base64 32`) | a DIFFERENT random value | REQUIRED in production; rotating it logs every device out (each mints a fresh identity and old rows become unreachable) |
    | `TRUST_PROXY_HEADERS` | `true` | `true` | Vercel overwrites X-Forwarded-For, so this is safe AND necessary — without it the rate limiter lumps every caller into one bucket |
    | `ALLOWED_APP_ORIGINS` | *(empty)* | *(empty)* | `capacitor://localhost` + `https://localhost` are built in; add extras here only if needed |

@@ -47,7 +47,27 @@ async function storeToken(token: string): Promise<void> {
   if (tokenStore) await tokenStore.write(token);
 }
 
+let mintInFlight: Promise<string | null> | null = null;
+
+/**
+ * Single-flight: concurrent callers share one mint.
+ *
+ * On a cold install several screens fire API calls at once; if each minted its own
+ * session, a credential-less `POST /api/session` returns a DIFFERENT owner per call,
+ * those requests would then write into different owner scopes, and whichever token won
+ * the final store write would silently orphan the rows the others created. One
+ * in-flight mint means one owner, whatever the caller concurrency.
+ */
 export async function mintSession(): Promise<string | null> {
+  if (!mintInFlight) {
+    mintInFlight = mintSessionOnce().finally(() => {
+      mintInFlight = null;
+    });
+  }
+  return mintInFlight;
+}
+
+async function mintSessionOnce(): Promise<string | null> {
   try {
     const response = await fetch(`${API_BASE}/api/session`, { method: "POST" });
     if (!response.ok) return null;
