@@ -1,15 +1,17 @@
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   addActivityPoint,
   createActivity,
   createPlan,
   deletePlan,
   getPlan,
+  isLocalStoreEnabled,
   listActivityPoints,
   listPlans,
+  LocalStoreDisabledError,
   nextIsoTimestamp,
   updatePlan,
 } from "./local";
@@ -179,5 +181,34 @@ describe("local store cache coherence", () => {
 
     const plans = await listPlans("owner-a");
     expect(plans.map((plan) => plan.id)).toContain("externally-added");
+  });
+});
+
+describe("local store production gate", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    process.env.LOCAL_STORE_PATH = storeFile;
+  });
+
+  it("is enabled outside production", () => {
+    expect(isLocalStoreEnabled()).toBe(true);
+  });
+
+  it("refuses to read or write in production without an explicit opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_LOCAL_STORE_IN_PRODUCTION", "");
+    expect(isLocalStoreEnabled()).toBe(false);
+    await expect(listPlans(OWNER)).rejects.toBeInstanceOf(LocalStoreDisabledError);
+    await expect(createPlan({ ownerId: OWNER, name: "nope" })).rejects.toBeInstanceOf(
+      LocalStoreDisabledError,
+    );
+  });
+
+  it("allows the file fallback when production opts in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_LOCAL_STORE_IN_PRODUCTION", "true");
+    expect(isLocalStoreEnabled()).toBe(true);
+    const plan = await createPlan({ ownerId: OWNER, name: "ci" });
+    expect(plan.name).toBe("ci");
   });
 });

@@ -9,6 +9,7 @@ import {
   isoDatetimeSchema,
   parseJsonBody,
   trailRefSchema,
+  waypointsSchema,
 } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import { createPlan, listPlans } from "@/lib/store/local";
@@ -19,7 +20,7 @@ const planCreateSchema = z.object({
   trailId: trailRefSchema.nullable().optional(),
   plannedDate: isoDatetimeSchema.nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
-  waypoints: z.unknown().nullable().optional(),
+  waypoints: waypointsSchema.nullable().optional(),
   campgroundIds: z.array(z.string().min(1)).max(100).optional(),
   customGeometry: geoJsonLineOrMultiLineStringSchema.nullable().optional(),
 });

@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { listRecentTrails } from "@/lib/trails/service";
 import { getDb, hasDatabase } from "@/lib/db";
 import { hikePlans, activities } from "@/lib/db/schema";
-import { listActivities, listPlans } from "@/lib/store/local";
+import { isLocalStoreEnabled, listActivities, listPlans } from "@/lib/store/local";
 import { desc, eq } from "drizzle-orm";
 import { resolveOwnerIdFromCookies } from "@/lib/auth/owner-server";
 import { formatDistance, formatDuration } from "@/lib/geo";
@@ -30,7 +30,7 @@ export default async function HomePage() {
       ownerId ? db.query.activities.findMany({ where: eq(activities.ownerId, ownerId), orderBy: [desc(activities.startedAt)], limit: 5 }) : Promise.resolve([]),
       listRecentTrails(5),
     ]);
-  } else if (ownerId) {
+  } else if (ownerId && isLocalStoreEnabled()) {
     const [localPlans, localActs] = await Promise.all([listPlans(ownerId), listActivities(ownerId)]);
     plans = localPlans.slice(0, 5);
     recentActivities = localActs.slice(0, 5);

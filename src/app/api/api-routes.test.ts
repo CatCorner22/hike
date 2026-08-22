@@ -96,6 +96,43 @@ describe("API input boundaries", () => {
     });
   });
 
+  it("rejects unstructured waypoints instead of storing them", async () => {
+    const createdResponse = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Waypoints", waypoints: { not: "an-array" } }),
+      ),
+    );
+    expect(createdResponse.status).toBe(400);
+
+    const valid = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({
+          name: "Waypoints",
+          waypoints: [{ name: "Spring", lat: 36.1, lng: -84.1 }],
+        }),
+      ),
+    );
+    expect(valid.status).toBe(200);
+    const created = (await valid.json()) as { id: string; updatedAt: string; waypoints: unknown };
+
+    const patched = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${created.id}`,
+        "PATCH",
+        JSON.stringify({
+          updatedAt: created.updatedAt,
+          waypoints: [{ name: "x", lat: 91, lng: 0 }],
+        }),
+      ),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(patched.status).toBe(400);
+  });
+
   it("validates activity updates and returns 404 for orphan point lists", async () => {
     const createdResponse = await createActivity(
       jsonRequest("http://localhost/api/activities", "POST", "{}"),

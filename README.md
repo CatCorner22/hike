@@ -50,8 +50,9 @@ cp .env.example .env.local
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | No | Neon Postgres. Without it, plans/activities use the local JSON file store |
+| `DATABASE_URL` | No | Neon Postgres. Without it in development, plans/activities use the local JSON file store. Production refuses that fallback unless `ALLOW_LOCAL_STORE_IN_PRODUCTION=true`. |
 | `LOCAL_STORE_PATH` | No | Override path for the file store (default `data/store.json`) |
+| `ALLOW_LOCAL_STORE_IN_PRODUCTION` | No | Opt into the JSON file fallback on a production `npm start` (CI / single-node only). Do not set this on Vercel. |
 | `SESSION_SECRET` | **Yes in production** | Signs the anonymous device-owner cookie that scopes plans, activities and GPS tracks. Generate with `openssl rand -base64 32`. Without it the server refuses user data rather than serving location history unscoped. (`OWNER_TOKEN_SECRET` is accepted as a legacy alias.) |
 | `NPS_API_KEY` | For NPS camping/research | developer.nps.gov |
 | `RIDB_API_KEY` | For federal camping | ridb.recreation.gov/profile |
