@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   containsNavigateRouteMarker,
   headersForRewrittenNavigateDocument,
+  isNavigateDocumentRequest,
   isValidNavigateShellDocument,
   looksLikeNavigateHtml,
   NAVIGATE_ASSETS_CACHE,
@@ -57,5 +58,12 @@ describe("navigate shell validation", () => {
     expect(headers.get("etag")).toBeNull();
     expect(headers.get("content-type")).toBe("text/html; charset=utf-8");
     expect(headers.get("content-security-policy")).toBe("default-src 'self'");
+  });
+
+  it("handles document navigation without stealing Next data requests", () => {
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "navigate")).toBe(true);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "cors")).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", "navigate")).toBe(false);
+    expect(isNavigateDocumentRequest("/plan/plan-123", "GET", "navigate")).toBe(false);
   });
 });

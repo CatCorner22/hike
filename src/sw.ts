@@ -3,6 +3,7 @@ import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
 import {
   headersForRewrittenNavigateDocument,
+  isNavigateDocumentRequest,
   isValidNavigateShellDocument,
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
@@ -150,7 +151,14 @@ const serwist = new Serwist({
     }],
   },
   runtimeCaching: [
-    { matcher: ({ url }) => url.pathname.startsWith("/navigate/"), handler: navigateShellHandler },
+    {
+      matcher: ({ url, request }) => isNavigateDocumentRequest(
+        url.pathname,
+        request.method,
+        request.mode,
+      ),
+      handler: navigateShellHandler,
+    },
     {
       matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
       handler: new CacheFirst({

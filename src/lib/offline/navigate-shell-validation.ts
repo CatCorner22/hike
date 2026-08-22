@@ -27,6 +27,15 @@ export function headersForRewrittenNavigateDocument(source: Headers): Headers {
   return headers;
 }
 
+/** Keep the HTML shell route away from Next RSC/data requests for the same URL. */
+export function isNavigateDocumentRequest(
+  pathname: string,
+  method: string,
+  mode: string,
+): boolean {
+  return method === "GET" && mode === "navigate" && pathname.startsWith("/navigate/");
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -499,11 +499,18 @@ async function run() {
       null,
       { timeout: 15_000 },
     );
-    await page.evaluate(async () => {
-      await navigator.serviceWorker.ready;
-      const reg = await navigator.serviceWorker.getRegistration();
-      await reg?.update();
-    });
+    // Do not introduce an update/activation handoff immediately before going
+    // offline. The hiker flow uses the already-active worker that just verified
+    // this pack; forcing update() here made the test race a second worker.
+    await page.waitForFunction(async () => {
+      const registration = await navigator.serviceWorker?.ready;
+      return Boolean(
+        navigator.serviceWorker?.controller &&
+        registration?.active?.state === "activated" &&
+        !registration.installing &&
+        !registration.waiting,
+      );
+    }, null, { timeout: 15_000 });
     await context.setOffline(true);
 
     // Prove the network is actually cut before judging B3, rather than assuming
@@ -533,22 +540,31 @@ async function run() {
     const navUrl = `${BASE}/navigate/plan-${planId}`;
     async function coldNavigateOnce() {
       let navError = null;
-      await page
+      let navigationResponse = null;
+      const response = await page
         .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
         .catch((e) => {
           navError = e.message.split("\n")[0];
+          return null;
         });
+      if (response) {
+        navigationResponse = {
+          url: response.url(),
+          status: response.status(),
+          source: response.headers()["x-hike-offline-shell"] ?? null,
+        };
+      }
       await page.waitForTimeout(2500);
       if (!navError) await completeReadinessIfShown(page);
       return navError
-        ? { ok: false, excerpt: `navigation threw: ${navError}` }
-        : await assessNavigateScreen(page);
+        ? { ok: false, excerpt: `navigation threw: ${navError}`, navigationResponse }
+        : { ...(await assessNavigateScreen(page)), navigationResponse };
     }
     const cold = await coldNavigateOnce();
     log(
       "B3 cold offline navigate",
       cold.ok ? (workerStillOnline ? "PASS*" : "PASS") : "FAIL",
-      workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt,
+      `${workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt} | response=${JSON.stringify(cold.navigationResponse)}`,
     );
     if (!cold.ok) {
       // B1 already proved the shell is in Cache Storage, so a failure here means the
