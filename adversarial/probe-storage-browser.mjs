@@ -62,7 +62,7 @@ async function bodyText(page) {
 
 async function waitForSaveResult(page) {
   await page.waitForFunction(
-    () => /Route saved\.|Could not save|QuotaExceeded|VersionError|requested version|route pack failed/i.test(document.body.innerText),
+    () => /Route saved(?:\s|\.|$)|Could not save|QuotaExceeded|VersionError|requested version|route pack failed/i.test(document.body.innerText),
     null,
     { timeout: 25_000 },
   );
@@ -163,7 +163,7 @@ async function scenarioQuota(browser) {
   let completed = true;
   try {
     await page.waitForFunction(
-      () => /Route saved\.|Could not save|QuotaExceeded|VersionError|requested version/i.test(document.body.innerText),
+      () => /Route saved(?:\s|\.|$)|Could not save|QuotaExceeded|VersionError|requested version/i.test(document.body.innerText),
       null,
       { timeout: 10_000 },
     );
@@ -171,7 +171,7 @@ async function scenarioQuota(browser) {
     completed = false;
   }
   const text = await bodyText(page);
-  const failed = /QuotaExceeded|quota|not enough space|Could not save/i.test(text) && !/Route saved\./i.test(text);
+  const failed = /QuotaExceeded|quota|not enough space|Could not save/i.test(text) && !/Route saved(?:\s|\.|$)/i.test(text);
   const button = await action.innerText();
   result("quota-exhaustion-no-false-ready", completed && failed && /Prepare offline/i.test(button), `completed=${completed}; failed=${failed}; button=${JSON.stringify(button)}; excerpt=${JSON.stringify(text.slice(-360))}`);
   // CDP uses -1 to remove an override; zero is itself a zero-byte quota.
@@ -326,7 +326,7 @@ async function scenarioSchema(browser) {
     await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
     const text = await bodyText(page);
     const shown = expected.test(text);
-    result(`schema-${name}-visible-error`, shown && !/Route saved\./.test(text), JSON.stringify(text.slice(-280)));
+    result(`schema-${name}-visible-error`, shown && !/Route saved(?:\s|\.|$)/.test(text), JSON.stringify(text.slice(-280)));
     await context.close();
   }
 }

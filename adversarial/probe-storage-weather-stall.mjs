@@ -40,7 +40,7 @@ try {
   const body = await page.locator("body").innerText();
   console.log(
     `PASS weather-stall-keeps-saving — preparing=${/Preparing/.test(body)}; `
-      + `saved=${/Route saved\./.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
+      + `saved=${/Route saved(?:\s|\.|$)/.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
   );
   await context.close();
 } finally {
