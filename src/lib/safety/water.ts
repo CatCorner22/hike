@@ -105,7 +105,10 @@ export function chemicalDoseWaitMinutes(input: {
   if (!Number.isFinite(input.waterTempC) || input.waterTempC < -5 || input.waterTempC > 50) return null;
   if (!["chlorine-dioxide", "iodine", "bleach"].includes(input.method)) return null;
   const base = input.method === "chlorine-dioxide" ? 240 : 30;
-  const coldMultiplier = input.waterTempC < 10 ? 1.5 : 1;
+  // CDC and halogen tablet labels double the contact time in cold water — published
+  // Giardia CT for iodine roughly doubles to triples from 25 °C to 5 °C. The old 1.5×
+  // ended the wait at 45 min when doctrine says 60.
+  const coldMultiplier = input.waterTempC < 10 ? 2 : 1;
   const cloudyMultiplier = input.cloudy ? 1.5 : 1;
   return Math.round(base * coldMultiplier * cloudyMultiplier);
 }

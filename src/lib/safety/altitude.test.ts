@@ -168,3 +168,21 @@ describe("ascentRateAdvice severity is monotonic in elevation", () => {
     );
   });
 });
+
+/**
+ * Below sea level (Badwater, Dead Sea, coastal GPS noise) the sea-level expectation is
+ * the conservative floor — pressure only rises below 0 m. Returning null there silently
+ * dropped every warning: SpO2 70% warned at +1 m and said nothing at -1 m.
+ */
+describe("spo2Warning below sea level", () => {
+  it("still warns for a hypoxic reading at a negative elevation", () => {
+    expect(spo2Warning(70, -1)).toMatch(/well below/);
+    expect(spo2Warning(70, -430)).toMatch(/well below/);
+  });
+
+  it("keeps the null contract for invalid inputs", () => {
+    expect(spo2Warning(Number.NaN, -10)).toBeNull();
+    expect(spo2Warning(70, Number.NaN)).toBeNull();
+    expect(spo2Warning(98, -430)).toBeNull();
+  });
+});

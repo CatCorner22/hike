@@ -9,19 +9,38 @@ export function windChillC(tempC: number, windKph: number): number | null {
 }
 
 export function windChillWarning(tempC: number, windKph: number): string | null {
-  const wc = windChillC(tempC, windKph);
+  if (!Number.isFinite(tempC) || !Number.isFinite(windKph) || windKph < 0) return null;
+  // Below the formula's 5 km/h floor the chill value IS the air temperature (ECCC
+  // applies its frostbite bands to that value in calm air). Returning null here made
+  // -35 °C still air read as "no cold hazard" while thermal.frostbiteMinutes warned.
+  const calm = windKph < 5;
+  if (calm && (tempC > 10 || tempC < -90)) return null;
+  const wc = calm ? Math.round(tempC * 10) / 10 : windChillC(tempC, windKph);
   if (wc == null) return null;
-  if (wc <= -28) return `Wind chill ${wc}°C — frostbite risk in minutes. Cover skin, stop the wind.`;
-  if (wc <= -10) return `Wind chill ${wc}°C — add a wind layer before you cool.`;
-  return `Wind chill ${wc}°C.`;
+  const label = calm ? `Air temperature ${wc}°C (calm)` : `Wind chill ${wc}°C`;
+  if (wc <= -28) return `${label} — frostbite risk in minutes. Cover skin, stop the wind.`;
+  if (wc <= -10) return `${label} — add a wind layer before you cool.`;
+  return `${label}.`;
 }
 
-/** Simplified NOAA heat index (°C). Meaningful above ~27 °C with humidity. */
+/**
+ * Joint plausibility for hot-humid input. Independent caps (60 °C, 100 %) admit
+ * combinations no earthly airmass produces, and the Rothfusz polynomial diverges there
+ * ("Heat index 339 °C"). Dewpoints above ~35 °C have never been recorded; ~40 °C is a
+ * generous bound. Magnus formula.
+ */
+function dewPointC(tempC: number, rhPct: number): number {
+  const gamma = Math.log(rhPct / 100) + (17.62 * tempC) / (243.12 + tempC);
+  return (243.12 * gamma) / (17.62 - gamma);
+}
+
+/** NOAA/NWS heat index (Rothfusz 1990 with the WPC low- and high-RH adjustments), °C. */
 export function heatIndexC(tempC: number, rhPct: number): number | null {
-  if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || tempC < 27 || tempC > 60 || rhPct < 40 || rhPct > 100) return null;
+  if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || tempC < 27 || tempC > 60 || rhPct < 0 || rhPct > 100) return null;
+  if (rhPct > 0 && dewPointC(tempC, rhPct) > 40) return null;
   const t = (tempC * 9) / 5 + 32;
   const r = rhPct;
-  const hiF =
+  let hiF =
     -42.379 +
     2.04901523 * t +
     10.14333127 * r -
@@ -31,10 +50,20 @@ export function heatIndexC(tempC: number, rhPct: number): number | null {
     0.00122874 * t * t * r +
     0.00085282 * t * r * r -
     0.00000199 * t * t * r * r;
+  // WPC's published adjustments keep the regression honest at the humidity extremes;
+  // without the low-RH one, dry desert heat (43 °C / 20 %) produced no advisory at all.
+  if (r < 13 && t >= 80 && t <= 112) {
+    hiF -= ((13 - r) / 4) * Math.sqrt((17 - Math.abs(t - 95)) / 17);
+  } else if (r > 85 && t >= 80 && t <= 87) {
+    hiF += ((r - 85) / 10) * ((87 - t) / 5);
+  }
   const hiC = Math.round((((hiF - 32) * 5) / 9) * 10) / 10;
-  // Rothfusz undershoots at the 27 °C / 40 % edge — do not report a "heat index"
-  // cooler than the air as if it were a real heat hazard.
-  if (hiC <= tempC) return null;
+  // In dry heat the index legitimately sits BELOW the air temperature (evaporative
+  // relief) and NWS still issues it — 38 °C / 10 % → 34.7, a real advisory. Suppress
+  // the below-air value only when it also carries no hazard signal, so the 27 °C
+  // low-edge undershoot does not read as a phantom "heat index" while dry-heat
+  // advisories are no longer silenced.
+  if (hiC <= tempC && hiC < 32) return null;
   return hiC;
 }
 
@@ -120,7 +149,10 @@ export function gpsAnomalyWarning(
   });
   for (let i = 1; i < recent.length; i++) {
     const dt = times[i] - times[i - 1];
-    if (dt <= 0 || dt > 20_000) continue;
+    // Only non-positive gaps are uninferable. The old `dt > 20_000` skip meant any
+    // teleport across a longer gap was silently accepted — but the speed test already
+    // normalizes by dt, and a longer gap only makes the inference safer.
+    if (dt <= 0) continue;
     const range = rangeAzimuth(recent[i - 1], recent[i]);
     if (!range) continue;
     const meters = range.meters;

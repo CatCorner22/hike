@@ -123,3 +123,51 @@ describe("avalancheTerrainRisk — steep terrain", () => {
     }
   });
 });
+
+/**
+ * McCammon's "A" is recent avalanche activity — the strongest single observable — not
+ * "is a danger rating posted", which double-counted "R" (Rating) and dropped the
+ * question most likely to turn a party around.
+ */
+describe("ALPTRUTh fidelity to McCammon", () => {
+  it("asks about avalanches in the past 48 hours for A, and rating only once", () => {
+    const checklist = alptruthChecklist();
+    const a = checklist.find((f) => f.letter === "A");
+    expect(a?.question).toMatch(/avalanche/i);
+    expect(a?.question).toMatch(/48/);
+    expect(a?.question).not.toMatch(/posted|rating/i);
+    const ratingQuestions = checklist.filter((f) => /rating/i.test(f.question));
+    expect(ratingQuestions).toHaveLength(1);
+    expect(ratingQuestions[0].letter).toBe("R");
+  });
+});
+
+/**
+ * The window-averaged gradient peaks where the window start OR end aligns with a
+ * sample. Evaluating only sample-aligned starts skipped every end-aligned window, so a
+ * 60 m headwall in the final 80 m of this route read as 0° — total silence in exactly
+ * the 30–45° band this screen exists to flag.
+ */
+describe("slopeAnglesFromProfile end-aligned windows", () => {
+  it("catches a steep finish that no sample-aligned window can reach", () => {
+    const profile = [
+      { distanceMeters: 0, elevation: 0 },
+      { distanceMeters: 320, elevation: 0 },
+      { distanceMeters: 380, elevation: 60 },
+      { distanceMeters: 400, elevation: 60 },
+    ];
+    const result = slopeAnglesFromProfile(profile, 100);
+    expect(result).not.toBeNull();
+    expect(result!.maxAngleDeg).toBeGreaterThanOrEqual(30);
+  });
+
+  it("still reports the same steepest window when samples align", () => {
+    const profile = [
+      { distanceMeters: 0, elevation: 0 },
+      { distanceMeters: 100, elevation: 0 },
+      { distanceMeters: 200, elevation: 80 },
+      { distanceMeters: 300, elevation: 80 },
+    ];
+    expect(slopeAnglesFromProfile(profile, 100)!.maxAngleDeg).toBeCloseTo(38.7, 0);
+  });
+});

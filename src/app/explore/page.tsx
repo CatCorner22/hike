@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -33,7 +34,7 @@ export default function ExplorePage() {
     const params = new URLSearchParams();
     if (trailQuery.trim()) params.set("q", trailQuery.trim());
     if (bbox) params.set("bbox", bbox.join(","));
-    const response = await fetch(`/api/trails/search?${params}`);
+    const response = await apiFetch(`/api/trails/search?${params}`);
     const data = await response.json() as { trails?: TrailSearchResult[]; error?: string };
     if (!response.ok) throw new Error(data.error || "Trail search failed");
     return data.trails ?? [];
@@ -52,7 +53,7 @@ export default function ExplorePage() {
       // If no route name matched, treat the submitted text as a place once.
       // This is submit-only, not autocomplete, and the server caches lookups.
       if (results.length === 0 && query.trim().length >= 2) {
-        const placeResponse = await fetch(`/api/places/search?q=${encodeURIComponent(query.trim())}`);
+        const placeResponse = await apiFetch(`/api/places/search?q=${encodeURIComponent(query.trim())}`);
         const placeData = await placeResponse.json() as {
           places?: Array<{ name: string; center: { lat: number; lng: number }; bbox: BboxLngLat }>;
           error?: string;

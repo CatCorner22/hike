@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -39,7 +40,7 @@ export default function PlansPage() {
 
   const loadPlans = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await fetch("/api/plans", { signal });
+      const response = await apiFetch("/api/plans", { signal });
       const data = await response.json() as { plans?: Plan[]; error?: string };
       if (!response.ok) throw new Error(data.error || "Trips could not be loaded.");
       if (!Array.isArray(data.plans)) throw new Error("Trips could not be read from the server response.");
@@ -67,7 +68,7 @@ export default function PlansPage() {
     setImportError(null);
     try {
       const routeName = file.name.replace(/\.gpx$/i, "").trim() || "Imported route";
-      const parseResponse = await fetch("/api/sync/offline", {
+      const parseResponse = await apiFetch("/api/sync/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gpx: await file.text(), name: routeName }),
@@ -81,7 +82,7 @@ export default function PlansPage() {
         throw new Error(parsed.error || "That file does not contain a usable GPX route.");
       }
 
-      const createResponse = await fetch("/api/plans", {
+      const createResponse = await apiFetch("/api/plans", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

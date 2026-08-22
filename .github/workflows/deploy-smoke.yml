@@ -1,0 +1,49 @@
+# Verifies a Vercel production deployment end to end the moment it goes live.
+#
+# Self-minting: it creates its own session via POST /api/session, so no secrets
+# are needed here. Each assertion below is a regression guard on something that
+# once was, or must never become, broken:
+#  - session mint + bearer round-trip is the native iOS shell's ONLY auth path
+#  - CORS echo is what lets that shell talk to this API at all
+#  - the unauthed research probe guards the paid OpenAI/Tavily route staying closed
+name: Deploy smoke
+
+on:
+  deployment_status:
+
+jobs:
+  smoke:
+    if: github.event.deployment_status.state == 'success' && github.event.deployment_status.environment == 'Production'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe deployed API
+        env:
+          URL: ${{ github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          fail() { echo "SMOKE FAIL: $1" >&2; exit 1; }
+
+          echo "Target: $URL"
+
+          code=$(curl -s -o /tmp/search.json -w '%{http_code}' "$URL/api/trails/search?q=test")
+          [ "$code" = "200" ] || fail "trail search returned $code"
+          head -c 200 /tmp/search.json; echo
+
+          code=$(curl -s -o /tmp/session.json -w '%{http_code}' -X POST "$URL/api/session")
+          [ "$code" = "200" ] || fail "session mint returned $code"
+          TOKEN=$(python3 -c "import json;print(json.load(open('/tmp/session.json'))['token'])") || fail "no token in session response"
+
+          code=$(curl -s -o /tmp/plans.json -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$URL/api/plans")
+          [ "$code" = "200" ] || fail "bearer-authed plans returned $code"
+
+          allow=$(curl -s -o /dev/null -D - -X OPTIONS \
+            -H "Origin: capacitor://localhost" \
+            -H "Access-Control-Request-Method: GET" \
+            -H "Access-Control-Request-Headers: authorization" \
+            "$URL/api/plans" | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)
+          echo "$allow" | grep -q "capacitor://localhost" || fail "CORS preflight did not echo capacitor://localhost"
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/research/should-be-unauthorized")
+          [ "$code" = "401" ] || fail "unauthed research returned $code (expected 401 — paid route must stay closed)"
+
+          echo "All smoke checks passed."

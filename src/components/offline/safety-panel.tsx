@@ -637,6 +637,10 @@ export function SafetyPanel({
   async function persistCheckinSettings(next: CheckinSettings) {
     setCheckinSettings(next);
     await saveCheckinSettings(next);
+    // The store is the authority on armedAt (a re-enable stamps it fresh) and on
+    // interval normalization — re-read so the in-memory monitor matches what will be
+    // true after a reload.
+    setCheckinSettings(await getCheckinSettings());
   }
 
   // The deadline message used to be written before the store was awaited, so a phone
@@ -694,11 +698,17 @@ export function SafetyPanel({
   }
 
   async function handleCheckin() {
-    const entry = await logCheckin(packId, {
+    const { entry, saved } = await logCheckin(packId, {
       lat,
       lng,
       note: checkinSettings.enabled ? "I'm OK" : undefined,
     });
+    if (!saved) {
+      // A check-in that never landed must not be shown as logged: after a reload no
+      // one — including the SAR dossier — would ever see it.
+      setCheckinLabel("Check-in NOT SAVED — storage unavailable. Try again or note the time on paper.");
+      return;
+    }
     setCheckins((prev) => [entry, ...prev].slice(0, 20));
     setCheckinLabel(checkinStatus(entry.recordedAt, checkinSettings)?.label ?? null);
     onCheckinLogged?.();

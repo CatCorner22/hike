@@ -107,8 +107,10 @@ describe("estimateWbgtC — ISO 7243 weighting", () => {
     for (const tempC of [25, 30, 35]) {
       const sun = estimateWbgtC({ tempC, rhPct: 50, inSun: true })!;
       const shade = estimateWbgtC({ tempC, rhPct: 50, inSun: false })!;
-      // globe = air + 5, so sun - shade = 0.2*(T+5) + 0.1*T - 0.3*T = 1.0
-      expect(sun - shade, `${tempC} C`).toBeCloseTo(1.0, 5);
+      // Black globes in full sun with light wind run 10-20 C over air (Liljegren 2008);
+      // globe = air + 15, so sun - shade = 0.2*15 = 3.0. The old +5 C globe put the sun
+      // increment at 1.0 C — 1-2 whole categories low in black-flag conditions.
+      expect(sun - shade, `${tempC} C`).toBeCloseTo(3.0, 5);
     }
   });
 
@@ -120,5 +122,41 @@ describe("estimateWbgtC — ISO 7243 weighting", () => {
         );
       }
     }
+  });
+});
+
+/**
+ * Saturated air is the most dangerous humidity — heat doctrine has no exemption for it.
+ * At RH 100 the wet bulb IS the dry bulb; no regression needed, so the Stull domain
+ * limit must not silently delete all heat guidance there.
+ */
+describe("estimateWbgtC at the humidity extremes", () => {
+  it("answers at RH 100 with the saturated wet bulb", () => {
+    expect(estimateWbgtC({ tempC: 30, rhPct: 100, inSun: false })).toBeCloseTo(30, 1);
+    expect(estimateWbgtC({ tempC: 35, rhPct: 100, inSun: true })).not.toBeNull();
+  });
+
+  it("stays monotone in RH through the cold-dry corner Stull excludes", () => {
+    const drier = estimateWbgtC({ tempC: -15, rhPct: 5, inSun: false })!;
+    const damper = estimateWbgtC({ tempC: -15, rhPct: 10, inSun: false })!;
+    expect(drier).toBeLessThanOrEqual(damper);
+  });
+});
+
+/**
+ * ICAR HT1: conscious + shivering = mild hypothermia. Active shivering is itself
+ * evidence of cold stress and needs no coldExposed corroboration — only STOPPED
+ * shivering is ambiguous. The old gate returned "no hypothermia signs were supplied"
+ * for an actively shivering patient.
+ */
+describe("hypothermiaStage on active shivering alone", () => {
+  it("stages an unflagged shivering patient as mild, not none", () => {
+    const staged = hypothermiaStage({ shivering: true, alteredMental: false, conscious: true });
+    expect(staged?.stage).toBe("mild");
+  });
+
+  it("still requires corroboration for stopped shivering, and none stays reachable", () => {
+    expect(hypothermiaStage({ shivering: false, alteredMental: false, conscious: true })?.stage).toBe("none");
+    expect(hypothermiaStage({ shivering: false, alteredMental: false, conscious: true, coldExposed: true })?.stage).toBe("moderate");
   });
 });

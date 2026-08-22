@@ -1,3 +1,4 @@
+import { apiFetch } from "@/lib/api/client";
 import {
   discardPendingPoints,
   getOfflineDb,
@@ -10,6 +11,13 @@ export interface LocalActivity {
   /** Stable, device-local session identity. Never replace this with the server ID. */
   id: string;
   remoteId?: string;
+  /**
+   * Idempotency key sent as `clientActivityId` when creating the server row. Defaults to
+   * `id`; re-homing rotates it, because the server keys activities by this value globally
+   * and answers 409 when another owner already holds it — reusing `id` after an owner
+   * change would make re-creation impossible for an activity that was begun online.
+   */
+  syncId?: string;
   trailId?: string;
   planId?: string;
   name?: string;
@@ -44,6 +52,12 @@ interface ActivityPointFlushResult {
   synced: number;
   pending: number;
   rejectedFinalized: number;
+  /**
+   * The server answered 404 for the activity itself: it does not exist for the current
+   * owner. Retrying the same request can never succeed — the caller must re-home the
+   * recording instead. The point that hit the 404 stays durably queued.
+   */
+  activityUnreachable: boolean;
 }
 
 interface ServerOpenActivity {
@@ -97,6 +111,36 @@ async function putLocalActivity(row: LocalActivity) {
   const db = await getOfflineDb();
   if (!db || !db.objectStoreNames.contains("localActivities")) return;
   await db.put("localActivities", row);
+}
+
+async function deleteLocalActivity(id: string) {
+  localActivityCache.delete(id);
+  const db = await getOfflineDb();
+  if (!db || !db.objectStoreNames.contains("localActivities")) return;
+  await db.delete("localActivities", id);
+}
+
+/**
+ * The server no longer recognizes this activity for the current owner — the cookie was
+ * cleared, SESSION_SECRET rotated, or the row was deleted elsewhere. Every request to the
+ * old remote ID answers 404 forever, so without this the pending-stop reconciliation loop
+ * blocks recording on this device permanently while telling the hiker to "retry".
+ *
+ * Re-homing forgets the dead remote identity and moves any queued points back under the
+ * stable local ID, which puts the recording on the same path an offline-recorded hike
+ * takes: the next flush re-creates the activity under whoever the current owner is and
+ * replays every point into it. No GPS data is lost. `syncId` is rotated because the old
+ * key may still name another owner's row on the server (409 on reuse).
+ */
+async function rehomeLocalActivity(local: LocalActivity): Promise<void> {
+  const deadRemoteId = local.remoteId;
+  local.remoteId = undefined;
+  local.syncId = crypto.randomUUID();
+  remoteIdPromises.delete(local.id);
+  if (deadRemoteId && deadRemoteId !== local.id) {
+    await movePendingPoints(deadRemoteId, local.id);
+  }
+  await putLocalActivity(local);
 }
 
 export async function getLocalActivity(id: string): Promise<LocalActivity | null> {
@@ -189,7 +233,7 @@ export async function loadOpenActivityRecovery(context: {
 
   let serverOpen: ServerOpenActivity[] | null = null;
   try {
-    const response = await fetch("/api/activities", { cache: "no-store" });
+    const response = await apiFetch("/api/activities", { cache: "no-store" });
     if (!response.ok) throw new Error("open activity lookup failed");
     const body = (await response.json()) as { openActivities?: unknown };
     if (!Array.isArray(body.openActivities)) throw new Error("open activity response was invalid");
@@ -261,11 +305,7 @@ export async function loadOpenActivityRecovery(context: {
 
   const candidate = candidates[0];
   if (candidate.conflict && candidate.local) {
-    return {
-      status: "blocked",
-      candidateCount: 1,
-      message: "This device has an unfinished recording, but the server says that activity is already closed. GPS remains off to prevent track loss.",
-    };
+    return resolveRemoteConflict(candidate.local, context);
   }
 
   const candidateContext = candidate.local ?? candidate.remote;
@@ -303,6 +343,80 @@ export async function loadOpenActivityRecovery(context: {
       ? "Recovered one unfinished recording. GPS is paused until you choose Resume."
       : "Recovered one offline recording from this device. GPS is paused until you choose Resume.",
   };
+}
+
+/**
+ * An open local recording whose remote ID is missing from the owner's open-activity
+ * list. "Missing" has two very different meanings, and only a direct lookup can tell
+ * them apart:
+ *
+ * - 404: the activity does not exist for the CURRENT owner — the cookie was cleared or
+ *   SESSION_SECRET rotated, so the server will refuse this remote ID forever. Blocking
+ *   on it would disable recording on this device permanently. Re-home instead: the
+ *   session continues as a device-local recording and syncs under the current owner.
+ * - 200 with endedAt: the activity was genuinely finished elsewhere (another tab or
+ *   device). With nothing queued locally there is no track to lose — adopt the final
+ *   state and clear the gate. With queued points, keep the protective block: resuming
+ *   would append to a finalized track, and flushing would discard the points.
+ * - 200 still open (a read-lagged list) or a failed lookup: keep the protective block;
+ *   the next recovery attempt re-checks.
+ */
+async function resolveRemoteConflict(
+  local: LocalActivity,
+  context: { trailId?: string; planId?: string },
+): Promise<OpenActivityRecovery> {
+  const blocked: OpenActivityRecovery = {
+    status: "blocked",
+    candidateCount: 1,
+    message: "This device has an unfinished recording, but the server says that activity is already closed. GPS remains off to prevent track loss.",
+  };
+  const remoteId = local.remoteId;
+  if (!remoteId) return blocked;
+  try {
+    const response = await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
+      cache: "no-store",
+    });
+    if (response.status === 404) {
+      await rehomeLocalActivity(local);
+      if (!matchesRecoveryContext(local, context)) {
+        return {
+          status: "blocked",
+          candidateCount: 1,
+          message: "An unfinished recording belongs to another route. GPS remains off; return to that route or finish the recording before starting a new one.",
+        };
+      }
+      return {
+        status: "recovered",
+        activity: local,
+        serverVerified: false,
+        message: "Recovered an unfinished recording from this device. Its server copy is no longer reachable, so it will sync as a new activity.",
+      };
+    }
+    if (!response.ok) return blocked;
+    const body = (await response.json()) as { activity?: { endedAt?: string | null } };
+    const endedAt = body.activity?.endedAt;
+    if (typeof endedAt === "string" && endedAt.length > 0) {
+      const db = await getOfflineDb();
+      const queued = db
+        ? (await db.getAllFromIndex("pendingPoints", "by-activity", local.id)).filter(
+            (point) => !point.synced,
+          )
+        : [];
+      const queuedRemote = db && remoteId !== local.id
+        ? (await db.getAllFromIndex("pendingPoints", "by-activity", remoteId)).filter(
+            (point) => !point.synced,
+          )
+        : [];
+      if (queued.length > 0 || queuedRemote.length > 0) return blocked;
+      local.endedAt = endedAt;
+      local.pendingStop = false;
+      await putLocalActivity(local);
+      return { status: "none" };
+    }
+    return blocked;
+  } catch {
+    return blocked;
+  }
 }
 
 /**
@@ -360,7 +474,7 @@ export async function beginActivity(input: {
   };
 
   try {
-    const res = await fetch("/api/activities", {
+    const res = await apiFetch("/api/activities", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -420,7 +534,7 @@ export async function saveActivityPoint(
   }
 
   try {
-    const res = await fetch(`/api/activities/${encodeURIComponent(remoteId)}/points`, {
+    const res = await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}/points`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -438,6 +552,19 @@ export async function saveActivityPoint(
     if (res.status === 409) {
       await discardPendingPoints([clientPointId]);
       return "rejected-finalized";
+    }
+    if (res.status === 404 && local) {
+      // The owner changed under a live recording (cookie cleared, secret rotated). The
+      // dead remote ID would 404 for every later fix as well, so re-home now, re-create
+      // the activity under the current owner, and retry this one point once. Live sync
+      // then continues for the rest of the hike instead of silently queueing everything.
+      await rehomeLocalActivity(local);
+      const revivedId = await ensureRemoteId(local);
+      if (revivedId) {
+        await movePendingPoints(local.id, revivedId);
+        const retry = await flushPendingPoints(revivedId);
+        if (retry.pending === 0 && !retry.activityUnreachable) return "synced";
+      }
     }
   } catch {
     /* durable queue already contains the point */
@@ -458,11 +585,11 @@ async function ensureRemoteId(local: LocalActivity): Promise<string | null> {
       return latest.remoteId;
     }
     try {
-      const res = await fetch("/api/activities", {
+      const res = await apiFetch("/api/activities", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          clientActivityId: local.id,
+          clientActivityId: local.syncId ?? local.id,
           trailId: local.trailId,
           planId: local.planId,
           name: local.name,
@@ -488,27 +615,28 @@ async function ensureRemoteId(local: LocalActivity): Promise<string | null> {
   }
 }
 
-async function movePendingPointsToRemote(localId: string, remoteId: string): Promise<void> {
-  if (localId === remoteId) return;
+async function movePendingPoints(fromActivityId: string, toActivityId: string): Promise<void> {
+  if (fromActivityId === toActivityId) return;
   const db = await getOfflineDb();
   if (!db) return;
-  const queued = await db.getAllFromIndex("pendingPoints", "by-activity", localId);
+  const queued = await db.getAllFromIndex("pendingPoints", "by-activity", fromActivityId);
   for (const point of queued) {
     if (point.synced) continue;
-    await db.put("pendingPoints", { ...point, activityId: remoteId });
+    await db.put("pendingPoints", { ...point, activityId: toActivityId });
   }
 }
 
 export async function flushPendingPoints(activityId: string): Promise<ActivityPointFlushResult> {
   const db = await getOfflineDb();
-  if (!db) return { synced: 0, pending: 0, rejectedFinalized: 0 };
+  if (!db) return { synced: 0, pending: 0, rejectedFinalized: 0, activityUnreachable: false };
   const rows = await db.getAllFromIndex("pendingPoints", "by-activity", activityId);
   const pending = rows.filter((point) => !point.synced);
   let synced = 0;
   let rejectedFinalized = 0;
+  let activityUnreachable = false;
   for (const point of pending) {
     try {
-      const res = await fetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
+      const res = await apiFetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -527,6 +655,14 @@ export async function flushPendingPoints(activityId: string): Promise<ActivityPo
       if (res.status === 409) {
         await discardPendingPoints([point.id]);
         rejectedFinalized += 1;
+        continue;
+      }
+      if (res.status === 404) {
+        // The activity itself is gone for this owner. Every further point would 404
+        // identically, so stop instead of burning a request per point; the points stay
+        // queued and the caller re-homes the recording.
+        activityUnreachable = true;
+        break;
       }
     } catch {
       break;
@@ -536,6 +672,7 @@ export async function flushPendingPoints(activityId: string): Promise<ActivityPo
   return {
     synced,
     rejectedFinalized,
+    activityUnreachable,
     pending: remaining.filter((point) => !point.synced).length,
   };
 }
@@ -554,9 +691,10 @@ export async function finishActivity(
   stats: LocalActivity["stats"],
 ): Promise<FinishActivityResult> {
   const now = new Date().toISOString();
+  const resolved = await resolveLocalActivity(activityId);
   // With no local row, preserve compatibility with an older caller that supplied a
   // server ID. New recorder sessions always have a stable local row.
-  const local = (await resolveLocalActivity(activityId)) ?? {
+  const local = resolved ?? {
     id: activityId,
     remoteId: activityId,
     startedAt: now,
@@ -567,13 +705,24 @@ export async function finishActivity(
   local.endedAt = endedAt;
   local.pendingStop = true;
   await putLocalActivity(local);
+  return finishLocalActivity(local, endedAt, stats, { fabricated: resolved === null });
+}
 
+async function finishLocalActivity(
+  local: LocalActivity,
+  endedAt: string,
+  stats: LocalActivity["stats"],
+  options: { fabricated: boolean; rehomed?: boolean },
+): Promise<FinishActivityResult> {
   const remoteId = await ensureRemoteId(local);
   if (!remoteId) return { synced: false, rejectedPoints: 0 };
 
-  await movePendingPointsToRemote(local.id, remoteId);
+  await movePendingPoints(local.id, remoteId);
   const points = await flushPendingPoints(remoteId);
   notifyFinalizedPointRejection(points.rejectedFinalized);
+  if (points.activityUnreachable) {
+    return handleUnreachableFinish(local, endedAt, stats, options, points.rejectedFinalized);
+  }
   // Never close the server activity while a durable point still has a retryable path.
   if (points.pending > 0) {
     return {
@@ -584,7 +733,7 @@ export async function finishActivity(
   }
 
   try {
-    const res = await fetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
+    const res = await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ endedAt, stats }),
@@ -598,6 +747,9 @@ export async function finishActivity(
         rejectedPoints: points.rejectedFinalized,
       };
     }
+    if (res.status === 404) {
+      return handleUnreachableFinish(local, endedAt, stats, options, points.rejectedFinalized);
+    }
   } catch {
     /* stay queued */
   }
@@ -608,34 +760,93 @@ export async function finishActivity(
   };
 }
 
+/**
+ * The server answered 404 for an activity this device believes it owns: the owner
+ * changed (cleared cookies, rotated SESSION_SECRET) or the row was deleted elsewhere.
+ * Left alone, the pending-stop row would fail the same way on every retry and the
+ * recovery gate would keep GPS off on this device forever.
+ *
+ * A real recording is re-homed and finished once more under the current owner, keeping
+ * every queued point. A fabricated row (an ID we never recorded against) with nothing
+ * queued under it is deleted instead — it represents no local data, and persisting it
+ * would manufacture the same permanent block out of a stale link.
+ */
+async function handleUnreachableFinish(
+  local: LocalActivity,
+  endedAt: string,
+  stats: LocalActivity["stats"],
+  options: { fabricated: boolean; rehomed?: boolean },
+  rejectedPoints: number,
+): Promise<FinishActivityResult> {
+  if (options.rehomed) {
+    // The re-created activity is unreachable too — something beyond identity rotation
+    // is wrong. Stay pending rather than looping.
+    return { synced: false, remoteId: local.remoteId, rejectedPoints };
+  }
+  if (options.fabricated) {
+    const db = await getOfflineDb();
+    const queued = db
+      ? (await db.getAllFromIndex("pendingPoints", "by-activity", local.id)).filter(
+          (point) => !point.synced,
+        )
+      : [];
+    if (queued.length === 0) {
+      await deleteLocalActivity(local.id);
+      return { synced: false, rejectedPoints };
+    }
+  }
+  await rehomeLocalActivity(local);
+  return finishLocalActivity(local, endedAt, stats, { ...options, rehomed: true });
+}
+
 async function runActivityQueueFlush(): Promise<void> {
   const locals = await listLocalActivities();
   for (const local of locals) {
     // A completed row is retained only as a local-to-remote identity record. Replaying
     // it used to POST a second server activity after an online recording was stopped.
     if (local.endedAt && !local.pendingStop) continue;
+    await flushOneLocalActivity(local, { rehomed: false });
+  }
+}
 
-    const remoteId = await ensureRemoteId(local);
-    if (!remoteId) continue;
-    await movePendingPointsToRemote(local.id, remoteId);
-    const points = await flushPendingPoints(remoteId);
-    notifyFinalizedPointRejection(points.rejectedFinalized);
-    if (points.pending > 0) continue;
+async function flushOneLocalActivity(
+  local: LocalActivity,
+  options: { rehomed: boolean },
+): Promise<void> {
+  const remoteId = await ensureRemoteId(local);
+  if (!remoteId) return;
+  await movePendingPoints(local.id, remoteId);
+  const points = await flushPendingPoints(remoteId);
+  notifyFinalizedPointRejection(points.rejectedFinalized);
+  if (points.activityUnreachable) {
+    // Same permanent-404 condition as in finishActivity: retrying the dead remote ID
+    // can never succeed, so re-home once and replay under the current owner.
+    if (!options.rehomed) {
+      await rehomeLocalActivity(local);
+      await flushOneLocalActivity(local, { rehomed: true });
+    }
+    return;
+  }
+  if (points.pending > 0) return;
 
-    if (local.pendingStop && local.endedAt) {
-      try {
-        const res = await fetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ endedAt: local.endedAt, stats: local.stats }),
-        });
-        if (res.ok) {
-          local.pendingStop = false;
-          await putLocalActivity(local);
-        }
-      } catch {
-        /* still offline */
+  if (local.pendingStop && local.endedAt) {
+    try {
+      const res = await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endedAt: local.endedAt, stats: local.stats }),
+      });
+      if (res.ok) {
+        local.pendingStop = false;
+        await putLocalActivity(local);
+        return;
       }
+      if (res.status === 404 && !options.rehomed) {
+        await rehomeLocalActivity(local);
+        await flushOneLocalActivity(local, { rehomed: true });
+      }
+    } catch {
+      /* still offline */
     }
   }
 }

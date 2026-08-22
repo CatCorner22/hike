@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
@@ -99,7 +100,7 @@ export default function CampingPage() {
     if (options.sync) params.set("sync", "true");
 
     try {
-      const response = await fetch(`/api/camping/search?${params}`);
+      const response = await apiFetch(`/api/camping/search?${params}`);
       const data = await response.json() as {
         campgrounds?: Campground[];
         coverage?: CoverageResult;
