@@ -49,12 +49,16 @@ export function MapView({
   const mapRef = useRef<MapRef>(null);
   const [loaded, setLoaded] = useState(false);
   const didCenterRef = useRef(false);
+  const initialCenterRef = useRef(center);
 
   useEffect(() => {
     if (!loaded || !mapRef.current || fitBounds) return;
+    const moved =
+      center.lat !== initialCenterRef.current.lat ||
+      center.lng !== initialCenterRef.current.lng;
     if (!didCenterRef.current) {
       didCenterRef.current = true;
-      return;
+      if (!moved) return;
     }
     mapRef.current.flyTo({
       center: [center.lng, center.lat],

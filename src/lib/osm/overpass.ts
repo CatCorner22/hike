@@ -279,6 +279,21 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
   return chains;
 }
 
+/** Ways are valid hiking routes; nodes cannot form a line. */
+export function trailGeometryFromElements(
+  elements: OverpassElement[],
+  osmType: string,
+  osmId: string,
+): GeoJSON.LineString | GeoJSON.MultiLineString | null {
+  if (osmType === "node") return null;
+  if (osmType === "way") {
+    const way = elements.find((element) => element.type === "way" && String(element.id) === osmId);
+    const positions = way ? wayPositions(way) : [];
+    return positions.length >= 2 ? { type: "LineString", coordinates: positions } : null;
+  }
+  return relationToLineString(elements);
+}
+
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
   const relation = elements.find((element) => element.type === "relation");
   const waysById = new Map(
@@ -317,37 +332,37 @@ export async function getTrailDetail(
   const overpassQuery = `
     [out:json][timeout:45];
     ${osmType}(${osmId});
-    out body;
+    out geom;
     >;
     out geom;
   `;
 
   const data = await runOverpass(overpassQuery);
-  const relation = data.elements.find(
+  const target = data.elements.find(
     (e) => e.type === osmType && String(e.id) === osmId,
   );
 
-  if (!relation?.tags?.name) return null;
+  if (!target?.tags?.name) return null;
 
-  const geometry = relationToLineString(data.elements);
+  const geometry = trailGeometryFromElements(data.elements, osmType, osmId);
   if (!geometry) return null;
 
-  const center = getCenter(relation);
+  const center = getCenter(target);
   if (!center) return null;
 
   return {
     osmId,
     osmType,
-    name: relation.tags.name,
+    name: target.tags.name,
     center,
     geometry,
     bbox: computeBbox(geometry),
-    lengthMeters: parseLength(relation.tags),
-    difficulty: relation.tags.difficulty,
-    sacScale: relation.tags.sac_scale,
-    network: relation.tags.network,
-    wikipediaUrl: toWikipediaUrl(relation.tags),
-    tags: relation.tags,
+    lengthMeters: parseLength(target.tags),
+    difficulty: target.tags.difficulty,
+    sacScale: target.tags.sac_scale,
+    network: target.tags.network,
+    wikipediaUrl: toWikipediaUrl(target.tags),
+    tags: target.tags,
   };
 }
 

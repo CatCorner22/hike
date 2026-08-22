@@ -93,7 +93,7 @@ export default function ExplorePage() {
       <div className="grid gap-3 sm:grid-cols-2">
         {trails.map((trail) => (
           <div
-            key={trail.osmId}
+            key={osmTrailId(trail.osmType, trail.osmId)}
             onMouseEnter={() => setSelectedTrail(trail)}
           >
             <TrailCard
