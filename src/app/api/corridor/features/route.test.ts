@@ -23,6 +23,15 @@ describe("POST /api/corridor/features", () => {
     expect(missing.status).toBe(400);
   });
 
+  it("rejects an oversized body before parsing", async () => {
+    const response = await POST(new Request("http://localhost/api/corridor/features", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": "20000" },
+      body: "x".repeat(20_000),
+    }));
+    expect(response.status).toBe(413);
+  });
+
   it("returns a null snapshot when the corridor bounds are too large", async () => {
     const response = await POST(new Request("http://localhost/api/corridor/features", {
       method: "POST",
