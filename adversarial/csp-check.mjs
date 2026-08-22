@@ -1,7 +1,10 @@
 import { chromium } from "playwright";
 
 const base = process.env.BASE ?? "http://127.0.0.1:3111";
-const browser = await chromium.launch();
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 const page = await browser.newPage();
 const violations = [];
 page.on("console", (message) => {

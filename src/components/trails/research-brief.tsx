@@ -2,8 +2,11 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AlertTriangle, Calendar, Car, Dog, Tent, Users } from "lucide-react";
-import type { TrailResearchBrief } from "@/lib/research/schema";
+import { AlertTriangle, Calendar, Car, Clock3, Dog, Tent, Users } from "lucide-react";
+import {
+  researchFreshness,
+  type TrailResearchBrief,
+} from "@/lib/research/schema";
 import { httpsUrl } from "@/lib/urls";
 
 interface ResearchBriefProps {
@@ -11,44 +14,106 @@ interface ResearchBriefProps {
 }
 
 export function ResearchBrief({ brief }: ResearchBriefProps) {
+  const freshness = researchFreshness(brief.lastResearchedAt);
+  // Legacy cached briefs did not record evidence for these fields. Never keep
+  // displaying their plausible defaults while a refresh is in flight.
+  const evidenceAware = brief.schemaVersion === 2 && Boolean(brief.evidence);
+  const seasons = evidenceAware ? brief.bestSeasons : [];
+  const crowdLevel = evidenceAware ? brief.crowdLevel : "unknown";
+  const conditions = evidenceAware ? brief.conditions : null;
+  const summary = evidenceAware
+    ? brief.summary
+    : "This cached brief predates source verification. Refresh it before relying on any research claim.";
+  const difficulty = evidenceAware
+    ? brief.difficultyReality
+    : "Unknown — verified difficulty evidence is unavailable.";
+  const hazards = evidenceAware ? brief.hazards : [];
+  const parking = evidenceAware
+    ? brief.parking
+    : "Unknown — verified parking evidence is unavailable.";
+  const permits = evidenceAware ? brief.permits : null;
+  const dogPolicy = evidenceAware ? brief.dogPolicy : null;
+  const campingNearby = evidenceAware ? brief.campingNearby : [];
+  const sources = evidenceAware ? brief.sources : [];
+  const provenance = brief.provenance?.mode === "source_synthesis"
+    ? "Source-backed synthesis"
+    : brief.provenance?.mode === "mapped_metadata_only"
+      ? "Mapped metadata only"
+      : "Legacy brief — refresh provenance";
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-lg">Trail Research</CardTitle>
-        <p className="text-sm text-muted-foreground">{brief.summary}</p>
+        <p className="text-sm text-muted-foreground">{summary}</p>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Badge variant="secondary">{provenance}</Badge>
+          <Badge variant={freshness.stale ? "destructive" : "outline"}>
+            <Clock3 className="h-3 w-3" />
+            {freshness.label}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Check time is not a live-condition timestamp; source pages and rules may be older or have changed.
+        </p>
+        {brief.provenance?.parkCode && brief.provenance.parkName && (
+          <p className="text-xs text-muted-foreground">
+            NPS unit verified: {brief.provenance.parkName} ({brief.provenance.parkCode}).
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary">
             <Users className="mr-1 h-3 w-3" />
-            Crowds: {brief.crowdLevel}
+            Crowds: {crowdLevel}
           </Badge>
-          {brief.bestSeasons.map((season) => (
-            <Badge key={season} variant="outline">
+          {seasons.length > 0 ? (
+            seasons.map((season) => (
+              <Badge key={season} variant="outline">
+                <Calendar className="mr-1 h-3 w-3" />
+                {season}
+              </Badge>
+            ))
+          ) : (
+            <Badge variant="outline">
               <Calendar className="mr-1 h-3 w-3" />
-              {season}
+              Season evidence unavailable
             </Badge>
-          ))}
+          )}
         </div>
 
         <div>
           <h4 className="mb-1 text-sm font-medium">Difficulty reality</h4>
-          <p className="text-sm text-muted-foreground">{brief.difficultyReality}</p>
+          <p className="text-sm text-muted-foreground">{difficulty}</p>
         </div>
 
-        {brief.hazards.length > 0 && (
-          <div>
-            <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
-              Hazards
-            </h4>
+        <div>
+          <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            Hazards
+          </h4>
+          {hazards.length > 0 ? (
             <ul className="list-inside list-disc text-sm text-muted-foreground">
-              {brief.hazards.map((h) => (
+              {hazards.map((h) => (
                 <li key={h}>{h}</li>
               ))}
             </ul>
-          </div>
-        )}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No hazard evidence was returned. This is not evidence that the route is hazard-free.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <h4 className="mb-1 text-sm font-medium">Source-reported conditions</h4>
+          <p className="text-sm text-muted-foreground">
+            {conditions
+              ? `${conditions} Verify current conditions with the land manager before departure.`
+              : "Unknown — no source-backed condition report was available."}
+          </p>
+        </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -56,46 +121,53 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
               <Car className="h-4 w-4" />
               Parking
             </h4>
-            <p className="text-sm text-muted-foreground">{brief.parking}</p>
+            <p className="text-sm text-muted-foreground">{parking}</p>
           </div>
-          {brief.permits && (
-            <div>
-              <h4 className="mb-1 text-sm font-medium">Permits</h4>
-              <p className="text-sm text-muted-foreground">{brief.permits}</p>
-            </div>
-          )}
-          {brief.dogPolicy && (
-            <div>
-              <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
-                <Dog className="h-4 w-4" />
-                Dogs
-              </h4>
-              <p className="text-sm text-muted-foreground">{brief.dogPolicy}</p>
-            </div>
-          )}
+          <div>
+            <h4 className="mb-1 text-sm font-medium">Permits</h4>
+            <p className="text-sm text-muted-foreground">
+              {permits ?? "Unknown — verify current permit rules with the land manager."}
+            </p>
+          </div>
+          <div>
+            <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <Dog className="h-4 w-4" />
+              Dogs
+            </h4>
+            <p className="text-sm text-muted-foreground">
+              {dogPolicy ?? "Unknown — verify current pet rules with the land manager."}
+            </p>
+          </div>
         </div>
 
-        {brief.campingNearby.length > 0 && (
+        {campingNearby.length > 0 && (
           <div>
             <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
               <Tent className="h-4 w-4" />
               Camping nearby
             </h4>
             <ul className="list-inside list-disc text-sm text-muted-foreground">
-              {brief.campingNearby.map((c) => (
+              {campingNearby.map((c) => (
                 <li key={c}>{c}</li>
               ))}
             </ul>
           </div>
         )}
 
-        {brief.sources.length > 0 && (
-          <div>
-            <h4 className="mb-1 text-sm font-medium">Sources</h4>
+        <div>
+          <h4 className="mb-1 text-sm font-medium">Sources and provenance</h4>
+          {sources.length > 0 ? (
             <ul className="space-y-1 text-sm">
-              {brief.sources.map((source) => {
+              {sources.map((source) => {
                 const href = httpsUrl(source.url);
                 if (!href) return <li key={source.url}>{source.title}</li>;
+                const provider = source.provider === "nps"
+                  ? "NPS"
+                  : source.provider === "openstreetmap"
+                    ? "OpenStreetMap"
+                    : source.provider === "web"
+                      ? "Web"
+                      : "Legacy";
                 return (
                   <li key={href}>
                     <a
@@ -106,12 +178,17 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
                     >
                       {source.title}
                     </a>
+                    <span className="ml-2 text-xs text-muted-foreground">{provider}</span>
                   </li>
                 );
               })}
             </ul>
-          </div>
-        )}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No web or land-manager source was available for this brief.
+            </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

@@ -144,7 +144,10 @@ async function offlineReload(env) {
   return screen(env.page);
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 await establishOwner();
 try {
   // Corrupt route payloads: app must show an explicit failure, never a browser/page blank state.
@@ -335,7 +338,11 @@ try {
         o.onsuccess = () => {
           const names = stores.filter((store) => o.result.objectStoreNames.contains(store));
           const tx = o.result.transaction(names, "readwrite");
-          for (const value of values) tx.objectStore(value._store).put((({ _store, ...row }) => row)(value));
+          for (const value of values) {
+            const row = { ...value };
+            delete row._store;
+            tx.objectStore(value._store).put(row);
+          }
           tx.oncomplete = resolve;
           tx.onerror = () => reject(tx.error);
         };

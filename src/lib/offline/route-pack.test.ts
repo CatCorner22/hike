@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ROUTE_PACK_VERSION,
   buildRoutePack,
+  deleteRoutePack,
   getRoutePack,
   getRoutePackStatus,
   listRoutePacks,
@@ -106,6 +107,23 @@ describe("route pack aliases and migration", () => {
 
     expect(await recordCount()).toBe(1);
     expect(await listRoutePacks()).toHaveLength(1);
+  });
+
+  it("deletes a canonical pack and all of its aliases without touching another pack", async () => {
+    await saveRoutePack(buildRoutePack({
+      id: "plan-delete",
+      aliases: ["delete-alias", "trail-delete"],
+      name: "Delete me",
+      geometry,
+    }));
+    await saveRoutePack(buildRoutePack({ id: "plan-keep", name: "Keep me", geometry }));
+
+    await expect(deleteRoutePack("delete-alias")).resolves.toBe(true);
+    await expect(getRoutePack("plan-delete")).resolves.toBeNull();
+    await expect(getRoutePack("delete-alias")).resolves.toBeNull();
+    await expect(getRoutePack("trail-delete")).resolves.toBeNull();
+    await expect(getRoutePack("plan-keep")).resolves.toMatchObject({ name: "Keep me" });
+    expect(await recordCount()).toBe(1);
   });
 
   it("migrates v1 duplicate alias records without losing the pack", async () => {
@@ -219,7 +237,6 @@ describe("route pack integrity boundaries", () => {
 
   it("persists a hazard briefing and still accepts packs without one", async () => {
     const { buildHazardBrief } = await import("@/lib/offline/hazard-brief");
-    const pack = buildRoutePack({ id: "plan-hazard", name: "Hazard route", geometry });
     const brief = buildHazardBrief({
       routeId: "plan-hazard",
       samples: [{
@@ -259,9 +276,50 @@ describe("route pack integrity boundaries", () => {
     })).toContain("hazard briefing");
   });
 
+  it("persists official alert provenance and strips a poisoned source URL", async () => {
+    const retrievedAt = new Date(Date.now() - 60_000).toISOString();
+    const snapshot = {
+      version: 1 as const,
+      routeId: "plan-alerts",
+      retrievedAt,
+      sources: [{
+        source: "nws" as const,
+        status: "checked" as const,
+        checkedAt: retrievedAt,
+        detail: "NWS active alerts checked at 1 route sample.",
+        pointsChecked: 1,
+      }],
+      alerts: [{
+        id: "https://api.weather.gov/alerts/example",
+        source: "nws" as const,
+        title: "Flood Warning",
+        severity: "severe" as const,
+        urgency: "immediate" as const,
+        certainty: "observed" as const,
+        sourceUrl: "https://api.weather.gov/alerts/example",
+        sampleDistanceMeters: 0,
+      }],
+    };
+    const pack = buildRoutePack({
+      id: "plan-alerts",
+      name: "Official alerts route",
+      geometry,
+      officialAlerts: snapshot,
+    });
+    await saveRoutePack(pack);
+    expect((await getRoutePack("plan-alerts"))?.officialAlerts?.alerts).toHaveLength(1);
+    expect(validateRoutePack({ ...pack, officialAlerts: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...pack,
+      officialAlerts: {
+        ...snapshot,
+        alerts: [{ ...snapshot.alerts[0], sourceUrl: "https://evil.example/forged" }],
+      },
+    })).toContain("official alert");
+  });
+
   it("persists user-supplied bailout tracks and still accepts packs without them", async () => {
     const { prepareBailoutRoute } = await import("@/lib/offline/bailout-routes");
-    const pack = buildRoutePack({ id: "plan-exit", name: "Exit route", geometry });
     const prepared = prepareBailoutRoute({
       routeId: "plan-exit",
       name: "Spur",

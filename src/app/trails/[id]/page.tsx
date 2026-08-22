@@ -16,6 +16,7 @@ import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import { httpsUrl } from "@/lib/urls";
+import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import {
   Calendar,
   ExternalLink,
@@ -44,6 +45,7 @@ interface TrailData {
   network?: string;
   wikipediaUrl?: string;
   elevationProfile: Array<{ distanceMeters: number; elevation: number }>;
+  tags?: Record<string, string>;
 }
 
 export default function TrailDetailPage() {
@@ -55,10 +57,11 @@ export default function TrailDetailPage() {
   const [brief, setBrief] = useState<TrailResearchBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
-  const packReady = useOfflinePackReady(trail ? `trail-${trailId}` : null);
+  const offlineReadiness = useOfflinePackReady(trail ? `trail-${trailId}` : null);
 
   useEffect(() => {
     async function load() {
@@ -85,12 +88,25 @@ export default function TrailDetailPage() {
 
   const loadResearch = useCallback(async (refresh = false) => {
     setResearchLoading(true);
+    setResearchError(null);
     try {
       const response = await fetch(
         `/api/research/${trailId}${refresh ? "?refresh=true" : ""}`,
       );
-      const data = await response.json();
-      if (response.ok) setBrief(data.brief);
+      const data = (await response.json()) as {
+        brief?: TrailResearchBrief;
+        error?: string;
+      };
+      if (!response.ok || !data.brief) {
+        throw new Error(data.error || "Trail research is unavailable.");
+      }
+      setBrief(data.brief);
+    } catch (researchFailure) {
+      setResearchError(
+        researchFailure instanceof Error
+          ? researchFailure.message
+          : "Trail research is unavailable.",
+      );
     } finally {
       setResearchLoading(false);
     }
@@ -198,7 +214,7 @@ export default function TrailDetailPage() {
           </Button>
           <NavigateLink
             href={`/navigate/trail-${trailId}`}
-            ready={packReady}
+            {...offlineReadiness}
           />
           <PrepareOffline
             packId={`trail-${trailId}`}
@@ -207,6 +223,7 @@ export default function TrailDetailPage() {
             geometry={trail.geometry}
             bbox={trail.bbox}
             elevationProfile={trail.elevationProfile}
+            parkCode={npsParkCodeFromTags(trail.tags)}
           />
           <a
             href={`/api/sync/offline?trailId=${trailId}`}
@@ -251,9 +268,13 @@ export default function TrailDetailPage() {
         </div>
         {researchLoading && !brief ? (
           <Skeleton className="h-48 w-full" />
-        ) : brief ? (
-          <ResearchBrief brief={brief} />
         ) : null}
+        {researchError && (
+          <p role="status" className="mb-2 text-sm text-destructive">
+            {researchError} Existing trail and map data remain available.
+          </p>
+        )}
+        {brief ? <ResearchBrief brief={brief} /> : null}
       </div>
 
       <div>

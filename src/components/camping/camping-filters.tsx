@@ -13,7 +13,7 @@ import { CAMPING_TYPE_LABELS } from "@/lib/constants";
 export interface CampingFiltersState {
   state: string;
   campingType: string;
-  permitRequired: string;
+  permitStatus: string;
   source: string;
 }
 
@@ -67,18 +67,20 @@ export function CampingFilters({ filters, onChange, states }: CampingFiltersProp
       </div>
 
       <div>
-        <Label className="text-xs">Permit required</Label>
+        <Label className="text-xs">Permit evidence</Label>
         <Select
-          value={filters.permitRequired}
-          onValueChange={(v) => onChange({ ...filters, permitRequired: v ?? "all" })}
+          value={filters.permitStatus}
+          onValueChange={(v) => onChange({ ...filters, permitStatus: v ?? "all" })}
         >
           <SelectTrigger>
             <SelectValue placeholder="Any" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Any</SelectItem>
-            <SelectItem value="yes">Permit required</SelectItem>
-            <SelectItem value="no">No permit</SelectItem>
+            <SelectItem value="required">Required</SelectItem>
+            <SelectItem value="seasonal">Seasonal / conditional</SelectItem>
+            <SelectItem value="not_required">Explicitly not required</SelectItem>
+            <SelectItem value="unknown">Unknown</SelectItem>
           </SelectContent>
         </Select>
       </div>

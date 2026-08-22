@@ -22,7 +22,10 @@ async function api(path, method = "GET", body) {
 const plan = await api("/api/plans", "POST", { name: "reload lifecycle probe", customGeometry: geometry });
 if (plan.status !== 200) throw new Error(`plan creation failed: ${plan.status}`);
 const [name, value] = cookie.split("=");
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try {
   const context = await browser.newContext({ permissions: ["geolocation"], geolocation: { latitude: 37.7749, longitude: -119.5383, accuracy: 5 } });
   await context.addCookies([{ name, value, domain: new URL(BASE).hostname, path: "/", httpOnly: true, sameSite: "Lax" }]);

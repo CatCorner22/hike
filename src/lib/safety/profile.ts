@@ -1,4 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import type { PositionSource } from "@/lib/safety/emergency";
 
 export interface IceProfile {
   name: string;
@@ -19,7 +20,42 @@ export interface SafetyWaypoint {
   lng: number;
   note?: string;
   recordedAt: string;
+  accuracyM?: number;
+  positionSource?: PositionSource;
+  positionRecordedAt?: string;
 }
+
+export interface FieldPhoto {
+  id: string;
+  packId: string;
+  waypointId: string;
+  capturedAt: string;
+  mediaType: "image/jpeg";
+  width: number;
+  height: number;
+  size: number;
+  blob: Blob;
+}
+
+export type WaypointWriteResult =
+  | { ok: true; waypoint: SafetyWaypoint }
+  | { ok: false; message: string };
+
+export type WaypointReadResult =
+  | { ok: true; waypoints: SafetyWaypoint[] }
+  | { ok: false; message: string };
+
+export type WaypointDeleteResult =
+  | { ok: true; waypoint: SafetyWaypoint; photos: FieldPhoto[] }
+  | { ok: false; message: string };
+
+export type PhotoWriteResult =
+  | { ok: true; photo: FieldPhoto }
+  | { ok: false; message: string };
+
+export type PhotoReadResult =
+  | { ok: true; photos: FieldPhoto[] }
+  | { ok: false; message: string };
 
 export interface OverdueAlarm {
   returnAt: string;
@@ -50,9 +86,14 @@ interface SafetyDB extends DBSchema {
   overdue: { key: string; value: OverdueAlarm & { id: string } };
   checkins: { key: string; value: CheckinEntry; indexes: { "by-pack": string } };
   checkinSettings: { key: string; value: CheckinSettings & { id: string } };
+  photos: {
+    key: string;
+    value: FieldPhoto;
+    indexes: { "by-pack": string; "by-waypoint": string };
+  };
 }
 
-const SAFETY_DB_VERSION = 2;
+const SAFETY_DB_VERSION = 3;
 
 /**
  * Opening IndexedDB can hang indefinitely: if another tab still holds an older
@@ -105,6 +146,11 @@ async function openSafetyDb(): Promise<IDBPDatabase<SafetyDB> | null> {
           const checkins = db.createObjectStore("checkins", { keyPath: "id" });
           checkins.createIndex("by-pack", "packId");
           db.createObjectStore("checkinSettings", { keyPath: "id" });
+        }
+        if (oldVersion < 3) {
+          const photos = db.createObjectStore("photos", { keyPath: "id" });
+          photos.createIndex("by-pack", "packId");
+          photos.createIndex("by-waypoint", "waypointId");
         }
       },
       // This tab is the one holding an older version open somewhere else. Let go,
@@ -163,6 +209,8 @@ function getDb() {
 
 /** Exposed for tests: drop the cached connection so the next call re-opens. */
 export function __resetSafetyDbForTest() {
+  // Some storage-failure tests intentionally provide a minimal database stub.
+  if (typeof liveDb?.close === "function") liveDb.close();
   forgetSafetyDb();
 }
 
@@ -200,31 +248,322 @@ export async function saveIceProfile(profile: IceProfile): Promise<boolean> {
   }
 }
 
-export async function dropWaypoint(
+function waypointMatches(a: SafetyWaypoint | undefined, b: SafetyWaypoint): boolean {
+  return Boolean(
+    a &&
+      a.id === b.id &&
+      a.packId === b.packId &&
+      a.kind === b.kind &&
+      a.lat === b.lat &&
+      a.lng === b.lng &&
+      a.note === b.note &&
+      a.recordedAt === b.recordedAt &&
+      a.accuracyM === b.accuracyM &&
+      a.positionSource === b.positionSource &&
+      a.positionRecordedAt === b.positionRecordedAt,
+  );
+}
+
+async function blobBytesMatch(a: Blob, b: Blob): Promise<boolean> {
+  if (a.type !== b.type || a.size !== b.size) return false;
+  const [left, right] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]);
+  const leftBytes = new Uint8Array(left);
+  const rightBytes = new Uint8Array(right);
+  for (let index = 0; index < leftBytes.length; index += 1) {
+    if (leftBytes[index] !== rightBytes[index]) return false;
+  }
+  return true;
+}
+
+async function fieldPhotoMatches(a: FieldPhoto | undefined, b: FieldPhoto): Promise<boolean> {
+  return Boolean(
+    a &&
+      a.id === b.id &&
+      a.packId === b.packId &&
+      a.waypointId === b.waypointId &&
+      a.capturedAt === b.capturedAt &&
+      a.mediaType === b.mediaType &&
+      a.width === b.width &&
+      a.height === b.height &&
+      a.size === b.size &&
+      await blobBytesMatch(a.blob, b.blob),
+  );
+}
+
+function validWaypointPosition(lat: number, lng: number): boolean {
+  return Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+/**
+ * Writes a waypoint and then reads the exact record back before reporting success.
+ * A React state update is never treated as proof that the mark survived a restart.
+ */
+export async function saveWaypoint(
   packId: string,
   kind: SafetyWaypoint["kind"],
   lat: number,
   lng: number,
   note?: string,
-): Promise<SafetyWaypoint> {
+  position?: { accuracyM?: number; source?: PositionSource; recordedAt?: number },
+): Promise<WaypointWriteResult> {
+  if (!packId || !validWaypointPosition(lat, lng)) {
+    return { ok: false, message: "This place has no usable GPS position, so it was not saved." };
+  }
+  const normalizedNote = note?.trim() || undefined;
+  if (normalizedNote && Array.from(normalizedNote).length > 240) {
+    return { ok: false, message: "Keep the place note to 240 characters or fewer." };
+  }
+  const positionDate =
+    position?.recordedAt != null && Number.isFinite(position.recordedAt)
+      ? new Date(position.recordedAt)
+      : null;
   const point: SafetyWaypoint = {
     id: crypto.randomUUID(),
     packId,
     kind,
     lat,
     lng,
-    note,
+    note: normalizedNote,
     recordedAt: new Date().toISOString(),
+    accuracyM:
+      position?.accuracyM != null && Number.isFinite(position.accuracyM) && position.accuracyM >= 0
+        ? position.accuracyM
+        : undefined,
+    positionSource: position?.source,
+    positionRecordedAt:
+      positionDate && Number.isFinite(positionDate.getTime())
+        ? positionDate.toISOString()
+        : undefined,
   };
   const db = await getDb();
-  if (db) await db.put("waypoints", point);
-  return point;
+  if (!db) {
+    return { ok: false, message: "Storage is unavailable on this phone. This place was not saved." };
+  }
+  try {
+    await db.put("waypoints", point);
+    const stored = await db.get("waypoints", point.id);
+    if (!waypointMatches(stored, point)) {
+      return { ok: false, message: "The phone could not verify this saved place. Try again before moving on." };
+    }
+    return { ok: true, waypoint: stored! };
+  } catch {
+    return { ok: false, message: "The phone could not save this place. Free some storage and try again." };
+  }
+}
+
+/** Compatibility wrapper for advanced tools. It rejects instead of claiming a memory-only save. */
+export async function dropWaypoint(
+  packId: string,
+  kind: SafetyWaypoint["kind"],
+  lat: number,
+  lng: number,
+  note?: string,
+  position?: { accuracyM?: number; source?: PositionSource; recordedAt?: number },
+): Promise<SafetyWaypoint> {
+  const result = await saveWaypoint(packId, kind, lat, lng, note, position);
+  if (!result.ok) throw new Error(result.message);
+  return result.waypoint;
 }
 
 export async function listWaypoints(packId: string): Promise<SafetyWaypoint[]> {
   const db = await getDb();
   if (!db) return [];
-  return db.getAllFromIndex("waypoints", "by-pack", packId);
+  try {
+    return (await db.getAllFromIndex("waypoints", "by-pack", packId)).sort((a, b) =>
+      b.recordedAt.localeCompare(a.recordedAt),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export async function readWaypoints(packId: string): Promise<WaypointReadResult> {
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Saved places are unavailable on this phone." };
+  try {
+    const waypoints = (await db.getAllFromIndex("waypoints", "by-pack", packId)).sort((a, b) =>
+      b.recordedAt.localeCompare(a.recordedAt),
+    );
+    return { ok: true, waypoints };
+  } catch {
+    return { ok: false, message: "The phone could not read your saved places." };
+  }
+}
+
+export async function updateWaypoint(
+  packId: string,
+  id: string,
+  update: Pick<SafetyWaypoint, "kind"> & { note?: string },
+): Promise<WaypointWriteResult> {
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Storage is unavailable. Changes were not saved." };
+  const normalizedNote = update.note?.trim() || undefined;
+  if (normalizedNote && Array.from(normalizedNote).length > 240) {
+    return { ok: false, message: "Keep the place note to 240 characters or fewer." };
+  }
+  try {
+    const current = await db.get("waypoints", id);
+    if (!current || current.packId !== packId) {
+      return { ok: false, message: "That saved place is no longer on this route." };
+    }
+    const next: SafetyWaypoint = {
+      ...current,
+      kind: update.kind,
+      note: normalizedNote,
+    };
+    await db.put("waypoints", next);
+    const stored = await db.get("waypoints", id);
+    if (!waypointMatches(stored, next)) {
+      return { ok: false, message: "The phone could not verify those changes. Reload before editing again." };
+    }
+    return { ok: true, waypoint: stored! };
+  } catch {
+    return { ok: false, message: "The phone could not save those changes." };
+  }
+}
+
+export async function deleteWaypoint(packId: string, id: string): Promise<WaypointDeleteResult> {
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Storage is unavailable. The place was not deleted." };
+  try {
+    const tx = db.transaction(["waypoints", "photos"], "readwrite");
+    const point = await tx.objectStore("waypoints").get(id);
+    if (!point || point.packId !== packId) {
+      await tx.done;
+      return { ok: false, message: "That saved place is no longer on this route." };
+    }
+    const photos = await tx.objectStore("photos").index("by-waypoint").getAll(id);
+    await tx.objectStore("waypoints").delete(id);
+    for (const photo of photos) await tx.objectStore("photos").delete(photo.id);
+    await tx.done;
+    const [storedPoint, storedPhotos] = await Promise.all([
+      db.get("waypoints", id),
+      db.getAllFromIndex("photos", "by-waypoint", id),
+    ]);
+    if (storedPoint || storedPhotos.length > 0) {
+      return { ok: false, message: "The phone could not verify the deletion. Reload to check this place." };
+    }
+    return { ok: true, waypoint: point, photos };
+  } catch {
+    return { ok: false, message: "The phone could not delete this place." };
+  }
+}
+
+export async function restoreWaypoint(
+  waypoint: SafetyWaypoint,
+  photos: FieldPhoto[] = [],
+): Promise<WaypointWriteResult> {
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Storage is unavailable. The place was not restored." };
+  try {
+    const tx = db.transaction(["waypoints", "photos"], "readwrite");
+    await tx.objectStore("waypoints").put(waypoint);
+    for (const photo of photos) await tx.objectStore("photos").put(photo);
+    await tx.done;
+    const stored = await db.get("waypoints", waypoint.id);
+    const storedPhotos = await db.getAllFromIndex("photos", "by-waypoint", waypoint.id);
+    const photosById = new Map(storedPhotos.map((photo) => [photo.id, photo]));
+    const photosMatch = storedPhotos.length === photos.length && (
+      await Promise.all(photos.map((photo) => fieldPhotoMatches(photosById.get(photo.id), photo)))
+    ).every(Boolean);
+    if (!waypointMatches(stored, waypoint) || !photosMatch) {
+      return { ok: false, message: "The phone could not verify the restored place." };
+    }
+    return { ok: true, waypoint: stored! };
+  } catch {
+    return { ok: false, message: "The phone could not restore this place." };
+  }
+}
+
+const MAX_FIELD_PHOTOS_PER_PACK = 30;
+const MAX_FIELD_PHOTO_BYTES_PER_PACK = 20 * 1024 * 1024;
+const MAX_FIELD_PHOTO_BYTES = 2 * 1024 * 1024;
+const MAX_FIELD_PHOTO_EDGE = 1_600;
+
+export async function saveFieldPhoto(
+  photo: Omit<FieldPhoto, "id" | "capturedAt" | "size" | "mediaType"> & { blob: Blob },
+): Promise<PhotoWriteResult> {
+  if (
+    !photo.packId ||
+    !photo.waypointId ||
+    photo.width < 1 ||
+    photo.height < 1 ||
+    !Number.isInteger(photo.width) ||
+    !Number.isInteger(photo.height) ||
+    photo.width > MAX_FIELD_PHOTO_EDGE ||
+    photo.height > MAX_FIELD_PHOTO_EDGE ||
+    photo.blob.type !== "image/jpeg" ||
+    photo.blob.size < 1 ||
+    photo.blob.size > MAX_FIELD_PHOTO_BYTES
+  ) {
+    return { ok: false, message: "That photo could not be prepared safely, so it was not saved." };
+  }
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Storage is unavailable. The photo was not saved." };
+  try {
+    // The ownership check, quota calculation and insert share one read/write
+    // transaction so two simultaneous camera actions cannot both pass the same
+    // stale quota read.
+    const tx = db.transaction(["waypoints", "photos"], "readwrite");
+    const waypoint = await tx.objectStore("waypoints").get(photo.waypointId);
+    if (!waypoint || waypoint.packId !== photo.packId) {
+      await tx.done;
+      return { ok: false, message: "Save the place before attaching a photo." };
+    }
+    const photoStore = tx.objectStore("photos");
+    const existing = await photoStore.index("by-pack").getAll(photo.packId);
+    if (existing.length >= MAX_FIELD_PHOTOS_PER_PACK) {
+      await tx.done;
+      return { ok: false, message: `This route already has ${MAX_FIELD_PHOTOS_PER_PACK} photos. Delete one before adding another.` };
+    }
+    const used = existing.reduce((sum, item) => sum + item.size, 0);
+    if (used + photo.blob.size > MAX_FIELD_PHOTO_BYTES_PER_PACK) {
+      await tx.done;
+      return { ok: false, message: "Route photos reached the 20 MB offline limit. Delete a photo and try again." };
+    }
+    const record: FieldPhoto = {
+      ...photo,
+      id: crypto.randomUUID(),
+      capturedAt: new Date().toISOString(),
+      mediaType: "image/jpeg",
+      size: photo.blob.size,
+    };
+    await photoStore.put(record);
+    await tx.done;
+    const stored = await db.get("photos", record.id);
+    if (!stored || !(await fieldPhotoMatches(stored, record))) {
+      return { ok: false, message: "The phone could not verify the saved photo." };
+    }
+    return { ok: true, photo: stored };
+  } catch {
+    return { ok: false, message: "The phone could not save the photo. Free some storage and try again." };
+  }
+}
+
+export async function readFieldPhotos(packId: string): Promise<PhotoReadResult> {
+  const db = await getDb();
+  if (!db) return { ok: false, message: "Saved photos are unavailable on this phone." };
+  try {
+    const photos = (await db.getAllFromIndex("photos", "by-pack", packId)).sort((a, b) =>
+      b.capturedAt.localeCompare(a.capturedAt),
+    );
+    return { ok: true, photos };
+  } catch {
+    return { ok: false, message: "The phone could not read your saved photos." };
+  }
+}
+
+export async function deleteFieldPhoto(packId: string, id: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  try {
+    const photo = await db.get("photos", id);
+    if (!photo || photo.packId !== packId) return false;
+    await db.delete("photos", id);
+    return (await db.get("photos", id)) == null;
+  } catch {
+    return false;
+  }
 }
 
 export interface ResolvedLocalTime {

@@ -7,7 +7,6 @@ import {
   Copy,
   Download,
   Droplets,
-  Flag,
   LifeBuoy,
   Megaphone,
   MessageSquare,
@@ -19,6 +18,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CapabilityTabs } from "@/components/safety/capability-tabs";
+import { FieldCapture } from "@/components/offline/field-capture";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -52,7 +52,6 @@ import {
   dropWaypoint,
   getIceProfile,
   getOverdueAlarm,
-  listWaypoints,
   overdueStatus,
   saveIceProfile,
   setOverdueAlarm,
@@ -81,7 +80,12 @@ import {
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { buildPaperBackup } from "@/lib/safety/paper-backup";
 import { GuardianShare } from "@/components/safety/guardian-share";
-import { formatPackWeatherNote, isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
+import { estimateGuardianEta, guardianProgressPercent } from "@/lib/guardian/status";
+import {
+  decisionGradePackWeather,
+  formatPackWeatherNote,
+  type PackWeather,
+} from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -242,6 +246,7 @@ interface SafetyPanelProps {
   lastCommsAt?: number | null;
   onCheckinLogged?: () => void;
   packWeather?: PackWeather | null;
+  batteryPct?: number | null;
 }
 
 /**
@@ -261,6 +266,30 @@ function gridOrUnavailable(lat: number, lng: number): string {
 function radiusPhrase(uncertaintyM: number | null): string {
   if (uncertaintyM == null) return "radius unquotable — cut too shallow";
   return `treat as ±${Math.round(uncertaintyM)} m`;
+}
+
+type WeatherFieldSource = "unknown" | "pack" | "manual";
+type WeatherField = { value: string; source: WeatherFieldSource };
+type WeatherFields = { tempC: WeatherField; windKph: WeatherField; rhPct: WeatherField };
+
+const EMPTY_WEATHER_FIELDS: WeatherFields = {
+  tempC: { value: "", source: "unknown" },
+  windKph: { value: "", source: "unknown" },
+  rhPct: { value: "", source: "unknown" },
+};
+
+function displayedWeatherField(field: WeatherField, packValue: number | undefined): WeatherField {
+  if (field.source === "manual") return field;
+  return packValue == null
+    ? { value: "", source: "unknown" }
+    : { value: String(packValue), source: "pack" };
+}
+
+function enteredWeatherNumber(field: WeatherField, packIsDecisionGrade: boolean): number | undefined {
+  if (field.source === "pack" && !packIsDecisionGrade) return undefined;
+  if (field.source === "unknown" || !field.value.trim()) return undefined;
+  const value = Number(field.value);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 export function SafetyPanel({
@@ -303,6 +332,7 @@ export function SafetyPanel({
   lastCommsAt = null,
   onCheckinLogged,
   packWeather,
+  batteryPct,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -358,16 +388,14 @@ export function SafetyPanel({
   const [tsdSpeed, setTsdSpeed] = useState("4");
   const [tsdMin, setTsdMin] = useState("");
   const [flashSec, setFlashSec] = useState("30");
-  const [tempC, setTempC] = useState(packWeather?.tempC != null ? String(packWeather.tempC) : "5");
-  const [windKph, setWindKph] = useState(
-    packWeather?.windKph != null ? String(packWeather.windKph) : "20",
-  );
-  const [rh, setRh] = useState(packWeather?.rhPct != null ? String(packWeather.rhPct) : "40");
+  const [weatherFields, setWeatherFields] = useState<WeatherFields>(EMPTY_WEATHER_FIELDS);
+  const [weatherNow, setWeatherNow] = useState<number | null>(null);
   const [waterL, setWaterL] = useState("2");
   const [injured, setInjured] = useState("0");
   const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
   const [searchLeg, setSearchLeg] = useState("100");
   const [opsNote, setOpsNote] = useState<string | null>(null);
+  const [advancedWaypointStatus, setAdvancedWaypointStatus] = useState<string | null>(null);
   const [beads, setBeads] = useState(0);
   const [lpqSeen, setLpqSeen] = useState("");
   const [lpqClothes, setLpqClothes] = useState("");
@@ -378,7 +406,6 @@ export function SafetyPanel({
   });
   const [checkins, setCheckins] = useState<CheckinEntry[]>([]);
   const [checkinLabel, setCheckinLabel] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
   const [wildlifeAnimal, setWildlifeAnimal] = useState<WildlifeAnimal>("bear_grizzly");
   const [amsSymptoms, setAmsSymptoms] = useState<AmsSymptom[]>([]);
   const [verifyChallengeIn, setVerifyChallengeIn] = useState("");
@@ -424,13 +451,16 @@ export function SafetyPanel({
   }, [packId]);
 
   useEffect(() => {
-    if (!packWeather || !isPackWeatherFresh(packWeather)) return;
-    queueMicrotask(() => {
-      if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
-      if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
-      if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
-    });
-  }, [packWeather]);
+    const tick = () => setWeatherNow(Date.now());
+    tick();
+    const timer = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const packDecisionWeather = useMemo(
+    () => (weatherNow == null ? null : decisionGradePackWeather(packWeather, weatherNow)),
+    [packWeather, weatherNow],
+  );
 
   useEffect(() => {
     const tick = () => {
@@ -543,9 +573,32 @@ export function SafetyPanel({
     visibilityPoor: isDark,
     hasBackstop: backtrackEnabled,
   });
+  const displayedWeatherFields: WeatherFields = {
+    tempC: displayedWeatherField(weatherFields.tempC, packDecisionWeather?.tempC),
+    windKph: displayedWeatherField(weatherFields.windKph, packDecisionWeather?.windKph),
+    rhPct: displayedWeatherField(weatherFields.rhPct, packDecisionWeather?.rhPct),
+  };
+  const observedTempC = enteredWeatherNumber(displayedWeatherFields.tempC, packDecisionWeather != null);
+  const observedWindKph = enteredWeatherNumber(displayedWeatherFields.windKph, packDecisionWeather != null);
+  const observedRhPct = enteredWeatherNumber(displayedWeatherFields.rhPct, packDecisionWeather != null);
+  const guardianProgress = guardianProgressPercent(traveledMeters, remainingMeters);
+  const guardianEta = estimateGuardianEta({
+    nowMs: recordedAt ?? Number.NaN,
+    startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
+    traveledMeters,
+    remainingMeters,
+  });
+  const thermalWarning =
+    observedTempC != null && observedWindKph != null
+      ? windChillWarning(observedTempC, observedWindKph)
+      : null;
+  const heatIndexWarning =
+    observedTempC != null && observedRhPct != null
+      ? heatWarning(observedTempC, observedRhPct)
+      : null;
   const harvestNote = survivalHarvestAssessment({
     daysLost: 1,
-    tempC: packWeather?.tempC,
+    tempC: observedTempC,
     hasFire: false,
   });
   const sereSectionsList = useMemo(() => sereSections(), []);
@@ -626,8 +679,18 @@ export function SafetyPanel({
 
   async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
     if (lat == null || lng == null) return;
-    await dropWaypoint(packId, kind, lat, lng, note);
-    onWaypointsChange(await listWaypoints(packId));
+    setAdvancedWaypointStatus("Saving waypoint on this phone…");
+    try {
+      const point = await dropWaypoint(packId, kind, lat, lng, note, {
+        accuracyM,
+        source: positionSource ?? (stale ? "lastKnown" : "gps"),
+        recordedAt,
+      });
+      onWaypointsChange([point, ...waypoints.filter((item) => item.id !== point.id)]);
+      setAdvancedWaypointStatus(`${kind.toUpperCase()} waypoint saved and checked on this phone.`);
+    } catch (error) {
+      setAdvancedWaypointStatus(error instanceof Error ? error.message : "The waypoint was not saved.");
+    }
   }
 
   async function handleCheckin() {
@@ -662,7 +725,7 @@ export function SafetyPanel({
             Safety &amp; SOS
           </SheetTitle>
           <SheetDescription>
-            Land-nav and rescue: resection, GPS-denied DR, SITREP, MARCH, USNG, ICE.
+            Save a place, backtrack, check in, or get emergency information.
           </SheetDescription>
         </SheetHeader>
 
@@ -685,10 +748,21 @@ export function SafetyPanel({
             <MessageSquare className="mr-2 size-4" />
             SMS ICE
           </Button>
-          <Button className="min-h-11" variant="destructive" onClick={onBeacon}>
+          <Button
+            className="min-h-11"
+            variant="destructive"
+            onClick={onBeacon}
+            aria-describedby="sound-flash-locator-warning"
+          >
             <Siren className="mr-2 size-4" />
-            Beacon
+            Sound &amp; flash locator
           </Button>
+          <p
+            id="sound-flash-locator-warning"
+            className="col-span-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-center text-xs font-bold text-destructive"
+          >
+            Does not contact 911, SAR, or transmit your location.
+          </p>
         </section>
 
         <div className="mt-4 space-y-4 px-4 pb-6">
@@ -816,6 +890,19 @@ export function SafetyPanel({
             )}
           </div>
 
+          <FieldCapture
+            packId={packId}
+            trailName={trailName}
+            lat={lat}
+            lng={lng}
+            accuracyM={accuracyM}
+            stale={stale}
+            recordedAt={recordedAt}
+            positionSource={positionSource}
+            waypoints={waypoints}
+            onWaypointsChange={onWaypointsChange}
+          />
+
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant={backtrackEnabled ? "default" : "outline"}
@@ -824,64 +911,6 @@ export function SafetyPanel({
             >
               <Undo2 className="mr-2 size-4" />
               {backtrackEnabled ? "Exit backtrack" : "Backtrack"}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("water")}
-            >
-              <Droplets className="mr-2 size-4" />
-              Mark water
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("junction")}
-            >
-              <Flag className="mr-2 size-4" />
-              Mark junction
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("lkp")}
-            >
-              Mark LKP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("rp")}
-            >
-              Mark RP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("ap")}
-            >
-              Mark AP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("cf")}
-            >
-              Mark CF
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("hr")}
-            >
-              Mark handrail
-            </Button>
-            <Button
-              variant={gpsDenied ? "default" : "outline"}
-              disabled={!gpsDenied && !gpsTrusted}
-              onClick={() => onToggleGpsDenied?.()}
-            >
-              {gpsDenied ? "Exit GPS denied" : "GPS denied"}
             </Button>
             <Button
               variant="outline"
@@ -920,21 +949,53 @@ export function SafetyPanel({
               <CheckCircle2 className="mr-2 size-4" />
               I&apos;m OK
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                onCommsAttempt?.();
-                setOpsNote("Comms attempt logged. Try SMS / share / 911 on the next ridge.");
-              }}
-            >
-              Log comms try
-            </Button>
-            <Button variant="outline" onClick={() => setBeads((n) => n + 1)}>
-              Pace bead +100 m
-            </Button>
-            <Button variant="ghost" onClick={() => setBeads(0)}>
-              Reset beads
-            </Button>
+          </div>
+
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Advanced navigation and SAR tools
+            </summary>
+            <p className="mt-2 text-xs text-muted-foreground">
+              These coded markers and dead-reckoning tools are for people trained to use them.
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("lkp")}>
+                Last known point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("rp")}>
+                Rally point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("ap")}>
+                Approach point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("cf")}>
+                Catch feature
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("hr")}>
+                Handrail
+              </Button>
+              <Button
+                variant={gpsDenied ? "default" : "outline"}
+                disabled={!gpsDenied && !gpsTrusted}
+                onClick={() => onToggleGpsDenied?.()}
+              >
+                {gpsDenied ? "Exit GPS-denied mode" : "GPS-denied mode"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  onCommsAttempt?.();
+                  setOpsNote("Comms attempt logged. Try SMS / share / 911 on the next ridge.");
+                }}
+              >
+                Log comms try
+              </Button>
+              <Button variant="outline" onClick={() => setBeads((n) => n + 1)}>
+                Pace bead +100 m
+              </Button>
+              <Button variant="ghost" onClick={() => setBeads(0)}>
+                Reset beads
+              </Button>
             <Button
               variant="outline"
               onClick={async () => {
@@ -998,10 +1059,17 @@ export function SafetyPanel({
             >
               Paper backup
             </Button>
-          </div>
+            </div>
+            {advancedWaypointStatus && (
+              <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+                {advancedWaypointStatus}
+              </p>
+            )}
+          </details>
           <GuardianShare
             trailName={trailName}
             profile={profile}
+            shareKey={packId}
             returnAt={
               returnResolution?.instant
                 ? returnResolution.instant.toISOString()
@@ -1016,6 +1084,10 @@ export function SafetyPanel({
             offTrailM={offTrailM}
             positionSource={positionSource}
             lastUpdateAt={recordedAt}
+            batteryPct={batteryPct}
+            progressPct={guardianProgress}
+            etaAt={guardianEta}
+            canPublishStatus={gpsTrusted && positionSource === "gps" && guardianProgress != null}
           />
           <p className="text-xs text-muted-foreground">
             Pace beads: {beadsInfo.label}
@@ -1061,24 +1133,12 @@ export function SafetyPanel({
             )}
           </div>
 
-          <div className="rounded-lg border p-3 space-y-2">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Field note</p>
-            <Input
-              value={noteText}
-              placeholder="Landmark, hazard, or rally point note"
-              onChange={(e) => setNoteText(e.target.value)}
-            />
-            <Button
-              variant="outline"
-              disabled={lat == null || !noteText.trim()}
-              onClick={async () => {
-                await markWaypoint("note", noteText.trim());
-                setNoteText("");
-              }}
-            >
-              Drop note waypoint
-            </Button>
-          </div>
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">Advanced tools and field guides</summary>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Specialist land navigation, SAR reports, medical references, and survival calculations.
+            </p>
+            <div className="mt-3 space-y-4">
 
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1725,23 +1785,51 @@ export function SafetyPanel({
             >
               Copy route card
             </Button>
-            {packWeather && (
+            {packWeather && weatherNow != null && (
               <p className="text-xs text-muted-foreground col-span-full">
-                {formatPackWeatherNote(packWeather) ??
-                  (isPackWeatherFresh(packWeather)
-                    ? `Using pack-time snapshot (${packWeather.source}${packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.`
-                    : "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions.")}
+                {formatPackWeatherNote(packWeather, weatherNow)}
               </p>
             )}
             <div className="grid grid-cols-3 gap-2">
-              <Input value={tempC} placeholder="°C" onChange={(e) => setTempC(e.target.value)} />
-              <Input value={windKph} placeholder="wind km/h" onChange={(e) => setWindKph(e.target.value)} />
-              <Input value={rh} placeholder="RH %" onChange={(e) => setRh(e.target.value)} />
+              {([
+                ["tempC", "Temperature °C", "°C"],
+                ["windKph", "Wind km/h", "wind km/h"],
+                ["rhPct", "Relative humidity %", "RH %"],
+              ] as const).map(([key, label, placeholder]) => (
+                <div key={key} className="space-y-1">
+                  <Label htmlFor={`field-weather-${key}`} className="sr-only">{label}</Label>
+                  <Input
+                    id={`field-weather-${key}`}
+                    inputMode="decimal"
+                    value={displayedWeatherFields[key].value}
+                    placeholder={placeholder}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setWeatherFields((current) => ({
+                        ...current,
+                        [key]: {
+                          value,
+                          // Clearing a pack value is an explicit choice too. Keep
+                          // it blank instead of silently restoring the snapshot
+                          // on the next one-minute freshness tick.
+                          source: "manual",
+                        },
+                      }));
+                    }}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {displayedWeatherFields[key].source === "manual"
+                      ? displayedWeatherFields[key].value.trim() ? "your observation" : "left blank by you"
+                      : displayedWeatherFields[key].source === "pack" && packDecisionWeather
+                        ? "fresh pack snapshot"
+                        : "unknown"}
+                  </p>
+                </div>
+              ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {windChillWarning(Number(tempC), Number(windKph)) ??
-                heatWarning(Number(tempC), Number(rh)) ??
-                "Enter temp / wind / RH for wind-chill or heat index."}
+              {thermalWarning ?? heatIndexWarning ??
+                "Weather unknown or outside calculator ranges. Enter observations you personally confirm; blank fields never become zero."}
             </p>
             <div className="flex gap-2">
               <Input value={flashSec} placeholder="flash-to-bang s" onChange={(e) => setFlashSec(e.target.value)} />
@@ -1814,8 +1902,7 @@ export function SafetyPanel({
                 onClick={async () => {
                   const ok = await copyEmergencyInfo(
                     fieldMetar({
-                      sky: "SCT",
-                      windKph: Number(windKph) || undefined,
+                      windKph: observedWindKph,
                       lat,
                       lng,
                     }),
@@ -2217,6 +2304,10 @@ export function SafetyPanel({
             </Button>
           </div>
 
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
+            </div>
+          </details>
+
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Offline self-check
@@ -2357,8 +2448,6 @@ export function SafetyPanel({
               onChange={(e) => void persistProfile({ ...profile, medical: e.target.value })}
             />
           </div>
-
-          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
 
           <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Tell 911 / SAR</p>

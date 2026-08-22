@@ -1,9 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { relationToLineString, trailGeometryFromElements, type OverpassElement } from "./overpass";
+import { buildTrailSearchQuery, relationToLineString, trailGeometryFromElements, type OverpassElement } from "./overpass";
 
 function way(id: number, coordinates: Array<[number, number]>): OverpassElement {
   return { type: "way", id, geometry: coordinates.map(([lon, lat]) => ({ lon, lat })) };
 }
+
+describe("buildTrailSearchQuery", () => {
+  it("bounds text-only fallback searches to every supported U.S. region", () => {
+    const query = buildTrailSearchQuery("Pacific Crest");
+    const relationClauses = query.split("\n").filter((line) => line.trim().startsWith("relation["));
+
+    expect(relationClauses).toHaveLength(14);
+    expect(relationClauses.every((line) => /\(-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?,-?\d+(?:\.\d+)?\);$/.test(line.trim()))).toBe(true);
+    expect(query).toContain("(24,-125,50,-66)");
+    expect(query).toContain("(-15,-171.5,-10,-168)");
+  });
+
+  it("uses only the caller's local bbox when one is supplied", () => {
+    const query = buildTrailSearchQuery("Ridge", [-120, 37, -119, 38]);
+    const relationClauses = query.split("\n").filter((line) => line.trim().startsWith("relation["));
+
+    expect(relationClauses).toHaveLength(2);
+    expect(query).toContain("(37,-120,38,-119)");
+    expect(query).not.toContain("(24,-125,50,-66)");
+  });
+});
 
 describe("relationToLineString", () => {
   it("joins two ways head-to-tail", () => {

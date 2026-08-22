@@ -8,19 +8,25 @@ The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). 
 
 ## What actually works
 
-- **Explore** — OpenStreetMap hiking routes, elevation, difficulty tags
+- **Explore** — Search a U.S. trail, park, town, or area; use Near Me; then inspect OpenStreetMap hiking routes, elevation, and difficulty tags
 - **Plan** — Dates, notes, GPX import, camping stops, and named waypoints
 - **GPX interoperability** — Validated route and activity geometry can be exported as GPX; new offline packs do not retain a duplicate GPX payload
-- **Prepare offline** — Saves a route pack to IndexedDB `hike-nav-packs`
-- **Navigate** — Self-contained canvas Safety Map. Works with no network and no map tiles once a pack is on the device. Off-trail: warn at **35 m**, critical at **80 m** (adjusted for GPS accuracy)
+- **Prepare offline** — Saves a route pack to IndexedDB `hike-nav-packs` and separately verifies the route launch assets controlled by the service worker
+- **Navigate** — Self-contained canvas Safety Map. A verified pack works with no network and no map tiles. Off-trail: warn at **35 m**, critical at **80 m** (adjusted for GPS accuracy)
+- **Breadcrumbs** — Navigation tracks append durably without an 8,000-point truncation, survive a restart, and can be finished, deleted, or exported explicitly
+- **Field capture** — **Mark this place** stores a source-labeled waypoint with exact readback. Optional photos are decoded and re-encoded locally as bounded JPEGs so source EXIF/GPS metadata is not retained; places can be edited, deleted, undone, and exported as GeoJSON
 - **SOS / ICE** — One `navFix` (live GPS, last-known, or pace/heading dead reckon) for SMS, dossier, and “walk this bearing”
 - **Activities** — Start/stop/pause work offline. Pause stops GPS. Points queue in IndexedDB and replay when you are back online
-- **Camping** — NPS / RIDB / state parks / OSM. Search does **not** auto-sync the world on an empty result; pass `?sync=true` to refresh
+- **Camping** — NPS / RIDB / state parks / OSM with explicit access and permit evidence. Missing evidence stays **unknown**; use **Refresh official data** for a bounded area
 - **Weather snapshot** — Pack-time conditions are cached with explicit freshness semantics; cached weather is never presented as live weather
-- **Route forecast briefing** — Prepare stores an along-route Open-Meteo snapshot (heat/cold/wind/precip/thunderstorm thresholds plus sunrise/sunset). It expires after 6 hours and is never shown as current weather. Smoke, AQI, and land-manager alerts are not included
+- **Route forecast briefing** — Prepare stores an along-route Open-Meteo snapshot (heat/cold/wind/precip/thunderstorm thresholds plus sunrise/sunset). It expires after 6 hours and is never shown as current weather. Smoke and AQI are not included
+- **Official alert evidence** — Prepare point-samples active NWS alerts along U.S. routes and, only when an exact NPS unit code was verified, stores NPS notices. Source status, retrieval time, partial failures, expiry, and staleness remain visible; this is a snapshot, not a complete all-hazards service
 - **Decision-support primitives** — deterministic daylight/ETA margin, ordered decision points/bailouts, and an overdue Trip Guardian state that never equates a missing update with proof of distress
+- **Guardian status link** — An opt-in, revocable, 12–72 hour link shares only route name, progress/ETA, battery, deviation, and the server-acknowledged update time. It requires Postgres and never exposes raw GPS, ICE, or medical fields
 - **User-supplied bailout GPX** — a mapped track is stored on the pack only if it already meets the prepared route (80 m). Opening the plan page keeps that track; Klandagi will not invent a connector
 - **Research** — Optional AI brief. Reservation and source links are **https only**
+
+Commercial-product and open-source comparisons are recorded in [`docs/market-and-ml-review.md`](docs/market-and-ml-review.md). The optional on-device ML decision and its release gates are in [`docs/ml-adoption-gate.md`](docs/ml-adoption-gate.md).
 
 ## Safety architecture
 
@@ -54,8 +60,10 @@ cp .env.example .env.local
 | `LOCAL_STORE_PATH` | No | Override path for the file store (default `data/store.json`) |
 | `ALLOW_LOCAL_STORE_IN_PRODUCTION` | No | Opt into the JSON file fallback on a production `npm start` (CI / single-node only). Do not set this on Vercel. |
 | `SESSION_SECRET` | **Yes in production** | Signs the anonymous device-owner cookie that scopes plans, activities and GPS tracks. Generate with `openssl rand -base64 32`. Without it the server refuses user data rather than serving location history unscoped. (`OWNER_TOKEN_SECRET` is accepted as a legacy alias.) |
+| `NEXT_PUBLIC_APP_URL` | Recommended | Canonical public origin used to create absolute social/preview metadata URLs. Defaults to `http://localhost:3000`. |
 | `NPS_API_KEY` | For NPS camping/research | developer.nps.gov |
 | `RIDB_API_KEY` | For federal camping | ridb.recreation.gov/profile |
+| `GEOCODER_BASE_URL` | Optional | Replaceable Nominatim-compatible endpoint. Unset uses the public service for rate-limited, submit-only U.S. place searches; use an operated or commercial endpoint for sustained production volume. |
 | `OPENAI_API_KEY` | For AI research | Optional |
 | `TAVILY_API_KEY` | For web research | Optional |
 | `NEXT_PUBLIC_MAPTILER_KEY` | Optional | MapTiler outdoor tiles (defaults to OpenFreeMap) |
@@ -70,6 +78,8 @@ psql $DATABASE_URL -f drizzle/0001_campground_external_unique.sql
 psql $DATABASE_URL -f drizzle/0001_trails_osm_type_unique.sql
 psql $DATABASE_URL -f drizzle/0002_owner_scoping.sql
 psql $DATABASE_URL -f drizzle/0003_activity_point_idempotency.sql
+psql $DATABASE_URL -f drizzle/0004_campground_evidence.sql
+psql $DATABASE_URL -f drizzle/0005_guardian_shares.sql
 ```
 
 `campgrounds.external_id` is unique. Upserts use that key.
@@ -99,6 +109,8 @@ Plans and activities are scoped to an owner. Every API route resolves the caller
 
 This is currently **device identity, not a login**. Clearing cookies or switching browsers produces a new owner. Downloaded route packs remain local and continue working. Optional accounts and multi-device sync are a roadmap item; they must never become prerequisites for prepared offline navigation.
 
+Guardian controls use the same anonymous browser identity. Clearing that identity can strand the owner-side revoke control, so every public link also has a hard server expiry of at most 72 hours. A Guardian link reports only the last update the server actually acknowledged; no update is not evidence of distress.
+
 Set `SESSION_SECRET` before deploying and treat rotation as a migration event: rotating it invalidates existing owner cookies and can orphan access to server-stored rows unless a re-claim path is provided.
 
 ## Offline navigation (life-safety)
@@ -106,10 +118,10 @@ Set `SESSION_SECRET` before deploying and treat rotation as a migration event: r
 Before leaving coverage:
 
 1. Open the trail or plan on Wi-Fi.
-2. Tap **Prepare offline** to write the route pack.
+2. Tap **Prepare offline** to write the route pack and wait for **Offline launch files verified**. Merely saving data is not the same as verifying launch assets.
 3. Install/test the PWA from a production build (`build && start`), not `npm run dev`.
-4. Verify offline readiness at the trailhead.
-5. Open **Navigate**. The route remains visible without tiles or network.
+4. In airplane mode, fully close and reopen the installed PWA, open **Saved**, and launch the pack once before leaving.
+5. Open **Go**. The verified route remains visible without tiles or network.
 6. Keep redundant power, lighting, map/compass skills, and official guidance appropriate to the trip.
 
 If Navigate opens with no usable pack and no network, it fails clearly. A stale GPS fix is display-only. SOS and the map use the same position source. Off-trail warnings begin at 35 m and escalate at 80 m after accounting for GPS accuracy.
@@ -132,8 +144,10 @@ src/
 ## Data sources
 
 - Trails: OpenStreetMap via Overpass (`route=hiking`)
+- Place search: OpenStreetMap Nominatim, submit-only and U.S./territory bounded; © OpenStreetMap contributors
 - Elevation: Open-Elevation
 - Camping: NPS, Recreation.gov RIDB, CA/CO/WA open data, OSM camp sites
+- Official route alert snapshots: National Weather Service active alerts; NPS notices only after exact park-code verification
 - Research: NPS + Tavily + OpenAI when keys are set
 
 ## License

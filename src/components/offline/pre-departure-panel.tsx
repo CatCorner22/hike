@@ -13,9 +13,11 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { BailoutRoutePanel } from "@/components/offline/bailout-route-panel";
 import { HazardBriefCard } from "@/components/offline/hazard-brief-card";
+import { OfficialAlertsCard } from "@/components/offline/official-alerts-card";
 import { formatDistance, lineLengthMeters } from "@/lib/geo";
 import { CORRIDOR_DECISION_DISCLAIMER, deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { selectHazardSamplePoints, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
+import type { RouteOfficialAlertSnapshot } from "@/lib/offline/official-alerts";
 import { getRoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, corridorCoverageLabel, corridorSizeLabel } from "@/lib/offline/terrain-corridor";
 import { assessDaylightMargin } from "@/lib/safety/decision-support";
@@ -58,6 +60,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
   const [returnAt, setReturnAt] = useState<string | null>(null);
   const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
   const [hazardBrief, setHazardBrief] = useState<RouteHazardBrief | null>(null);
+  const [officialAlerts, setOfficialAlerts] = useState<RouteOfficialAlertSnapshot | null>(null);
   const [storedBailouts, setStoredBailouts] = useState<PreparedBailoutRoute[]>([]);
 
   useEffect(() => {
@@ -77,6 +80,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         features: pack?.corridorFeatures,
       }));
       setHazardBrief(pack?.hazardBrief ?? null);
+      setOfficialAlerts(pack?.officialAlerts ?? null);
       setStoredBailouts(pack?.bailoutRoutes ?? []);
     });
     return () => {
@@ -144,6 +148,13 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
           <>
             <Separator />
             <HazardBriefCard brief={hazardBrief} />
+          </>
+        )}
+
+        {officialAlerts && (
+          <>
+            <Separator />
+            <OfficialAlertsCard snapshot={officialAlerts} />
           </>
         )}
 

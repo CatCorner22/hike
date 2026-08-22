@@ -14,12 +14,18 @@ import {
   describeHazardBrief,
   fetchRouteHazardBrief,
   packWeatherFromHazardBrief,
+  selectHazardSamplePoints,
   validHazardBrief,
 } from "@/lib/offline/hazard-brief";
+import {
+  describeOfficialAlertSnapshot,
+  validOfficialAlertSnapshot,
+  type RouteOfficialAlertSnapshot,
+} from "@/lib/offline/official-alerts";
 import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
 import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
-import { warmNavigateShell } from "@/lib/offline/navigate-shell";
+import { getNavigateOfflineStatus, warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
   OfflineReadiness,
@@ -48,6 +54,35 @@ async function requestCorridorFeatures(
   }
 }
 
+async function requestOfficialAlerts(
+  routeId: string,
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+  parkCode?: string | null,
+): Promise<RouteOfficialAlertSnapshot | null> {
+  const points = selectHazardSamplePoints(geometry).map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+    distanceMeters: point.distanceMeters,
+  }));
+  if (!points.length) return null;
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => fetch("/api/official-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, parkCode: parkCode ?? null, points }),
+        signal,
+      }),
+      12_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { snapshot?: unknown };
+    return validOfficialAlertSnapshot(data.snapshot, routeId) ? data.snapshot : null;
+  } catch {
+    return null;
+  }
+}
+
 interface PrepareOfflineProps {
   packId: string;
   aliases?: string[];
@@ -55,6 +90,7 @@ interface PrepareOfflineProps {
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString | null;
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
+  parkCode?: string | null;
   className?: string;
   compact?: boolean;
 }
@@ -66,23 +102,27 @@ export function PrepareOffline({
   geometry,
   bbox,
   elevationProfile,
+  parkCode,
   className,
   compact = false,
 }: PrepareOfflineProps) {
-  const [ready, setReady] = useState(false);
+  const [tripReady, setTripReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refreshReady = useCallback(async () => {
     try {
-      const exists = await hasRoutePack(packId);
-      setReady(exists);
-      return exists;
+      const [exists, navigation] = await Promise.all([
+        hasRoutePack(packId),
+        getNavigateOfflineStatus(packId),
+      ]);
+      setTripReady(exists && navigation.ready);
+      return { packReady: exists, tripReady: exists && navigation.ready };
     } catch {
       // An unreadable IndexedDB is not a saved route. Saying "Update" here
       // could send a hiker away from signal believing a missing map is usable.
-      setReady(false);
-      return false;
+      setTripReady(false);
+      return { packReady: false, tripReady: false };
     }
   }, [packId]);
 
@@ -92,10 +132,17 @@ export function PrepareOffline({
     const refresh = async () => {
       const currentRefresh = ++refreshNumber;
       try {
-        const exists = await hasRoutePack(packId);
-        if (!cancelled && currentRefresh === refreshNumber) setReady(exists);
+        const [exists, navigation] = await Promise.all([
+          hasRoutePack(packId),
+          getNavigateOfflineStatus(packId),
+        ]);
+        if (!cancelled && currentRefresh === refreshNumber) {
+          setTripReady(exists && navigation.ready);
+        }
       } catch {
-        if (!cancelled && currentRefresh === refreshNumber) setReady(false);
+        if (!cancelled && currentRefresh === refreshNumber) {
+          setTripReady(false);
+        }
       }
     };
     const refreshWhenVisible = () => {
@@ -133,9 +180,10 @@ export function PrepareOffline({
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
       const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
-      const [corridorFeatures, hazardBrief] = await Promise.all([
+      const [corridorFeatures, hazardBrief, officialAlerts] = await Promise.all([
         requestCorridorFeatures(packId, corridor.bboxes),
         fetchRouteHazardBrief({ routeId: packId, geometry }),
+        requestOfficialAlerts(packId, geometry, parkCode),
       ]);
       const weather = hazardBrief
         ? packWeatherFromHazardBrief(hazardBrief)
@@ -160,18 +208,25 @@ export function PrepareOffline({
             ? existing.hazardBrief
             : undefined
         ),
+        officialAlerts: officialAlerts ?? (
+          existing?.officialAlerts && validOfficialAlertSnapshot(existing.officialAlerts, packId)
+            ? existing.officialAlerts
+            : undefined
+        ),
         bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
           ? existing.bailoutRoutes
           : undefined,
       });
       const saved = await persistRoutePack(pack);
-      if (!await refreshReady()) {
+      const savedPackReady = await hasRoutePack(packId);
+      if (!savedPackReady) {
         throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
       }
       const [persistent, shell] = await Promise.all([
         persistentStorageRequest,
         warmNavigateShell(packId),
       ]);
+      await refreshReady();
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       const warnings = [
         !shell.ok
@@ -193,13 +248,16 @@ export function PrepareOffline({
       const hazardNote = saved.hazardBrief
         ? describeHazardBrief(saved.hazardBrief)
         : "Route forecast snapshot was not stored (Open-Meteo unavailable).";
+      const officialAlertNote = saved.officialAlerts
+        ? describeOfficialAlertSnapshot(saved.officialAlerts)
+        : "Official NWS/NPS alerts were not stored; this is not an all-clear.";
       setMessage(
-        warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${corridorNote}. ${featureNote} ${hazardNote} ${weatherNote}`,
+        shell.ok
+          ? `Route saved and offline launch files verified on this device. Test the route once in airplane mode before leaving signal. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${officialAlertNote} ${weatherNote}`
+          : `Route saved as basic data, but this trip is not verified for offline launch. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${officialAlertNote} ${weatherNote}`,
       );
     } catch (error) {
-      setReady(false);
+      await refreshReady();
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       setMessage(
         formatOfflineRouteStorageError(error).message,
@@ -212,23 +270,23 @@ export function PrepareOffline({
   return (
     <div className={className}>
       <Button
-        variant={ready ? "secondary" : "default"}
+        variant={tripReady ? "secondary" : "default"}
         size={compact ? "sm" : "default"}
         onClick={prepare}
         disabled={saving || !geometry}
       >
         {saving ? (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        ) : ready ? (
+        ) : tripReady ? (
           <CheckCircle2 className="mr-2 h-4 w-4" />
         ) : (
           <Download className="mr-2 h-4 w-4" />
         )}
         {compact
-          ? ready
+          ? tripReady
             ? "Saved"
             : "Save"
-          : ready
+          : tripReady
             ? "Update offline pack"
             : "Prepare offline"}
       </Button>

@@ -5,17 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   getIceProfile,
   getOverdueAlarm,
   overdueStatus,
   resolveLocalDateTime,
-  saveIceProfile,
-  setOverdueAlarm,
   type IceProfile,
 } from "@/lib/safety/profile";
-import { CHECKIN_INTERVALS, getCheckinSettings, saveCheckinSettings } from "@/lib/safety/checkin";
+import { CHECKIN_INTERVALS, getCheckinSettings } from "@/lib/safety/checkin";
 import { hikeReadiness } from "@/lib/safety/readiness";
+import { persistAndVerifyReadiness } from "@/lib/safety/readiness-persistence";
 
 type ReturnOccurrence = "earlier" | "later" | null;
 
@@ -57,38 +57,44 @@ export function ReadinessGate({
   const [missing, setMissing] = useState<string[]>([]);
   const [overdueNote, setOverdueNote] = useState<string | null>(null);
   const [returnOccurrence, setReturnOccurrence] = useState<ReturnOccurrence>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const returnResolution = resolveGateReturnTime(returnAt, returnOccurrence);
 
   useEffect(() => {
     void (async () => {
-      const [p, alarm, checkin] = await Promise.all([
-        getIceProfile(),
-        getOverdueAlarm(),
-        getCheckinSettings(),
-      ]);
-      setProfile(p);
-      setCheckinOn(checkin.enabled);
-      setCheckinMin(checkin.intervalMin);
-      if (alarm?.returnAt) {
-        const d = new Date(alarm.returnAt);
-        setReturnAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
-        const status = overdueStatus(alarm.returnAt);
-        setOverdueNote(status.overdue ? status.label : null);
-      } else {
-        setOverdueNote(null);
+      try {
+        const [p, alarm, checkin] = await Promise.all([
+          getIceProfile(),
+          getOverdueAlarm(),
+          getCheckinSettings(),
+        ]);
+        setProfile(p);
+        setCheckinOn(checkin.enabled);
+        setCheckinMin(checkin.intervalMin);
+        if (alarm?.returnAt) {
+          const d = new Date(alarm.returnAt);
+          setReturnAt(new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16));
+          const status = overdueStatus(alarm.returnAt);
+          setOverdueNote(status.overdue ? status.label : null);
+        } else {
+          setOverdueNote(null);
+        }
+        const result = hikeReadiness({
+          packReady,
+          profile: p,
+          returnAt: alarm?.returnAt ?? null,
+        });
+        setMissing(result.missing);
+        if (result.ok) onReady();
+      } catch {
+        setSaveError("Saved readiness data could not be opened. Retry saving, or use the explicit skip button to open the map without claiming these details are saved.");
       }
-      const result = hikeReadiness({
-        packReady,
-        profile: p,
-        returnAt: alarm?.returnAt ?? null,
-      });
-      setMissing(result.missing);
-      if (result.ok) onReady();
     })();
   }, [packReady, onReady]);
 
   async function saveAndGo() {
-    await saveIceProfile(profile);
+    setSaveError(null);
     const resolved = returnResolution;
     if (returnAt && resolved?.kind !== "resolved") {
       setMissing([resolved?.message ?? "Planned return time"]);
@@ -96,15 +102,26 @@ export function ReadinessGate({
       // wall time is ambiguous; that would silently remove the only overdue alarm.
       return;
     }
-    await setOverdueAlarm(resolved?.kind === "resolved" ? resolved.value : null);
-    await saveCheckinSettings({ enabled: checkinOn, intervalMin: checkinMin });
     const result = hikeReadiness({
       packReady,
       profile,
       returnAt: resolved?.kind === "resolved" ? resolved.value.instant.toISOString() : null,
     });
     setMissing(result.missing);
-    if (result.ok) onReady();
+    if (!result.ok) return;
+
+    setSaving(true);
+    const stored = await persistAndVerifyReadiness({
+      profile,
+      returnTime: resolved?.kind === "resolved" ? resolved.value : null,
+      checkin: { enabled: checkinOn, intervalMin: checkinMin },
+    });
+    setSaving(false);
+    if (!stored.ok) {
+      setSaveError(stored.message);
+      return;
+    }
+    onReady();
   }
 
   return (
@@ -127,6 +144,12 @@ export function ReadinessGate({
                 <li key={m}>{m}</li>
               ))}
             </ul>
+          )}
+          {saveError && (
+            <Alert variant="destructive">
+              <AlertTitle>Not saved on this device</AlertTitle>
+              <AlertDescription>{saveError}</AlertDescription>
+            </Alert>
           )}
           <div>
             <Label htmlFor="hiker">Your name</Label>
@@ -209,8 +232,8 @@ export function ReadinessGate({
               </select>
             </div>
           )}
-          <Button onClick={() => void saveAndGo()} className="w-full" disabled={!packReady}>
-            Start navigation
+          <Button onClick={() => void saveAndGo()} className="w-full" disabled={!packReady || saving}>
+            {saving ? "Saving and checking…" : saveError ? "Retry saving and start" : "Save and start navigation"}
           </Button>
           {/*
             Only offered once the pack is ready. Without a pack there is
@@ -220,22 +243,14 @@ export function ReadinessGate({
             <Button
               variant="ghost"
               className="w-full"
-              onClick={() => {
-                void (async () => {
-                  // Persist whatever they did manage to enter before leaving.
-                  await saveIceProfile(profile);
-                  const resolved = returnResolution;
-                  if (resolved?.kind === "resolved") await setOverdueAlarm(resolved.value);
-                  await saveCheckinSettings({ enabled: checkinOn, intervalMin: checkinMin });
-                })().finally(onProceedAnyway);
-              }}
+              onClick={onProceedAnyway}
             >
-              Skip for now and show the map
+              Skip saving and show the map
             </Button>
           )}
           <p className="text-xs text-muted-foreground">
-            Skipping leaves the overdue alarm and ICE card incomplete. Navigation will
-            keep showing what is missing.
+            Skip always opens a ready map. Edits on this form will not be saved, and
+            navigation will keep showing any stored ICE or deadline details that are missing.
           </p>
         </CardContent>
       </Card>

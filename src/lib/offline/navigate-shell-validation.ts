@@ -4,6 +4,50 @@ export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
 export const NAVIGATE_ASSETS_CACHE = "hike-navigate-assets";
 export const MIN_NAVIGATE_DOCUMENT_BYTES = 512;
 
+const REWRITTEN_BODY_HEADERS = [
+  "content-encoding",
+  "content-length",
+  "content-md5",
+  "content-range",
+  "digest",
+  "etag",
+  "transfer-encoding",
+] as const;
+
+/**
+ * A fetched response body has already been decoded by the browser.  When that
+ * text is stamped and wrapped in a new Response, representation metadata from
+ * the wire no longer describes its bytes and can make a cached navigation fail
+ * with a content-decoding error.  Preserve policy/cache headers, but discard
+ * payload encodings, lengths, ranges, and validators tied to the old body.
+ */
+export function headersForRewrittenNavigateDocument(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const name of REWRITTEN_BODY_HEADERS) headers.delete(name);
+  return headers;
+}
+
+/** Keep the HTML shell route away from Next RSC/data requests for the same URL. */
+export function isNavigateDocumentRequest(
+  pathname: string,
+  method: string,
+  mode: string,
+): boolean {
+  return method === "GET" && mode === "navigate" && pathname.startsWith("/navigate/");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Proves that a 200 response is the requested route screen, not a generic Next soft-error page. */
+export function containsNavigateRouteMarker(document: string, navId: string): boolean {
+  if (!navId || navId.length > 256) return false;
+  return new RegExp(
+    `data-hike-navigate-shell=["']${escapeRegExp(navId)}["']`,
+  ).test(document);
+}
+
 /** Same predicate the service worker uses before serving a cached navigate document. */
 export function looksLikeNavigateHtml(document: string): boolean {
   return (
@@ -25,8 +69,10 @@ export function isValidNavigateShellDocument(
   html: string,
   contentType: string,
   markerHeader: string | null,
+  expectedNavId?: string,
 ): boolean {
   if (!looksLikeNavigateHtml(html)) return false;
+  if (expectedNavId && !containsNavigateRouteMarker(html, expectedNavId)) return false;
   if (
     contentType &&
     !contentType.toLowerCase().includes("text/html") &&

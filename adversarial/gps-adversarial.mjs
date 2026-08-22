@@ -43,7 +43,10 @@ async function waitForHud(page) {
   await completeReadinessIfShown(page);
   await page.waitForSelector("canvas", { timeout: 30_000 });
 }
-const browser=await chromium.launch();
+const browser=await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try{const context=await browser.newContext({serviceWorkers:'allow',permissions:['geolocation'],geolocation:{latitude:37.7749,longitude:-119.5383,accuracy:5}});const page=await context.newPage();page.on('pageerror',e=>log('pageerror',false,e.message,'HIGH'));await page.goto(BASE,{waitUntil:'domcontentloaded'});const id='plan-gps-adversarial';await putPack(page,id);await page.goto(`${BASE}/navigate/${id}`,{waitUntil:'domcontentloaded',timeout:60000});await waitForHud(page);await sleep(1500);let body=await page.locator('body').innerText();log('gps/live-initial-load',/Offline pack|Saved to device/.test(body)&&!body.includes('This page couldn'),body.slice(0,120).replace(/\s+/g,' '));
 // 500km teleport and 5km accuracy.
 await context.setGeolocation({latitude:42.2,longitude:-114.2,accuracy:5});await sleep(1200);await context.setGeolocation({latitude:42.25,longitude:-114.25,accuracy:5});await sleep(10000);body=await page.locator('body').innerText();const countAfterTeleport=await trackCount(page);log('gps/teleport-anomaly-warning',/GPS jumped hundreds of metres|OFF TRAIL —/.test(body),`trackPoints=${countAfterTeleport}; banner=${body.match(/(GPS jumped hundreds[^\n]+|OFF TRAIL —[^\n]+)/)?.[0]||'none'}`,'HIGH');

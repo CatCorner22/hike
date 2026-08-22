@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { safeSourceUrl, trailResearchBriefSchema } from "./schema";
+import {
+  isCurrentResearchBrief,
+  researchFreshness,
+  safeSourceUrl,
+  trailResearchBriefSchema,
+} from "./schema";
 
 /**
  * Source URLs are model output derived from web-search text, which anyone can influence
@@ -47,5 +52,51 @@ describe("trailResearchBriefSchema", () => {
   it("rejects a source url that is not a url", () => {
     const bad = { ...brief, sources: [{ title: "NPS", url: "not a url" }] };
     expect(trailResearchBriefSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("accepts explicit unknown crowd evidence", () => {
+    expect(trailResearchBriefSchema.safeParse({
+      ...brief,
+      bestSeasons: [],
+      crowdLevel: "unknown",
+      conditions: null,
+    }).success).toBe(true);
+  });
+
+  it("does not treat a legacy cached brief as provenance-aware", () => {
+    expect(isCurrentResearchBrief(brief)).toBe(false);
+    expect(isCurrentResearchBrief({
+      ...brief,
+      schemaVersion: 2,
+      evidence: { bestSeasons: [], crowdLevel: [], conditions: [] },
+      provenance: {
+        mode: "mapped_metadata_only",
+        parkCode: null,
+        parkName: null,
+      },
+    })).toBe(true);
+  });
+});
+
+describe("researchFreshness", () => {
+  const now = Date.parse("2026-08-22T12:00:00.000Z");
+
+  it("reports the age as a check, not as current conditions", () => {
+    expect(researchFreshness("2026-08-22T09:00:00.000Z", now)).toEqual({
+      label: "Checked 3h ago",
+      stale: false,
+    });
+    expect(researchFreshness("2026-08-20T12:00:00.000Z", now)).toEqual({
+      label: "Checked 2d ago",
+      stale: true,
+    });
+  });
+
+  it("does not trust invalid or future timestamps", () => {
+    expect(researchFreshness("not-a-date", now).stale).toBe(true);
+    expect(researchFreshness("2026-08-23T12:00:00.000Z", now)).toEqual({
+      label: "Research check time unavailable",
+      stale: true,
+    });
   });
 });

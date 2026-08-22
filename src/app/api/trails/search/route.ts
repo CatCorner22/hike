@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (bboxParam && !bbox) {
     return NextResponse.json({ error: "Invalid bbox" }, { status: 400 });
   }
-  if (q.length < 2) return NextResponse.json({ trails: [] });
+  if (q.length < 2 && !bbox) return NextResponse.json({ trails: [] });
   if (q.length > 64) return NextResponse.json({ error: "Query is too long" }, { status: 400 });
 
   try {

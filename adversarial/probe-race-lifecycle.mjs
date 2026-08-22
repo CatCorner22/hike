@@ -148,7 +148,10 @@ async function main() {
 
   // Browser lifecycle: an active recording survives server-side but is not
   // restored after a document reload; the newly loaded screen only offers Start.
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  });
   const context = await browser.newContext({
     permissions: ["geolocation"],
     geolocation: { latitude: 37.7749, longitude: -119.5383, accuracy: 5 },

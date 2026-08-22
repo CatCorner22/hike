@@ -7,12 +7,14 @@ import { Navigation } from "lucide-react";
 
 interface NavigateLinkProps {
   href: string;
-  ready: boolean;
+  checking: boolean;
+  packReady: boolean;
+  tripReady: boolean;
   className?: string;
 }
 
-export function NavigateLink({ href, ready, className }: NavigateLinkProps) {
-  if (!ready) {
+export function NavigateLink({ href, checking, packReady, tripReady, className }: NavigateLinkProps) {
+  if (!packReady) {
     return (
       <span
         className={cn(
@@ -20,18 +22,24 @@ export function NavigateLink({ href, ready, className }: NavigateLinkProps) {
           "pointer-events-none opacity-60",
           className,
         )}
-        title="Saving route for offline use…"
+        title={checking ? "Saving route data on this device…" : "Save this route before opening navigation."}
       >
         <Navigation className="mr-2 h-4 w-4 animate-pulse" />
-        Preparing offline…
+        {checking ? "Preparing route…" : "Route not saved"}
       </span>
     );
   }
 
   return (
-    <Link href={href} className={cn(buttonVariants({ variant: "outline" }), className)}>
+    <Link
+      href={href}
+      className={cn(buttonVariants({ variant: "outline" }), className)}
+      title={tripReady
+        ? "Offline launch files passed the on-device check."
+        : "Basic route data is saved, but a first offline launch is not verified."}
+    >
       <Navigation className="mr-2 h-4 w-4" />
-      Navigate
+      {tripReady ? "Navigate" : "Open basic route"}
     </Link>
   );
 }

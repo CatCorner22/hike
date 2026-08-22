@@ -1,16 +1,20 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Download, Upload } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { Download, MapPinned, Trash2, Upload, X } from "lucide-react";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
 import { parseRoutePackBackup, PACK_BACKUP_DISCLAIMER, serializeRoutePackBackup } from "@/lib/offline/pack-backup";
-import { listRoutePacks, routePackStatus, type RoutePack } from "@/lib/offline/route-pack";
+import { deleteRoutePack, listRoutePacks, routePackStatus, type RoutePack } from "@/lib/offline/route-pack";
+import { removeNavigateShell } from "@/lib/offline/navigate-shell";
 import { downloadTextFile, safeFilename } from "@/lib/safety/field";
 
 export function OfflineSavedPacks() {
   const [packs, setPacks] = useState<RoutePack[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -64,6 +68,24 @@ export function OfflineSavedPacks() {
     }
   }
 
+  async function removePack(pack: RoutePack) {
+    setDeletingId(pack.id);
+    try {
+      const deleted = await deleteRoutePack(pack.id);
+      await Promise.all(pack.aliases.map((alias) => removeNavigateShell(alias)));
+      setPacks(await listRoutePacks());
+      setConfirmDeleteId(null);
+      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
+      setMessage(deleted
+        ? `Removed “${pack.name}” and its saved offline launch screen from this device.`
+        : `“${pack.name}” was already absent from this device.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Could not remove this saved route.");
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
   return (
     <div className="space-y-3 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -97,25 +119,70 @@ export function OfflineSavedPacks() {
             const status = routePackStatus(pack);
             const ready = status === "ready";
             return (
-              <li key={pack.id} className="flex items-start justify-between gap-3 rounded-lg bg-muted px-3 py-2 text-sm">
+              <li key={pack.id} className="space-y-3 rounded-lg bg-muted px-3 py-3 text-sm">
                 <div className="min-w-0">
                   <p className="font-medium">{pack.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {ready
-                      ? "Saved and ready to navigate."
+                      ? "Basic route data is saved. Verify offline launch files before leaving signal."
                       : "Saved, but needs an online refresh before relying on it."}
                   </p>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  disabled={!ready}
-                  onClick={() => exportPack(pack)}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  Export
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {ready && (
+                    <Link
+                      href={`/navigate/${encodeURIComponent(pack.id)}`}
+                      className={buttonVariants({ size: "sm" })}
+                    >
+                      <MapPinned className="mr-2 h-4 w-4" />
+                      Open map
+                    </Link>
+                  )}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={!ready}
+                    onClick={() => exportPack(pack)}
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Export
+                  </Button>
+                  {confirmDeleteId === pack.id ? (
+                    <>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        disabled={deletingId === pack.id}
+                        onClick={() => void removePack(pack)}
+                      >
+                        <Trash2 className="mr-2 h-4 w-4" />
+                        {deletingId === pack.id ? "Removing…" : "Confirm remove"}
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={deletingId === pack.id}
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        <X className="mr-2 h-4 w-4" />
+                        Cancel
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setConfirmDeleteId(pack.id)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Remove
+                    </Button>
+                  )}
+                </div>
               </li>
             );
           })}

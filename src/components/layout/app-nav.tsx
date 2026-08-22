@@ -5,9 +5,12 @@ import { usePathname } from "next/navigation";
 import {
   ClipboardList,
   Footprints,
+  HardDriveDownload,
   HelpCircle,
   Map,
   Mountain,
+  Navigation,
+  Search,
   Tent,
 } from "lucide-react";
 import { BrandLogo } from "@/components/brand/brand-logo";
@@ -19,9 +22,16 @@ const navItems = [
   { href: "/plan", label: "Plans", icon: ClipboardList },
   { href: "/activities", label: "Activities", icon: Footprints },
   { href: "/camping", label: "Camping", icon: Tent },
-  // Desktop-only: the mobile bottom bar stays at five core destinations; on a phone the
-  // guide is reached from the home screen and from the navigate error state.
+  // Desktop-only here; the phone layout defines its own five core destinations below.
   { href: "/guide", label: "Guide", icon: HelpCircle, desktopOnly: true },
+];
+
+const mobileNavItems = [
+  { href: "/explore", label: "Find", icon: Search },
+  { href: "/plan", label: "Trips", icon: ClipboardList },
+  { href: "/go", label: "Go", icon: Navigation, primary: true },
+  { href: "/offline", label: "Saved", icon: HardDriveDownload },
+  { href: "/guide", label: "Help", icon: HelpCircle },
 ];
 
 export function AppNav() {
@@ -57,15 +67,16 @@ export function AppNav() {
 
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background md:hidden">
         <div className="flex justify-around py-2">
-          {navItems.filter((item) => !item.desktopOnly).map(({ href, label, icon: Icon }) => (
+          {mobileNavItems.map(({ href, label, icon: Icon, primary }) => (
             <Link
               key={href}
               href={href}
               className={cn(
-                "flex flex-col items-center gap-0.5 px-2 py-1 text-[10px]",
+                "flex min-w-12 flex-col items-center gap-0.5 px-2 py-1 text-[10px]",
+                primary && "-mt-4 rounded-full border bg-primary px-4 py-2 text-primary-foreground shadow-lg",
                 pathname === href || pathname.startsWith(`${href}/`)
-                  ? "text-green-600"
-                  : "text-muted-foreground",
+                  ? primary ? "ring-2 ring-primary/40 ring-offset-2" : "text-green-600"
+                  : primary ? "" : "text-muted-foreground",
               )}
             >
               <Icon className="h-5 w-5" />

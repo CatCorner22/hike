@@ -184,7 +184,8 @@ export default function GuidePage() {
             </li>
             <li>
               <strong className="text-foreground">Need to be found?</strong>{" "}
-              <strong>SOS beacon</strong> strobes the screen and loops a distress tone.
+              <strong>Sound &amp; flash locator</strong> strobes the screen and loops a
+              distress tone. It does not contact 911, SAR, or transmit your location.
               Volume up. Three of anything — whistle blasts, light flashes — is the
               universal distress signal.
             </li>

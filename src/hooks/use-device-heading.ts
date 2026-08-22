@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { headingFromOrientationEvent } from "@/lib/safety/device-heading";
+import {
+  reduceDeviceOrientationHeadingSample,
+  unavailableDeviceHeadingState,
+} from "@/lib/safety/device-heading";
 
 export type DeviceHeadingPermission = "unsupported" | "prompt" | "granted" | "denied";
 
 export interface DeviceHeadingState {
-  heading: number | null;
+  /** Device magnetometer converted to true north; never a raw magnetic reading. */
+  headingTrue: number | null;
   permission: DeviceHeadingPermission;
   live: boolean;
   message: string | null;
@@ -14,6 +18,24 @@ export interface DeviceHeadingState {
 }
 
 type OrientEvent = DeviceOrientationEvent & { webkitCompassHeading?: number };
+
+function usableDeclination(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) && Math.abs(value) <= 90 ? value : null;
+}
+
+export interface UseDeviceHeadingOptions {
+  enabled?: boolean;
+  /** Current magnetic declination, east-positive, from a trusted location fix. */
+  declinationDeg?: number | null;
+}
+
+function currentScreenOrientationDeg(): number | null {
+  if (typeof window === "undefined") return null;
+  const modern = window.screen?.orientation?.angle;
+  if (typeof modern === "number" && Number.isFinite(modern)) return modern;
+  const legacy = (window as Window & { orientation?: unknown }).orientation;
+  return typeof legacy === "number" && Number.isFinite(legacy) ? legacy : null;
+}
 
 function needsIosPermission(): boolean {
   return (
@@ -23,39 +45,68 @@ function needsIosPermission(): boolean {
   );
 }
 
-export function useDeviceHeading(enabled = true): DeviceHeadingState {
-  const [heading, setHeading] = useState<number | null>(null);
+export function useDeviceHeading({
+  enabled = true,
+  declinationDeg = null,
+}: UseDeviceHeadingOptions = {}): DeviceHeadingState {
+  const [reading, setReading] = useState(() => unavailableDeviceHeadingState(null));
   const [permission, setPermission] = useState<DeviceHeadingPermission>("prompt");
-  const [live, setLive] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-  const handlerRef = useRef<(event: Event) => void>(() => {});
+  const handlerRef = useRef<((event: Event) => void) | null>(null);
+  const declinationRef = useRef<number | null>(usableDeclination(declinationDeg));
 
-  const attach = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const onOrient = (event: Event) => {
-      const parsed = headingFromOrientationEvent(event as OrientEvent);
-      if (parsed == null) return;
-      setHeading(parsed);
-      setLive(true);
-      setMessage(null);
-    };
-    handlerRef.current = onOrient;
-    window.addEventListener("deviceorientationabsolute", onOrient, true);
-    window.addEventListener("deviceorientation", onOrient, true);
-  }, []);
+  useEffect(() => {
+    declinationRef.current = usableDeclination(declinationDeg);
+    if (declinationRef.current != null) return;
+    queueMicrotask(() => {
+      setReading((current) =>
+        unavailableDeviceHeadingState(
+          permission === "granted"
+            ? "Phone compass cannot be converted to true north here — using GPS course when moving."
+            : current.message,
+        ),
+      );
+    });
+  }, [declinationDeg, permission]);
 
   const detach = useCallback(() => {
     if (typeof window === "undefined") return;
     const handler = handlerRef.current;
+    if (handler == null) return;
     window.removeEventListener("deviceorientationabsolute", handler, true);
     window.removeEventListener("deviceorientation", handler, true);
+    handlerRef.current = null;
   }, []);
+
+  const attach = useCallback(() => {
+    if (typeof window === "undefined") return;
+    detach();
+    const onOrient = (event: Event) => {
+      const declination = declinationRef.current;
+      if (declination == null) {
+        setReading(
+          unavailableDeviceHeadingState(
+            "Phone compass cannot be converted to true north here — using GPS course when moving.",
+          ),
+        );
+        return;
+      }
+      setReading((current) =>
+        reduceDeviceOrientationHeadingSample(current, event as OrientEvent, {
+          declinationDeg: declination,
+          screenOrientationDeg: currentScreenOrientationDeg(),
+        }),
+      );
+    };
+    handlerRef.current = onOrient;
+    window.addEventListener("deviceorientationabsolute", onOrient, true);
+    window.addEventListener("deviceorientation", onOrient, true);
+  }, [detach]);
 
   const requestPermission = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") return false;
     if (!("DeviceOrientationEvent" in window)) {
       setPermission("unsupported");
-      setMessage("This browser has no compass sensor.");
+      setReading(unavailableDeviceHeadingState("This browser has no compass sensor."));
       return false;
     }
     if (needsIosPermission()) {
@@ -67,40 +118,53 @@ export function useDeviceHeading(enabled = true): DeviceHeadingState {
         ).requestPermission;
         const result = await req();
         if (result !== "granted") {
+          detach();
           setPermission("denied");
-          setMessage("Compass permission denied — using GPS course when moving.");
+          setReading(
+            unavailableDeviceHeadingState(
+              "Compass permission denied — using GPS course when moving.",
+            ),
+          );
           return false;
         }
         setPermission("granted");
         attach();
         return true;
       } catch {
+        detach();
         setPermission("denied");
-        setMessage("Compass permission denied — using GPS course when moving.");
+        setReading(
+          unavailableDeviceHeadingState(
+            "Compass permission denied — using GPS course when moving.",
+          ),
+        );
         return false;
       }
     }
     setPermission("granted");
     attach();
     return true;
-  }, [attach]);
+  }, [attach, detach]);
 
   useEffect(() => {
     if (!enabled) {
       detach();
+      queueMicrotask(() => setReading(unavailableDeviceHeadingState(null)));
       return;
     }
     if (typeof window === "undefined" || !("DeviceOrientationEvent" in window)) {
       queueMicrotask(() => {
         setPermission("unsupported");
-        setMessage("This browser has no compass sensor.");
+        setReading(unavailableDeviceHeadingState("This browser has no compass sensor."));
       });
       return detach;
     }
     if (needsIosPermission()) {
       queueMicrotask(() => {
         setPermission("prompt");
-        setMessage("Tap Enable compass to use the phone magnetometer.");
+        setReading(
+          unavailableDeviceHeadingState("Tap Enable compass to use the phone magnetometer."),
+        );
       });
       return detach;
     }
@@ -109,5 +173,5 @@ export function useDeviceHeading(enabled = true): DeviceHeadingState {
     return detach;
   }, [enabled, attach, detach]);
 
-  return { heading, permission, live, message, requestPermission };
+  return { ...reading, permission, requestPermission };
 }

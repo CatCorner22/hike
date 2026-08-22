@@ -9,7 +9,7 @@ describe("rescue card helpers", () => {
   });
 
   it("surfaces compass/GPS disagreement for HUD warning", () => {
-    const warn = headingDisagreement({ compass: 0, gps: 100 });
+    const warn = headingDisagreement({ compassTrue: 0, gpsCourseTrue: 100 });
     expect(warn.disagrees).toBe(true);
     expect(warn.message).toMatch(/calibrate compass/i);
   });

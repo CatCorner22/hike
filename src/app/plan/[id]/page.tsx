@@ -19,6 +19,7 @@ import { getRoutePack } from "@/lib/offline/route-pack";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { trailPageHref } from "@/lib/ids";
 import { httpsUrl } from "@/lib/urls";
+import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import { Search, Trash2 } from "lucide-react";
 
 const MapView = dynamic(
@@ -49,6 +50,8 @@ interface CampHit {
   latitude: number;
   longitude: number;
   reservationUrl?: string | null;
+  permitStatus?: "required" | "not_required" | "seasonal" | "unknown";
+  accessStatus?: "allowed" | "restricted" | "private" | "unknown";
 }
 
 interface TrailData {
@@ -59,6 +62,7 @@ interface TrailData {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
+  tags?: Record<string, string>;
 }
 
 export default function PlanDetailPage() {
@@ -72,10 +76,11 @@ export default function PlanDetailPage() {
   const [campQuery, setCampQuery] = useState("");
   const [campHits, setCampHits] = useState<CampHit[]>([]);
   const [campSearching, setCampSearching] = useState(false);
+  const [campError, setCampError] = useState<string | null>(null);
   const [wpName, setWpName] = useState("");
   const [wpLat, setWpLat] = useState("");
   const [wpLng, setWpLng] = useState("");
-  const packReady = useOfflinePackReady(plan ? `plan-${planId}` : null);
+  const offlineReadiness = useOfflinePackReady(plan ? `plan-${planId}` : null);
 
   useEffect(() => {
     fetch(`/api/plans/${planId}`)
@@ -170,7 +175,7 @@ export default function PlanDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">Edit plan</h1>
         <div className="flex flex-wrap gap-2">
-          <NavigateLink href={`/navigate/plan-${plan.id}`} ready={packReady} />
+          <NavigateLink href={`/navigate/plan-${plan.id}`} {...offlineReadiness} />
           <Button variant="outline" onClick={importGpx}>Import GPX</Button>
           <PrepareOffline
             packId={`plan-${plan.id}`}
@@ -179,6 +184,7 @@ export default function PlanDetailPage() {
             geometry={geometry}
             bbox={trail?.bbox}
             elevationProfile={trail?.elevationProfile}
+            parkCode={npsParkCodeFromTags(trail?.tags)}
           />
           <Button variant="destructive" onClick={deletePlan}>
             <Trash2 className="mr-2 h-4 w-4" />Delete
@@ -226,7 +232,7 @@ export default function PlanDetailPage() {
 
       <div className="space-y-3 rounded-xl border p-4">
         <h2 className="text-sm font-semibold">Camping stops</h2>
-        <p className="text-xs text-muted-foreground">Search and attach campgrounds to this trip. Reservation links must be https.</p>
+        <p className="text-xs text-muted-foreground">Search and attach camping leads. Adding a stop does not verify access, permits, closures, roads, water, or availability.</p>
         <div className="flex gap-2">
           <Input value={campQuery} onChange={(e) => setCampQuery(e.target.value)} placeholder="Campground or park name" />
           <Button
@@ -234,10 +240,14 @@ export default function PlanDetailPage() {
             disabled={campSearching || !campQuery.trim()}
             onClick={async () => {
               setCampSearching(true);
+              setCampError(null);
               try {
                 const res = await fetch(`/api/camping/search?q=${encodeURIComponent(campQuery.trim())}`);
-                const data = await res.json();
+                const data = await res.json() as { campgrounds?: CampHit[]; error?: string };
+                if (!res.ok) throw new Error(data.error || `Camping search failed (${res.status}).`);
                 setCampHits(data.campgrounds ?? []);
+              } catch (error) {
+                setCampError(error instanceof Error ? error.message : "Camping search failed.");
               } finally {
                 setCampSearching(false);
               }
@@ -246,6 +256,7 @@ export default function PlanDetailPage() {
             <Search className="mr-2 h-4 w-4" />Search
           </Button>
         </div>
+        {campError && <p role="alert" className="text-xs text-destructive">{campError}</p>}
         {(plan.campgroundIds ?? []).length > 0 && (
           <ul className="space-y-1 text-sm">
             {(plan.campgroundIds ?? []).map((id) => (
@@ -263,7 +274,11 @@ export default function PlanDetailPage() {
             <div key={hit.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-sm">
               <div>
                 <p className="font-medium">{hit.name}</p>
-                {reserve && <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">Reserve</a>}
+                <p className="text-xs text-muted-foreground">
+                  Permit: {hit.permitStatus === "required" ? "required" : hit.permitStatus === "seasonal" ? "seasonal / conditional" : hit.permitStatus === "not_required" ? "source reports not required" : "unknown"}
+                  {" · "}Access: {hit.accessStatus === "allowed" ? "reported allowed" : hit.accessStatus === "restricted" ? "restricted" : "unknown"}
+                </p>
+                {reserve && <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">Official details</a>}
               </div>
               <Button
                 variant="outline"

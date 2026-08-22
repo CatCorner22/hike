@@ -1,4 +1,5 @@
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+import { permitRequiredCompatibility } from "@/lib/camping/evidence";
 const RIDB_BASE = "https://ridb.recreation.gov/api/v1";
 
 function getApiKey() {
@@ -99,7 +100,7 @@ export async function searchPermitEntrances(params: {
 export function ridbFacilityToRecord(facility: RidbFacility, state?: string) {
   const lat = facility.FacilityLatitude;
   const lng = facility.FacilityLongitude;
-  if (!lat || !lng) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
 
   const typeDesc = facility.FacilityTypeDescription?.toLowerCase() || "";
   let campingType: "developed_tent" | "rv" | "backcountry" | "walk_in" = "developed_tent";
@@ -121,26 +122,34 @@ export function ridbFacilityToRecord(facility: RidbFacility, state?: string) {
     description: facility.FacilityDescription?.slice(0, 2000) ?? null,
     amenities: { reservable: facility.Reservable },
     reservationUrl: `https://www.recreation.gov/camping/campgrounds/${facility.FacilityID}`,
-    permitRequired: false,
+    permitRequired: permitRequiredCompatibility("unknown"),
+    accessStatus: "unknown" as const,
+    permitStatus: "unknown" as const,
     fees: null,
     metadata: {
       facilityType: facility.FacilityTypeDescription,
       lastUpdated: facility.LastUpdatedDate,
+      evidence: {
+        access: { status: "unknown", inferred: false, sourceUpdatedAt: facility.LastUpdatedDate },
+        permit: { status: "unknown", inferred: false, sourceUpdatedAt: facility.LastUpdatedDate },
+      },
     },
   };
 }
 
-export function ridbPermitToRecord(entrance: RidbPermitEntrance, state?: string) {
+export function ridbPermitToRecord(entrance: RidbPermitEntrance) {
   const lat = entrance.PermitEntranceLatitude;
   const lng = entrance.PermitEntranceLongitude;
-  if (!lat || !lng) return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
 
   return {
     externalId: `ridb-permit-${entrance.PermitEntranceID}`,
     name: entrance.PermitEntranceName,
     latitude: lat,
     longitude: lng,
-    state: state ?? null,
+    // This RIDB payload has no state field. Never stamp the caller's requested
+    // state onto a location the source did not identify that way.
+    state: null as string | null,
     parkCode: null as string | null,
     parkName: entrance.District || entrance.Zone || null,
     source: "ridb" as const,
@@ -149,7 +158,19 @@ export function ridbPermitToRecord(entrance: RidbPermitEntrance, state?: string)
     amenities: { district: entrance.District, zone: entrance.Zone },
     reservationUrl: "https://www.recreation.gov/permits",
     permitRequired: true,
+    accessStatus: "unknown" as const,
+    permitStatus: "required" as const,
     fees: null,
-    metadata: { type: "permit_entrance" },
+    metadata: {
+      type: "permit_entrance",
+      evidence: {
+        access: { status: "unknown", inferred: false },
+        permit: {
+          status: "required",
+          sourceUrl: "https://www.recreation.gov/permits",
+          inferred: false,
+        },
+      },
+    },
   };
 }

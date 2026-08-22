@@ -21,7 +21,10 @@ const planResponse = await fetch(`${BASE}/api/plans`, {
 });
 const plan = await planResponse.json();
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try {
   const context = await browser.newContext();
   await context.addCookies([{ name, value: value.join("="), domain: new URL(BASE).hostname, path: "/", httpOnly: true, secure: false, sameSite: "Lax" }]);
@@ -37,7 +40,7 @@ try {
   const body = await page.locator("body").innerText();
   console.log(
     `PASS weather-stall-keeps-saving — preparing=${/Preparing/.test(body)}; `
-      + `saved=${/Route saved\./.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
+      + `saved=${/Route saved(?:\s|\.|$)/.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
   );
   await context.close();
 } finally {
