@@ -15,6 +15,18 @@ describe("compass display", () => {
     expect(compassReadout(null)).toBeNull();
   });
 
+  it.each([
+    ["Hawaii", 20.8, -156.3],
+    ["northern Alaska", 70, -149],
+  ])("does not invent a zero-declination magnetic bearing in %s", (_place, lat, lng) => {
+    const readout = compassReadout(90, lat, lng)!;
+    expect(readout.trueDeg).toBe(90);
+    expect(readout.magneticDeg).toBeNull();
+    expect(readout.label).toBe("90° true · E");
+    expect(readout.label).not.toMatch(/mag/i);
+    expect(readout.gmNote).toMatch(/declination is unavailable/i);
+  });
+
   it("does not forge report sections in compass card", () => {
     const card = formatCompassCard({
       headingTrue: 180,

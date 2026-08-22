@@ -10,8 +10,8 @@ export default function OfflinePage() {
         </h1>
         <p className="text-sm text-muted-foreground">
           Reconnect and open the plan or trail page, then choose Prepare offline.
-          Saved route packs are listed below and can still be opened from their
-          matching navigation link. Export is a device file only — it is not cloud
+          Saved route packs are listed below and can be opened with Open map.
+          Export is a device file only — it is not cloud
           sync.
         </p>
         <OfflineSavedPacks />

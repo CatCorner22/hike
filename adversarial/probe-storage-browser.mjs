@@ -94,7 +94,6 @@ async function disableShellWarmup(page) {
 async function seedPack(page, navId, mutate = (pack) => pack, extras = []) {
   const pack = mutate(packFixture(navId, GEOMETRY.coordinates));
   await page.evaluate(async ({ source, stores, pack, extras }) => {
-    // eslint-disable-next-line no-eval
     (0, eval)(source);
     const db = await openEnsuringStores("hike-nav-packs", stores);
     const tx = db.transaction(["routePacks", "aliases"], "readwrite");
@@ -333,10 +332,14 @@ async function scenarioSchema(browser) {
 }
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  });
   try {
     cookie = await ownerCookie();
     await scenarioPersistenceRefused(browser);
+    await scenarioAliasWriteQuota(browser);
     if (process.env.RUN_CDP_QUOTA === "1") await scenarioQuota(browser);
     await scenarioLiveEvictionClaim(browser);
     await scenarioCorruption(browser);

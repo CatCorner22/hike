@@ -96,6 +96,43 @@ describe("API input boundaries", () => {
     });
   });
 
+  it("rejects unstructured waypoints instead of storing them", async () => {
+    const createdResponse = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Waypoints", waypoints: { not: "an-array" } }),
+      ),
+    );
+    expect(createdResponse.status).toBe(400);
+
+    const valid = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({
+          name: "Waypoints",
+          waypoints: [{ name: "Spring", lat: 36.1, lng: -84.1 }],
+        }),
+      ),
+    );
+    expect(valid.status).toBe(200);
+    const created = (await valid.json()) as { id: string; updatedAt: string; waypoints: unknown };
+
+    const patched = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${created.id}`,
+        "PATCH",
+        JSON.stringify({
+          updatedAt: created.updatedAt,
+          waypoints: [{ name: "x", lat: 91, lng: 0 }],
+        }),
+      ),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(patched.status).toBe(400);
+  });
+
   it("validates activity updates and returns 404 for orphan point lists", async () => {
     const createdResponse = await createActivity(
       jsonRequest("http://localhost/api/activities", "POST", "{}"),
@@ -480,3 +517,74 @@ describe("activity integrity races", () => {
     expect(body.openActivities.map((activity) => activity.id)).not.toContain(closed.id);
   });
 });
+
+describe("Explore OSM trail ids", () => {
+  it("creates plans and activities from osm-relation hrefs and rejects junk ids", async () => {
+    const invalid = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Bad", trailId: "not-a-trail" }),
+      ),
+    );
+    expect(invalid.status).toBe(400);
+
+    const created = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({
+          name: "Half Dome",
+          trailId: "osm-relation-123",
+          customGeometry: {
+            type: "LineString",
+            coordinates: [
+              [-119.5, 37.7],
+              [-119.4, 37.8],
+            ],
+          },
+        }),
+      ),
+    );
+    expect(created.status).toBe(200);
+    const plan = (await created.json()) as {
+      id: string;
+      trailId: string | null;
+      customGeometry: { type: string };
+      updatedAt: string;
+    };
+    expect(plan.trailId).toBe("osm-relation-123");
+    expect(plan.customGeometry.type).toBe("LineString");
+
+    const patched = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ trailId: "osm-way-99", updatedAt: plan.updatedAt }),
+      ),
+      { params: Promise.resolve({ id: plan.id }) },
+    );
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toMatchObject({ trailId: "osm-way-99" });
+
+    const activity = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ trailId: "osm-relation-123" }),
+      ),
+    );
+    expect(activity.status).toBe(200);
+    await expect(activity.json()).resolves.toMatchObject({ trailId: "osm-relation-123" });
+
+    const badActivity = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ trailId: "trail-xyz" }),
+      ),
+    );
+    expect(badActivity.status).toBe(400);
+  });
+});
+

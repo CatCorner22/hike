@@ -11,16 +11,27 @@ export async function getCheckinSettings(): Promise<CheckinSettings> {
   const db = await getSafetyDb();
   if (!db) return DEFAULT_SETTINGS;
   const row = await db.get("checkinSettings", "current");
-  return row ? { intervalMin: row.intervalMin, enabled: row.enabled } : DEFAULT_SETTINGS;
+  return row
+    ? {
+        intervalMin: row.intervalMin,
+        enabled: row.enabled,
+        armedAt: row.enabled ? row.armedAt : undefined,
+      }
+    : DEFAULT_SETTINGS;
 }
 
-export async function saveCheckinSettings(settings: CheckinSettings) {
+export async function saveCheckinSettings(settings: CheckinSettings): Promise<boolean> {
   const db = await getSafetyDb();
-  if (!db) return;
+  if (!db) return false;
   const next: CheckinSettings = settings.enabled
     ? { ...settings, armedAt: settings.armedAt ?? new Date().toISOString() }
     : { intervalMin: settings.intervalMin, enabled: false };
-  await db.put("checkinSettings", { ...next, id: "current" });
+  try {
+    await db.put("checkinSettings", { ...next, id: "current" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function logCheckin(

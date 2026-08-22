@@ -6,7 +6,8 @@ import { headingFromOrientationEvent } from "@/lib/safety/device-heading";
 export type DeviceHeadingPermission = "unsupported" | "prompt" | "granted" | "denied";
 
 export interface DeviceHeadingState {
-  heading: number | null;
+  /** Device magnetometer converted to true north; never a raw magnetic reading. */
+  headingTrue: number | null;
   permission: DeviceHeadingPermission;
   live: boolean;
   message: string | null;
@@ -14,6 +15,24 @@ export interface DeviceHeadingState {
 }
 
 type OrientEvent = DeviceOrientationEvent & { webkitCompassHeading?: number };
+
+function usableDeclination(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) && Math.abs(value) <= 90 ? value : null;
+}
+
+export interface UseDeviceHeadingOptions {
+  enabled?: boolean;
+  /** Current magnetic declination, east-positive, from a trusted location fix. */
+  declinationDeg?: number | null;
+}
+
+function currentScreenOrientationDeg(): number | null {
+  if (typeof window === "undefined") return null;
+  const modern = window.screen?.orientation?.angle;
+  if (typeof modern === "number" && Number.isFinite(modern)) return modern;
+  const legacy = (window as Window & { orientation?: unknown }).orientation;
+  return typeof legacy === "number" && Number.isFinite(legacy) ? legacy : null;
+}
 
 function needsIosPermission(): boolean {
   return (
@@ -23,33 +42,71 @@ function needsIosPermission(): boolean {
   );
 }
 
-export function useDeviceHeading(enabled = true): DeviceHeadingState {
-  const [heading, setHeading] = useState<number | null>(null);
+export function useDeviceHeading({
+  enabled = true,
+  declinationDeg = null,
+}: UseDeviceHeadingOptions = {}): DeviceHeadingState {
+  const [headingTrue, setHeadingTrue] = useState<number | null>(null);
   const [permission, setPermission] = useState<DeviceHeadingPermission>("prompt");
   const [live, setLive] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const handlerRef = useRef<(event: Event) => void>(() => {});
+  const handlerRef = useRef<((event: Event) => void) | null>(null);
+  const declinationRef = useRef<number | null>(usableDeclination(declinationDeg));
+
+  useEffect(() => {
+    declinationRef.current = usableDeclination(declinationDeg);
+    if (declinationRef.current != null) return;
+    queueMicrotask(() => {
+      setHeadingTrue(null);
+      setLive(false);
+      setMessage((current) =>
+        permission === "granted"
+          ? "Phone compass cannot be converted to true north here — using GPS course when moving."
+          : current,
+      );
+    });
+  }, [declinationDeg, permission]);
+
+  const detach = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const handler = handlerRef.current;
+    if (handler == null) return;
+    window.removeEventListener("deviceorientationabsolute", handler, true);
+    window.removeEventListener("deviceorientation", handler, true);
+    handlerRef.current = null;
+  }, []);
 
   const attach = useCallback(() => {
     if (typeof window === "undefined") return;
+    detach();
     const onOrient = (event: Event) => {
-      const parsed = headingFromOrientationEvent(event as OrientEvent);
-      if (parsed == null) return;
-      setHeading(parsed);
+      const declination = declinationRef.current;
+      if (declination == null) {
+        setHeadingTrue(null);
+        setLive(false);
+        setMessage(
+          "Phone compass cannot be converted to true north here — using GPS course when moving.",
+        );
+        return;
+      }
+      const parsed = headingFromOrientationEvent(event as OrientEvent, {
+        declinationDeg: declination,
+        screenOrientationDeg: currentScreenOrientationDeg(),
+      });
+      if (parsed == null) {
+        setHeadingTrue(null);
+        setLive(false);
+        setMessage("Hold the phone flat in portrait to use its compass safely.");
+        return;
+      }
+      setHeadingTrue(parsed);
       setLive(true);
       setMessage(null);
     };
     handlerRef.current = onOrient;
     window.addEventListener("deviceorientationabsolute", onOrient, true);
     window.addEventListener("deviceorientation", onOrient, true);
-  }, []);
-
-  const detach = useCallback(() => {
-    if (typeof window === "undefined") return;
-    const handler = handlerRef.current;
-    window.removeEventListener("deviceorientationabsolute", handler, true);
-    window.removeEventListener("deviceorientation", handler, true);
-  }, []);
+  }, [detach]);
 
   const requestPermission = useCallback(async (): Promise<boolean> => {
     if (typeof window === "undefined") return false;
@@ -109,5 +166,5 @@ export function useDeviceHeading(enabled = true): DeviceHeadingState {
     return detach;
   }, [enabled, attach, detach]);
 
-  return { heading, permission, live, message, requestPermission };
+  return { headingTrue, permission, live, message, requestPermission };
 }

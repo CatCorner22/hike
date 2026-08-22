@@ -10,6 +10,10 @@ import {
   type RouteHazardBrief,
 } from "@/lib/offline/hazard-brief";
 import {
+  validOfficialAlertSnapshot,
+  type RouteOfficialAlertSnapshot,
+} from "@/lib/offline/official-alerts";
+import {
   validBailoutRoutes,
   type PreparedBailoutRoute,
 } from "@/lib/offline/bailout-routes";
@@ -68,6 +72,11 @@ export interface RoutePack {
    */
   hazardBrief?: RouteHazardBrief;
   /**
+   * Point-sampled NWS alerts and, when an exact unit code is verified, NPS
+   * notices. Absence means the sources were not checked, never "all clear."
+   */
+  officialAlerts?: RouteOfficialAlertSnapshot;
+  /**
    * User-supplied bailout tracks that already meet this route. Optional —
    * visiting the plan page must not invent connectors or drop a navigable pack.
    */
@@ -102,6 +111,7 @@ export type RoutePackExtraField =
   | "corridor"
   | "corridorFeatures"
   | "hazardBrief"
+  | "officialAlerts"
   | "bailoutRoutes"
   | "bbox";
 export interface RoutePackLookup {
@@ -259,6 +269,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.hazardBrief !== undefined && !validHazardBrief(pack.hazardBrief, pack.id, pack.bbox)) {
     return "Saved route hazard briefing is invalid.";
   }
+  if (pack.officialAlerts !== undefined && !validOfficialAlertSnapshot(pack.officialAlerts, pack.id)) {
+    return "Saved route official alert snapshot is invalid.";
+  }
   if (pack.bailoutRoutes !== undefined && !validBailoutRoutes(pack.bailoutRoutes, pack.id, pack.geometry)) {
     return "Saved route bailout tracks are invalid.";
   }
@@ -324,6 +337,11 @@ export function sanitizeRoutePackForUse(pack: RoutePack): {
   if (next.hazardBrief !== undefined && !validHazardBrief(next.hazardBrief, next.id, next.bbox)) {
     delete next.hazardBrief;
     stripped.push("hazardBrief");
+  }
+
+  if (next.officialAlerts !== undefined && !validOfficialAlertSnapshot(next.officialAlerts, next.id)) {
+    delete next.officialAlerts;
+    stripped.push("officialAlerts");
   }
 
   if (next.bailoutRoutes !== undefined && !validBailoutRoutes(next.bailoutRoutes, next.id, next.geometry)) {
@@ -407,6 +425,7 @@ export function buildRoutePack(input: {
   corridor?: TerrainCorridorSpec;
   corridorFeatures?: CorridorFeatureSet;
   hazardBrief?: RouteHazardBrief;
+  officialAlerts?: RouteOfficialAlertSnapshot;
   bailoutRoutes?: PreparedBailoutRoute[];
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
@@ -434,6 +453,7 @@ export function buildRoutePack(input: {
     corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
     corridorFeatures: input.corridorFeatures,
     hazardBrief: input.hazardBrief,
+    officialAlerts: input.officialAlerts,
     bailoutRoutes: input.bailoutRoutes,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
@@ -536,6 +556,38 @@ export async function listRoutePacks(): Promise<RoutePack[]> {
 
 export async function hasRoutePack(id: string): Promise<boolean> {
   return (await getRoutePackStatus(id)).status === "ready";
+}
+
+/** Deletes one canonical payload and every alias pointer in one transaction. */
+export async function deleteRoutePack(id: string): Promise<boolean> {
+  if (!validId(id)) return false;
+  const db = await getDb();
+  if (!db) throw new Error("Offline route storage is unavailable in this browser.");
+  const tx = db.transaction(["routePacks", "aliases"], "readwrite");
+  try {
+    const aliasesStore = tx.objectStore("aliases");
+    const packStore = tx.objectStore("routePacks");
+    const pointer = await aliasesStore.get(id);
+    const canonicalId = pointer?.canonicalId ?? id;
+    const pack = await packStore.get(canonicalId);
+    if (!pack) {
+      if (pointer) await aliasesStore.delete(id);
+      await tx.done;
+      return false;
+    }
+    if ((pointer && !packOwnsAlias(pack, id)) || (!pointer && pack.id !== id)) {
+      throw new Error("Saved route identity is inconsistent. Nothing was deleted.");
+    }
+    const pointers = await aliasesStore.index("by-canonical").getAll(canonicalId);
+    await packStore.delete(canonicalId);
+    await Promise.all(pointers.map((alias) => aliasesStore.delete(alias.alias)));
+    await tx.done;
+    return true;
+  } catch (error) {
+    try { tx.abort(); } catch { /* already completed/aborted */ }
+    try { await tx.done; } catch { /* preserve original error */ }
+    throw error;
+  }
 }
 
 let lastFixWrite: Promise<void> = Promise.resolve();

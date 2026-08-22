@@ -26,8 +26,8 @@ export function compassReadout(
       ? gmAngleCard(lat, lng)
       : null;
   const magneticDeg =
-    lat != null && lng != null && Number.isFinite(lat) && Number.isFinite(lng)
-      ? normalizeHeading(toMagneticBearing(trueDeg, gm?.declination ?? 0))
+    gm?.declination != null
+      ? normalizeHeading(toMagneticBearing(trueDeg, gm.declination))
       : null;
   const label =
     magneticDeg != null

@@ -8,6 +8,7 @@ import {
 } from "@/lib/offline/route-pack";
 import { validCorridorFeatures } from "@/lib/offline/corridor-features";
 import { validHazardBrief } from "@/lib/offline/hazard-brief";
+import { validOfficialAlertSnapshot } from "@/lib/offline/official-alerts";
 import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
 import { validTerrainCorridor } from "@/lib/offline/terrain-corridor";
 import { isValidGeometry } from "@/lib/geo/navigation";
@@ -49,6 +50,8 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
     corridor && features && validCorridorFeatures(features, base.id, corridor.bboxes) ? features : undefined;
   const keepBrief = (brief: RoutePack["hazardBrief"]) =>
     brief && validHazardBrief(brief, base.id, base.bbox) ? brief : undefined;
+  const keepOfficialAlerts = (snapshot: RoutePack["officialAlerts"]) =>
+    snapshot && validOfficialAlertSnapshot(snapshot, base.id) ? snapshot : undefined;
   const keepBailouts = (routes: RoutePack["bailoutRoutes"]) =>
     routes && validBailoutRoutes(routes, base.id, base.geometry) ? routes : undefined;
   return buildRoutePack({
@@ -62,6 +65,7 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
     corridor: corridor ?? base.corridor,
     corridorFeatures: keepFeatures(base.corridorFeatures) ?? keepFeatures(existing.corridorFeatures),
     hazardBrief: keepBrief(base.hazardBrief) ?? keepBrief(existing.hazardBrief),
+    officialAlerts: keepOfficialAlerts(base.officialAlerts) ?? keepOfficialAlerts(existing.officialAlerts),
     bailoutRoutes: keepBailouts(base.bailoutRoutes) ?? keepBailouts(existing.bailoutRoutes),
   });
 }

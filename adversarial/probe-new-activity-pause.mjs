@@ -12,7 +12,10 @@ const trail = {
   elevationProfile: [],
 };
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 const context = await browser.newContext();
 await context.addInitScript(() => {
   const callbacks = new Map();

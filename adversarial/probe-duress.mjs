@@ -13,7 +13,6 @@ const pack = { ...packFixture(NAV_ID, route), name: 'Duress audit route — West
 
 async function installPack(page) {
   await page.evaluate(async ({ source, stores, pack: fixture }) => {
-    // eslint-disable-next-line no-eval
     eval(source);
     const db = await openEnsuringStores('hike-nav-packs', stores);
     await new Promise((resolve, reject) => {
@@ -99,7 +98,10 @@ async function viewportIssues(page) {
  });
 }
 
-const browser=await chromium.launch({headless:true});
+const browser=await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 const results={generatedAt:new Date().toISOString(), base:BASE, scenarios:{}};
 try {
   let {context,page,gate}=await newNavPage(browser);

@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 import { OWNER_COOKIE, signOwnerToken, verifyOwnerToken } from "@/lib/auth/owner";
@@ -137,5 +139,13 @@ describe("session responses are not shareable", () => {
     );
     // No private/no-store forced here: the guide is the same for everyone.
     expect(response.headers.get("cache-control") ?? "").not.toMatch(/no-store/);
+  });
+});
+
+describe("single identity proxy", () => {
+  it("does not leave a competing root middleware or proxy file", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    expect(existsSync(path.join(root, "middleware.ts"))).toBe(false);
+    expect(existsSync(path.join(root, "proxy.ts"))).toBe(false);
   });
 });

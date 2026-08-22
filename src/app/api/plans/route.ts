@@ -8,16 +8,19 @@ import {
   geoJsonLineOrMultiLineStringSchema,
   isoDatetimeSchema,
   parseJsonBody,
+  trailRefSchema,
+  waypointsSchema,
 } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import { createPlan, listPlans } from "@/lib/store/local";
+import { postgresTrailFk, resolveStoredTrailId } from "@/lib/trails/service";
 
 const planCreateSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  trailId: z.string().uuid().nullable().optional(),
+  trailId: trailRefSchema.nullable().optional(),
   plannedDate: isoDatetimeSchema.nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
-  waypoints: z.unknown().nullable().optional(),
+  waypoints: waypointsSchema.nullable().optional(),
   campgroundIds: z.array(z.string().min(1)).max(100).optional(),
   customGeometry: geoJsonLineOrMultiLineStringSchema.nullable().optional(),
 });
@@ -50,6 +53,14 @@ export async function POST(request: Request) {
   const parsed = await parseJsonBody(request, planCreateSchema);
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
+  const requestedTrailId = body.trailId ?? null;
+  const trailId = await resolveStoredTrailId(requestedTrailId);
+  if (requestedTrailId && !trailId && !body.customGeometry) {
+    return NextResponse.json(
+      { error: "That trail could not be loaded. Search again or import a GPX." },
+      { status: 404 },
+    );
+  }
 
   try {
     if (hasDatabase()) {
@@ -57,7 +68,7 @@ export async function POST(request: Request) {
       const [plan] = await db.insert(hikePlans).values({
         ownerId: owner.ownerId,
         name: body.name,
-        trailId: body.trailId ?? null,
+        trailId: postgresTrailFk(trailId),
         plannedDate: body.plannedDate ? new Date(body.plannedDate) : null,
         notes: body.notes ?? null,
         waypoints: body.waypoints ?? null,
@@ -70,7 +81,7 @@ export async function POST(request: Request) {
     return NextResponse.json(await createPlan({
       ownerId: owner.ownerId,
       name: body.name,
-      trailId: body.trailId ?? null,
+      trailId,
       plannedDate: body.plannedDate ?? null,
       notes: body.notes ?? null,
       waypoints: body.waypoints ?? null,

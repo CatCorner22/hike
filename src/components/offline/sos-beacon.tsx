@@ -28,14 +28,22 @@ export function SosBeacon({ onClose }: { onClose: () => void }) {
       className="fixed inset-0 z-[80] flex flex-col items-center justify-center"
       style={{ background: flash ? "#ffffff" : "#000000" }}
       role="alertdialog"
-      aria-label="SOS locator beacon"
+      aria-label="Sound & flash locator"
     >
       <p className={`text-4xl font-black ${flash ? "text-black" : "text-white"}`}>SOS</p>
-      <p className={`mt-2 text-sm ${flash ? "text-black" : "text-white"}`}>
+      <p className={`mt-2 text-lg font-bold ${flash ? "text-black" : "text-white"}`}>
+        Sound &amp; flash locator
+      </p>
+      <p
+        className={`mt-3 max-w-sm px-6 text-center text-base font-black ${flash ? "text-black" : "text-white"}`}
+      >
+        Does not contact 911, SAR, or transmit your location.
+      </p>
+      <p className={`mt-3 max-w-sm px-6 text-center text-sm ${flash ? "text-black" : "text-white"}`}>
         Screen strobe + looping tone. Use to be seen or heard. Stop cancels the sound.
       </p>
       <Button className="mt-8" variant="secondary" onClick={onClose}>
-        Stop beacon
+        Stop sound &amp; flash
       </Button>
     </div>
   );

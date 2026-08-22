@@ -3,12 +3,25 @@ import { eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trailResearch, trails } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
+import { rateLimit } from "@/lib/api/rate-limit";
 import { parseOsmTrailId } from "@/lib/ids";
+import { requireOwner } from "@/lib/auth/owner";
 import { researchTrail } from "@/lib/research/agent";
+import { isCurrentResearchBrief } from "@/lib/research/schema";
+import { npsParkCodeFromTags } from "@/lib/nps/client";
 import { findOrCreateTrail } from "@/lib/trails/service";
 
 const REFRESH_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
 export async function GET(request: Request, { params }: { params: Promise<{ trailId: string }> }) {
+  const owner = await requireOwner(request);
+  if (!owner.ok) return owner.response;
+  // Per owner, not per instance: a shared bucket would 429 every hiker after
+  // six trail pages anywhere on the deployment. Cookie-less callers never
+  // reach this, so they cannot fill the quota either.
+  const limited = rateLimit(request, `research:${owner.ownerId}`, 6);
+  if (limited) return limited;
+
   const { trailId } = await params;
   const refresh = new URL(request.url).searchParams.get("refresh") === "true";
   try {
@@ -27,13 +40,25 @@ export async function GET(request: Request, { params }: { params: Promise<{ trai
     if (hasDatabase()) {
       const db = getDb();
       const cached = await db.query.trailResearch.findFirst({ where: eq(trailResearch.trailId, resolvedId), orderBy: (r, { desc }) => [desc(r.researchedAt)] });
-      if (cached && !refresh && Date.now() - cached.researchedAt.getTime() < REFRESH_COOLDOWN_MS) return NextResponse.json({ brief: cached.brief, cached: true });
+      if (
+        cached
+        && !refresh
+        && Date.now() - cached.researchedAt.getTime() < REFRESH_COOLDOWN_MS
+        && isCurrentResearchBrief(cached.brief)
+      ) {
+        return NextResponse.json({ brief: cached.brief, cached: true });
+      }
     }
+    const trailTags = (trail.tags as Record<string, string> | null) ?? undefined;
     const brief = await researchTrail({
       trailName: trail.name,
       location: "center" in trail && trail.center ? { lat: trail.center.lat, lng: trail.center.lng } : trail.bbox ? { lat: (trail.bbox as number[])[1], lng: (trail.bbox as number[])[0] } : undefined,
       wikipediaUrl: trail.wikipediaUrl ?? undefined,
-      tags: (trail.tags as Record<string, string>) ?? undefined,
+      tags: trailTags,
+      parkCode: npsParkCodeFromTags(trailTags) ?? undefined,
+      osm: trail.osmId && trail.osmType
+        ? { id: String(trail.osmId), type: String(trail.osmType) }
+        : undefined,
     });
     if (hasDatabase()) await getDb().insert(trailResearch).values({ trailId: resolvedId, brief });
     return NextResponse.json({ brief, cached: false, refreshed: refresh });

@@ -1,6 +1,14 @@
 import { toSouthWestNorthEast, type BboxLngLat } from "@/lib/geo/bbox";
 import { bboxFromGeometry } from "@/lib/geo";
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+import {
+  accessStatusFromOsmTags,
+  campingTypeFromOsmTags,
+  permitStatusFromOsmTags,
+  type CampAccessStatus,
+  type CampPermitStatus,
+} from "@/lib/camping/evidence";
+import { isUsCoverageCoordinate, US_COVERAGE_REGIONS } from "@/lib/camping/us-coverage";
 
 export interface OverpassElement {
   type: "node" | "way" | "relation";
@@ -118,7 +126,15 @@ function parseLength(tags?: Record<string, string>): number | undefined {
 function toWikipediaUrl(tags?: Record<string, string>): string | undefined {
   const wiki = tags?.wikipedia || tags?.wikidata;
   if (!wiki) return undefined;
-  if (wiki.startsWith("http")) return wiki;
+  if (wiki.startsWith("http")) {
+    try {
+      const url = new URL(wiki.trim());
+      if (url.protocol === "http:") url.protocol = "https:";
+      return url.protocol === "https:" ? url.toString() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   if (wiki.includes(":")) {
     const [lang, title] = wiki.split(":");
     return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
@@ -126,26 +142,45 @@ function toWikipediaUrl(tags?: Record<string, string>): string | undefined {
   return undefined;
 }
 
+export function buildTrailSearchQuery(query: string, bbox?: BboxLngLat): string {
+  const escaped = escapeOverpassRegex(query);
+  // A text-only fallback must never run a worldwide relation regex. Search the
+  // app's explicit U.S. coverage rectangles; normal discovery uses a much
+  // smaller geocoder- or GPS-derived bbox.
+  const regions: readonly (readonly [number, number, number, number])[] = bbox
+    ? [bbox]
+    : US_COVERAGE_REGIONS;
+  const clauses = regions.flatMap((region) => {
+    const bboxFilter = `(${toSouthWestNorthEast([...region]).join(",")})`;
+    return [
+      `relation["route"="hiking"]["name"~"${escaped}",i]${bboxFilter};`,
+      `relation["route"="foot"]["name"~"${escaped}",i]${bboxFilter};`,
+    ];
+  }).join("\n      ");
+  return `
+    [out:json][timeout:30];
+    (
+      ${clauses}
+    );
+    out center tags;
+  `;
+}
+
 export async function searchTrails(
   query: string,
   bbox?: BboxLngLat,
 ): Promise<TrailSearchResult[]> {
-  const escaped = escapeOverpassRegex(query);
-  const bboxFilter = bbox ? `(${toSouthWestNorthEast(bbox).join(",")})` : "";
-  const overpassQuery = `
-    [out:json][timeout:30];
-    (
-      relation["route"="hiking"]["name"~"${escaped}",i]${bboxFilter};
-      relation["route"="foot"]["name"~"${escaped}",i]${bboxFilter};
-    );
-    out center tags;
-  `;
+  const overpassQuery = buildTrailSearchQuery(query, bbox);
   const data = await runOverpass(overpassQuery);
   const results: TrailSearchResult[] = [];
+  const seen = new Set<number>();
   for (const element of data.elements) {
     if (element.type !== "relation" || !element.tags?.name) continue;
+    if (seen.has(element.id)) continue;
     const center = getCenter(element);
     if (!center) continue;
+    if (!bbox && !isUsCoverageCoordinate(center.lat, center.lng)) continue;
+    seen.add(element.id);
     results.push({
       osmId: String(element.id), osmType: "relation", name: element.tags.name, center,
       lengthMeters: parseLength(element.tags), difficulty: element.tags.difficulty,
@@ -271,6 +306,21 @@ export function stitchRelationWays(lines: GeoJSON.Position[][]): GeoJSON.Positio
   return chains;
 }
 
+/** Ways are valid hiking routes; nodes cannot form a line. */
+export function trailGeometryFromElements(
+  elements: OverpassElement[],
+  osmType: string,
+  osmId: string,
+): GeoJSON.LineString | GeoJSON.MultiLineString | null {
+  if (osmType === "node") return null;
+  if (osmType === "way") {
+    const way = elements.find((element) => element.type === "way" && String(element.id) === osmId);
+    const positions = way ? wayPositions(way) : [];
+    return positions.length >= 2 ? { type: "LineString", coordinates: positions } : null;
+  }
+  return relationToLineString(elements);
+}
+
 export function relationToLineString(elements: OverpassElement[]): GeoJSON.LineString | GeoJSON.MultiLineString | null {
   const relation = elements.find((element) => element.type === "relation");
   const waysById = new Map(
@@ -309,37 +359,37 @@ export async function getTrailDetail(
   const overpassQuery = `
     [out:json][timeout:45];
     ${osmType}(${osmId});
-    out body;
+    out geom;
     >;
     out geom;
   `;
 
   const data = await runOverpass(overpassQuery);
-  const relation = data.elements.find(
+  const target = data.elements.find(
     (e) => e.type === osmType && String(e.id) === osmId,
   );
 
-  if (!relation?.tags?.name) return null;
+  if (!target?.tags?.name) return null;
 
-  const geometry = relationToLineString(data.elements);
+  const geometry = trailGeometryFromElements(data.elements, osmType, osmId);
   if (!geometry) return null;
 
-  const center = getCenter(relation);
+  const center = getCenter(target);
   if (!center) return null;
 
   return {
     osmId,
     osmType,
-    name: relation.tags.name,
+    name: target.tags.name,
     center,
     geometry,
     bbox: computeBbox(geometry),
-    lengthMeters: parseLength(relation.tags),
-    difficulty: relation.tags.difficulty,
-    sacScale: relation.tags.sac_scale,
-    network: relation.tags.network,
-    wikipediaUrl: toWikipediaUrl(relation.tags),
-    tags: relation.tags,
+    lengthMeters: parseLength(target.tags),
+    difficulty: target.tags.difficulty,
+    sacScale: target.tags.sac_scale,
+    network: target.tags.network,
+    wikipediaUrl: toWikipediaUrl(target.tags),
+    tags: target.tags,
   };
 }
 
@@ -351,7 +401,9 @@ export async function searchBackcountryCamps(
     name: string;
     lat: number;
     lng: number;
-    backcountry: boolean;
+    campingType: "walk_in" | "backcountry";
+    accessStatus: CampAccessStatus;
+    permitStatus: CampPermitStatus;
     tags: Record<string, string>;
   }>
 > {
@@ -368,12 +420,20 @@ export async function searchBackcountryCamps(
   const data = await runOverpass(overpassQuery);
   return data.elements
     .filter((e) => e.type === "node" && e.lat != null && e.lon != null)
-    .map((e) => ({
-      osmId: String(e.id),
-      name: e.tags?.name || "Unnamed campsite",
-      lat: e.lat!,
-      lng: e.lon!,
-      backcountry: e.tags?.backcountry === "yes" || e.tags?.access === "private",
-      tags: e.tags || {},
-    }));
+    .map((e) => {
+      const tags = e.tags || {};
+      return {
+        osmId: String(e.id),
+        name: tags.name || "Unnamed campsite",
+        lat: e.lat!,
+        lng: e.lon!,
+        campingType: campingTypeFromOsmTags(tags),
+        accessStatus: accessStatusFromOsmTags(tags),
+        permitStatus: permitStatusFromOsmTags(tags),
+        tags,
+      };
+    })
+    // Private sites are not public camping recommendations. Restricted sites
+    // remain visible with a warning because a permit may make them lawful.
+    .filter((camp) => camp.accessStatus !== "private");
 }

@@ -15,7 +15,7 @@
     "test:adversarial": "vitest run adversarial",
     "test:api-probe": "node adversarial/api-probe.mjs",
     "test:offline-probe": "node adversarial/offline-adversarial.mjs",
-    "bench": "tsx adversarial/perf.bench.ts",
+    "bench": "node --import tsx adversarial/perf.bench.ts",
     "test:gps-probe": "node adversarial/gps-adversarial.mjs",
     "test:csp": "node adversarial/csp-check.mjs",
     "test:concurrency": "node adversarial/retest-concurrency.mjs"

@@ -11,6 +11,7 @@ import {
   saveIceProfile,
   setOverdueAlarm,
 } from "./profile";
+import { getCheckinSettings, saveCheckinSettings } from "./checkin";
 
 /**
  * `getSafetyDb` cached its `openDB` promise forever. A rejection — storage denied in a
@@ -120,6 +121,7 @@ describe("storage failures are reported, not swallowed", () => {
     await expect(saveIceProfile(profile)).resolves.toBe(false);
     await expect(setOverdueAlarm(deadline)).resolves.toBe(false);
     await expect(setOverdueAlarm(null)).resolves.toBe(false);
+    await expect(saveCheckinSettings({ enabled: true, intervalMin: 60 })).resolves.toBe(false);
   });
 
   it("reports false when there is no store at all", async () => {
@@ -133,5 +135,24 @@ describe("storage failures are reported, not swallowed", () => {
     await expect(saveIceProfile(profile)).resolves.toBe(true);
     await expect(setOverdueAlarm(deadline)).resolves.toBe(true);
     await expect(setOverdueAlarm(null)).resolves.toBe(true);
+  });
+
+  it("round-trips the exact check-in arm time used by readiness verification", async () => {
+    let row: { enabled: boolean; intervalMin: number; armedAt?: string } | undefined;
+    openDB.mockResolvedValue({
+      put: async (_store: string, value: typeof row) => {
+        row = value;
+        return "current";
+      },
+      get: async () => row,
+    });
+    const settings = {
+      enabled: true,
+      intervalMin: 60,
+      armedAt: "2026-08-22T12:00:00.000Z",
+    };
+
+    await expect(saveCheckinSettings(settings)).resolves.toBe(true);
+    await expect(getCheckinSettings()).resolves.toEqual(settings);
   });
 });

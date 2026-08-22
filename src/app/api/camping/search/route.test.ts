@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parseBbox } from "@/lib/camping/bbox";
+
+vi.mock("@/lib/osm/overpass", () => ({
+  searchBackcountryCamps: vi.fn(async () => []),
+}));
+
 import { GET } from "./route";
 
 describe("camping search bbox handling", () => {
@@ -44,5 +49,23 @@ describe("camping search bbox handling", () => {
           latitude <= 39,
       ),
     ).toBe(true);
+  });
+
+  it("filters permit evidence without treating legacy false defaults as proof", async () => {
+    const unknown = await GET(new Request("http://localhost/api/camping/search?permitStatus=unknown"));
+    expect(unknown.status).toBe(200);
+    const unknownData = await unknown.json() as { campgrounds: Array<{ permitStatus: string; permitRequired: boolean | null }> };
+    expect(unknownData.campgrounds.length).toBeGreaterThan(0);
+    expect(unknownData.campgrounds.every((camp) => camp.permitStatus === "unknown" && camp.permitRequired === null)).toBe(true);
+
+    const notRequired = await GET(new Request("http://localhost/api/camping/search?permitStatus=not_required"));
+    const notRequiredData = await notRequired.json() as { campgrounds: unknown[] };
+    expect(notRequiredData.campgrounds).toEqual([]);
+  });
+
+  it("rejects an unsupported permit status", async () => {
+    const response = await GET(new Request("http://localhost/api/camping/search?permitStatus=probably"));
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "Invalid permit status" });
   });
 });

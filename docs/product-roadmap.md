@@ -16,6 +16,19 @@ Klandagi should compete as a safety-first wilderness decision-support and contin
 
 ## Delivery order
 
+## Implementation status — 2026-08-22
+
+| Workstream | Status | Current boundary |
+|---|---|---|
+| P0 safety/truthfulness tranche | Delivered | Deterministic calculations, fail-closed persistence, explicit unknowns, datum-safe headings, and cold-launch asset verification are covered by automated tests. |
+| U.S. discovery and camping evidence | Delivered | Place search is submit-only and U.S./territory bounded; direct trail fallback queries are no longer worldwide; access and permit facts remain evidence-backed or unknown. |
+| Offline corridor | Partial | The pack stores a corridor specification and nearby OSM vectors. Raster/vector terrain tiles are intentionally not claimed as downloaded. |
+| Route-aware briefing | Delivered baseline | Along-route forecast plus NWS/NPS official-alert snapshots are stored with provenance and freshness. Smoke and AQI remain future authoritative integrations. |
+| Bailouts and decision points | Delivered baseline | Ordered route decisions, OSM candidates, and user GPX bailouts are supported; the app never invents a connector to the prepared route. |
+| Trip Guardian | Delivered baseline | Links are opt-in, revocable, short-lived, database-backed, and expose minimal status without interpreting silence as distress. Delivery notifications and accounts remain future work. |
+| Field waypoints | Delivered text/photo baseline | Durable source-labeled marks, privacy-scrubbed bounded photos, edit/delete/undo, and GeoJSON export ship. Voice notes remain behind the ML adoption gate. |
+| Optional accounts/sync, complete terrain tiles, smoke/AQI, 3D/native/watch | Planned | These require separate product, licensing, operational, and physical-device validation; they are not represented as completed. |
+
 ### P0 — current tranche
 - Product repositioning and safety-first language.
 - Deterministic daylight/ETA margin engine.

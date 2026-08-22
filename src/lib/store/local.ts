@@ -142,7 +142,32 @@ function storePath() {
   );
 }
 
+export class LocalStoreDisabledError extends Error {
+  constructor() {
+    super(
+      "JSON file store is disabled in production. Set DATABASE_URL, or set " +
+        "ALLOW_LOCAL_STORE_IN_PRODUCTION=true for a single-node fallback.",
+    );
+    this.name = "LocalStoreDisabledError";
+  }
+}
+
+/**
+ * The JSON file is a single-process fallback for local development and CI.
+ * Production must not silently write plans and GPS tracks to an ephemeral disk
+ * that no other instance can see — that masquerades as persistence.
+ */
+export function isLocalStoreEnabled(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.ALLOW_LOCAL_STORE_IN_PRODUCTION === "true";
+}
+
+function assertLocalStoreEnabled(): void {
+  if (!isLocalStoreEnabled()) throw new LocalStoreDisabledError();
+}
+
 async function readStore(): Promise<LocalStore> {
+  assertLocalStoreEnabled();
   const file = storePath();
   try {
     const info = await stat(file);
@@ -175,6 +200,7 @@ async function readStore(): Promise<LocalStore> {
 }
 
 async function writeStore(store: LocalStore) {
+  assertLocalStoreEnabled();
   const file = storePath();
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;

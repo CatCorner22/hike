@@ -3,7 +3,6 @@ import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
 import {
   isValidNavigateShellDocument,
-  looksLikeNavigateHtml,
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
@@ -19,8 +18,6 @@ declare global {
 declare const self: WorkerGlobalScope & { __SW_MANIFEST: (PrecacheEntry | string)[] | undefined };
 export { NAVIGATE_ASSETS_CACHE, NAVIGATE_SHELL_CACHE, NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
-let getOfflineFallback: () => Promise<Response | undefined> = async () => undefined;
-
 function offlineDocument(): Response {
   return new Response(
     "<!doctype html><html><head><meta charset=\"utf-8\"><title>Offline navigation</title></head><body><main><h1>Offline navigation is unavailable</h1><p>This navigation screen was not saved before service was lost. Reconnect, then prepare the matching route while you have signal.</p></main></body></html>",
@@ -28,23 +25,34 @@ function offlineDocument(): Response {
   );
 }
 
-async function isValidNavigateDocument(response: Response): Promise<boolean> {
+function navigateIdFromRequest(request: Request): string | null {
+  try {
+    const match = new URL(request.url).pathname.match(/^\/navigate\/([^/]+)\/?$/);
+    if (!match) return null;
+    const navId = decodeURIComponent(match[1]);
+    return navId.length > 0 && navId.length <= 256 ? navId : null;
+  } catch {
+    return null;
+  }
+}
+
+async function isValidNavigateDocument(response: Response, navId: string): Promise<boolean> {
   const contentType = response.headers.get("content-type") ?? "";
   const markerHeader = response.headers.get("x-hike-navigate-shell");
   try {
     const document = await response.clone().text();
-    return isValidNavigateShellDocument(document, contentType, markerHeader);
+    return isValidNavigateShellDocument(document, contentType, markerHeader, navId);
   } catch {
     return false;
   }
 }
 
-async function markNavigateDocument(response: Response): Promise<Response | null> {
+async function markNavigateDocument(response: Response, navId: string): Promise<Response | null> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok || !contentType.toLowerCase().includes("text/html")) return null;
   try {
     const body = await response.clone().text();
-    if (!looksLikeNavigateHtml(body)) return null;
+    if (!isValidNavigateShellDocument(body, contentType, null, navId)) return null;
     const headers = new Headers(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
     return new Response(stampNavigateShellHtml(body), {
@@ -90,39 +98,33 @@ async function matchNavigateShell(cache: Cache, request: Request): Promise<Respo
   return undefined;
 }
 
-async function trustedCachedShell(response: Response): Promise<Response | null> {
-  if (response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return response;
-  try {
-    const html = await response.clone().text();
-    if (html.includes(NAVIGATE_SHELL_MARKER)) return response;
-  } catch {
-    return null;
-  }
-  return (await isValidNavigateDocument(response)) ? response : null;
+async function trustedCachedShell(response: Response, navId: string): Promise<Response | null> {
+  return (await isValidNavigateDocument(response, navId)) ? response : null;
 }
 
 const navigateShellHandler = async ({ request }: { request: Request }) => {
+  const navId = navigateIdFromRequest(request);
+  if (!navId) return offlineDocument();
   try {
     const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-    const cached = await matchNavigateShell(cache, request);
-    if (cached) {
-      const trusted = await trustedCachedShell(cached);
-      if (trusted) return trusted;
+    let networkResponse: Response | null = null;
+    try {
+      networkResponse = await fetch(request);
+      const marked = await markNavigateDocument(networkResponse, navId);
+      if (marked) {
+        await cache.put(request.url, marked);
+        return networkResponse;
+      }
+    } catch {
+      // Cache fallback below. A thrown fetch is expected when the radio is off.
     }
 
-    try {
-      const response = await fetch(request);
-      const marked = await markNavigateDocument(response);
-      if (marked) await cache.put(request.url, marked);
-      return response;
-    } catch {
-      const retry = await matchNavigateShell(cache, request);
-      if (retry) {
-        const trusted = await trustedCachedShell(retry);
-        if (trusted) return trusted;
-      }
-      return offlineDocument();
+    const cached = await matchNavigateShell(cache, request);
+    if (cached) {
+      const trusted = await trustedCachedShell(cached, navId);
+      if (trusted) return trusted;
     }
+    return networkResponse ?? offlineDocument();
   } catch {
     return offlineDocument();
   }
@@ -163,5 +165,4 @@ const serwist = new Serwist({
   ],
 });
 
-getOfflineFallback = () => serwist.matchPrecache("/offline");
 serwist.addEventListeners();

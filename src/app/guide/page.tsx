@@ -102,6 +102,14 @@ export default function GuidePage() {
               saved routes, and your plans are tied to this browser.
             </li>
             <li>Start with a full battery. The navigate screen keeps the display on.</li>
+            <li>
+              Already-saved packs live on{" "}
+              <Link href="/offline" className="font-medium text-primary hover:underline">
+                this phone&apos;s pack backup page
+              </Link>
+              . That list is a device backup and export — it is not cloud sync, and it is
+              a different page from these prepare steps.
+            </li>
           </ul>
         </CardContent>
       </Card>
@@ -176,7 +184,8 @@ export default function GuidePage() {
             </li>
             <li>
               <strong className="text-foreground">Need to be found?</strong>{" "}
-              <strong>SOS beacon</strong> strobes the screen and loops a distress tone.
+              <strong>Sound &amp; flash locator</strong> strobes the screen and loops a
+              distress tone. It does not contact 911, SAR, or transmit your location.
               Volume up. Three of anything — whistle blasts, light flashes — is the
               universal distress signal.
             </li>

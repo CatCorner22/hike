@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { errorResponse } from "@/lib/api/errors";
+import { parseJsonBody } from "@/lib/api/validation";
 import { rateLimit } from "@/lib/api/rate-limit";
 import { parseBbox, type BboxLngLat } from "@/lib/geo/bbox";
 import { validCorridorFeatures } from "@/lib/offline/corridor-features";
 import { fetchCorridorFeatureSet } from "@/lib/osm/corridor-overpass";
+
+const MAX_CORRIDOR_BODY_BYTES = 8_192;
+
+const corridorRequestSchema = z.object({
+  routeId: z.string().trim().min(1).max(256),
+  bboxes: z.array(z.array(z.number().finite()).length(4)).min(1).max(2),
+});
 
 function parseRouteId(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 && value.length <= 256 ? value : null;
@@ -24,16 +33,13 @@ export async function POST(request: Request) {
   const limited = rateLimit(request, "corridor-features", 8);
   if (limited) return limited;
 
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
-  }
+  const parsed = await parseJsonBody(request, corridorRequestSchema, {
+    maxBytes: MAX_CORRIDOR_BODY_BYTES,
+  });
+  if (!parsed.ok) return parsed.response;
 
-  const record = body && typeof body === "object" ? body as Record<string, unknown> : null;
-  const routeId = parseRouteId(record?.routeId);
-  const bboxes = parseBboxesBody(record?.bboxes);
+  const routeId = parseRouteId(parsed.data.routeId);
+  const bboxes = parseBboxesBody(parsed.data.bboxes);
   if (!routeId || !bboxes) {
     return NextResponse.json({ error: "Route id and corridor bounds are required." }, { status: 400 });
   }

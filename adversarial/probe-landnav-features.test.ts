@@ -39,13 +39,21 @@ describe("landnav feature probes", () => {
   });
 
   it("ignores non-finite orientation values", () => {
-    expect(headingFromOrientationEvent({ webkitCompassHeading: NaN } as unknown as DeviceOrientationEvent)).toBeNull();
-    expect(fuseNavHeading({ device: Infinity, gps: 90 })).toEqual({ heading: 90, source: "gps" });
+    expect(
+      headingFromOrientationEvent(
+        { webkitCompassHeading: NaN, beta: 0, gamma: 0 } as unknown as DeviceOrientationEvent,
+        { declinationDeg: 10, screenOrientationDeg: 0 },
+      ),
+    ).toBeNull();
+    expect(fuseNavHeading({ deviceTrue: Infinity, gpsCourseTrue: 90 })).toEqual({
+      headingTrue: 90,
+      source: "gps",
+    });
   });
 
   it("flags large compass/GPS disagreement", () => {
-    expect(headingDisagreement({ compass: 10, gps: 200 }).disagrees).toBe(true);
-    expect(headingDisagreement({ compass: 10, gps: 20 }).disagrees).toBe(false);
+    expect(headingDisagreement({ compassTrue: 10, gpsCourseTrue: 200 }).disagrees).toBe(true);
+    expect(headingDisagreement({ compassTrue: 10, gpsCourseTrue: 20 }).disagrees).toBe(false);
   });
 
   it("keeps leave-behind and guardian messages unforgeable and non-alarmist", () => {

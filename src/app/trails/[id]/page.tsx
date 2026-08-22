@@ -15,8 +15,11 @@ import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
+import { httpsUrl } from "@/lib/urls";
+import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import {
   Calendar,
+  ExternalLink,
   Loader2,
   Plus,
   RefreshCw,
@@ -42,6 +45,7 @@ interface TrailData {
   network?: string;
   wikipediaUrl?: string;
   elevationProfile: Array<{ distanceMeters: number; elevation: number }>;
+  tags?: Record<string, string>;
 }
 
 export default function TrailDetailPage() {
@@ -53,8 +57,11 @@ export default function TrailDetailPage() {
   const [brief, setBrief] = useState<TrailResearchBrief | null>(null);
   const [loading, setLoading] = useState(true);
   const [researchLoading, setResearchLoading] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const packReady = useOfflinePackReady(trail ? `trail-${trailId}` : null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [creatingPlan, setCreatingPlan] = useState(false);
+  const offlineReadiness = useOfflinePackReady(trail ? `trail-${trailId}` : null);
 
   useEffect(() => {
     async function load() {
@@ -81,12 +88,25 @@ export default function TrailDetailPage() {
 
   const loadResearch = useCallback(async (refresh = false) => {
     setResearchLoading(true);
+    setResearchError(null);
     try {
       const response = await fetch(
         `/api/research/${trailId}${refresh ? "?refresh=true" : ""}`,
       );
-      const data = await response.json();
-      if (response.ok) setBrief(data.brief);
+      const data = (await response.json()) as {
+        brief?: TrailResearchBrief;
+        error?: string;
+      };
+      if (!response.ok || !data.brief) {
+        throw new Error(data.error || "Trail research is unavailable.");
+      }
+      setBrief(data.brief);
+    } catch (researchFailure) {
+      setResearchError(
+        researchFailure instanceof Error
+          ? researchFailure.message
+          : "Trail research is unavailable.",
+      );
     } finally {
       setResearchLoading(false);
     }
@@ -100,17 +120,28 @@ export default function TrailDetailPage() {
 
   async function createPlan() {
     if (!trail) return;
-    const response = await fetch("/api/plans", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: trail.name,
-        trailId: trail.id,
-      }),
-    });
-    if (response.ok) {
-      const plan = await response.json();
-      router.push(`/plan/${plan.id}`);
+    setCreatingPlan(true);
+    setPlanError(null);
+    try {
+      const response = await fetch("/api/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: trail.name,
+          trailId: trail.id,
+          customGeometry: trail.geometry,
+        }),
+      });
+      const data = (await response.json()) as { id?: string; error?: string };
+      if (!response.ok || !data.id) {
+        setPlanError(data.error || "Could not add this trail to a plan.");
+        return;
+      }
+      router.push(`/plan/${data.id}`);
+    } catch {
+      setPlanError("Could not add this trail to a plan.");
+    } finally {
+      setCreatingPlan(false);
     }
   }
 
@@ -126,6 +157,8 @@ export default function TrailDetailPage() {
   if (error || !trail) {
     return <p className="text-destructive">{error || "Trail not found"}</p>;
   }
+
+  const wikipediaHref = httpsUrl(trail.wikipediaUrl);
 
   return (
     <div className="space-y-6">
@@ -156,16 +189,32 @@ export default function TrailDetailPage() {
                 +{formatElevation(trail.elevationGainMeters)}
               </Badge>
             )}
+            {wikipediaHref && (
+              <a
+                href={wikipediaHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-md border px-2 py-0.5 text-xs text-primary hover:underline"
+              >
+                Wikipedia
+                <ExternalLink className="ml-1 h-3 w-3" />
+              </a>
+            )}
           </div>
+          {planError && <p className="mt-2 text-sm text-destructive">{planError}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={createPlan}>
-            <Plus className="mr-2 h-4 w-4" />
+          <Button onClick={createPlan} disabled={creatingPlan}>
+            {creatingPlan ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="mr-2 h-4 w-4" />
+            )}
             Add to plan
           </Button>
           <NavigateLink
             href={`/navigate/trail-${trailId}`}
-            ready={packReady}
+            {...offlineReadiness}
           />
           <PrepareOffline
             packId={`trail-${trailId}`}
@@ -174,6 +223,7 @@ export default function TrailDetailPage() {
             geometry={trail.geometry}
             bbox={trail.bbox}
             elevationProfile={trail.elevationProfile}
+            parkCode={npsParkCodeFromTags(trail.tags)}
           />
           <a
             href={`/api/sync/offline?trailId=${trailId}`}
@@ -218,14 +268,18 @@ export default function TrailDetailPage() {
         </div>
         {researchLoading && !brief ? (
           <Skeleton className="h-48 w-full" />
-        ) : brief ? (
-          <ResearchBrief brief={brief} />
         ) : null}
+        {researchError && (
+          <p role="status" className="mb-2 text-sm text-destructive">
+            {researchError} Existing trail and map data remain available.
+          </p>
+        )}
+        {brief ? <ResearchBrief brief={brief} /> : null}
       </div>
 
       <div>
         <h2 className="mb-2 text-lg font-semibold">Record activity</h2>
-        <ActivityRecorder trailId={trail.id} />
+        <ActivityRecorder trailId={trail.id || trailId} />
       </div>
     </div>
   );

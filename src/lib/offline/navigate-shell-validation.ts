@@ -4,6 +4,18 @@ export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
 export const NAVIGATE_ASSETS_CACHE = "hike-navigate-assets";
 export const MIN_NAVIGATE_DOCUMENT_BYTES = 512;
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Proves that a 200 response is the requested route screen, not a generic Next soft-error page. */
+export function containsNavigateRouteMarker(document: string, navId: string): boolean {
+  if (!navId || navId.length > 256) return false;
+  return new RegExp(
+    `data-hike-navigate-shell=["']${escapeRegExp(navId)}["']`,
+  ).test(document);
+}
+
 /** Same predicate the service worker uses before serving a cached navigate document. */
 export function looksLikeNavigateHtml(document: string): boolean {
   return (
@@ -25,8 +37,10 @@ export function isValidNavigateShellDocument(
   html: string,
   contentType: string,
   markerHeader: string | null,
+  expectedNavId?: string,
 ): boolean {
   if (!looksLikeNavigateHtml(html)) return false;
+  if (expectedNavId && !containsNavigateRouteMarker(html, expectedNavId)) return false;
   if (
     contentType &&
     !contentType.toLowerCase().includes("text/html") &&

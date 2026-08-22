@@ -21,7 +21,10 @@ const planResponse = await fetch(`${BASE}/api/plans`, {
 });
 const plan = await planResponse.json();
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try {
   const context = await browser.newContext();
   await context.addCookies([{ name, value: value.join("="), domain: new URL(BASE).hostname, path: "/", httpOnly: true, secure: false, sameSite: "Lax" }]);
