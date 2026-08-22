@@ -57,7 +57,7 @@ export function sereSections(): SereSection[] {
         "Breathe: 4-count in, 4-count hold, 4-count out before big decisions.",
         "Watch for panic, guilt, and tunnel vision in yourself and others.",
         "Small wins: fire starter lit, one liter treated, one grid copied to ICE.",
-        "If injured: treat MARCH, then stay put unless the site is immediately dangerous.",
+        "If injured: treat by MARCH-PAWS (see the medical card), then stay put unless the site is immediately dangerous.",
         "Children / elderly: prioritize warmth and hydration; they cool and dehydrate faster.",
       ],
     },
@@ -67,7 +67,7 @@ export function sereSections(): SereSection[] {
       bullets: [
         "Self-rescue only if you know where you are going and can still navigate safely.",
         "Backtrack breadcrumbs / nav log before cross-country shortcuts.",
-        "Follow downstream only if cliffs and waterfalls are likely — often traps you.",
+        "Following water downstream can lead toward roads and towns in gentle terrain — but NOT in steep or canyon country, where drainages cliff out and waterfalls trap you. Judge the terrain first.",
         "Follow sun / known handrail (road, power line, river you mapped) with pace count.",
         "Leave notes at junctions (time, direction, party status) if you must move.",
         "When you regain signal: send USNG + status before celebrating.",
