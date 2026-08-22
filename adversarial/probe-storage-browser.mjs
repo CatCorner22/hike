@@ -62,7 +62,7 @@ async function bodyText(page) {
 
 async function waitForSaveResult(page) {
   await page.waitForFunction(
-    () => /Route saved(?:\s|\.|$)|Could not save|QuotaExceeded|VersionError|requested version|route pack failed/i.test(document.body.innerText),
+    () => /Route saved(?:\s|\.|$)|Could not save|Offline storage is full|QuotaExceeded|VersionError|requested version|route pack failed/i.test(document.body.innerText),
     null,
     { timeout: 25_000 },
   );
@@ -163,7 +163,7 @@ async function scenarioQuota(browser) {
   let completed = true;
   try {
     await page.waitForFunction(
-      () => /Route saved(?:\s|\.|$)|Could not save|QuotaExceeded|VersionError|requested version/i.test(document.body.innerText),
+      () => /Route saved(?:\s|\.|$)|Could not save|Offline storage is full|QuotaExceeded|VersionError|requested version/i.test(document.body.innerText),
       null,
       { timeout: 10_000 },
     );
@@ -171,7 +171,7 @@ async function scenarioQuota(browser) {
     completed = false;
   }
   const text = await bodyText(page);
-  const failed = /QuotaExceeded|quota|not enough space|Could not save/i.test(text) && !/Route saved(?:\s|\.|$)/i.test(text);
+  const failed = /Offline storage is full|QuotaExceeded|quota|not enough space|Could not save/i.test(text) && !/Route saved(?:\s|\.|$)/i.test(text);
   const button = await action.innerText();
   result("quota-exhaustion-no-false-ready", completed && failed && /Prepare offline/i.test(button), `completed=${completed}; failed=${failed}; button=${JSON.stringify(button)}; excerpt=${JSON.stringify(text.slice(-360))}`);
   // CDP uses -1 to remove an override; zero is itself a zero-byte quota.
@@ -252,7 +252,8 @@ async function scenarioAliasWriteQuota(browser) {
       };
     });
   });
-  result("alias-write-quota-visible-and-atomic", /synthetic storage full/.test(text) && rows === 0, `rows=${rows}; excerpt=${JSON.stringify(text.slice(-260))}`);
+  const actionable = /Offline storage is full.*re-download this route before relying on this device\./is.test(text);
+  result("alias-write-quota-visible-and-atomic", actionable && rows === 0, `actionable=${actionable}; rows=${rows}; excerpt=${JSON.stringify(text.slice(-260))}`);
   await context.close();
 }
 
