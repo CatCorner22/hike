@@ -60,10 +60,14 @@ describe("navigate shell validation", () => {
     expect(headers.get("content-security-policy")).toBe("default-src 'self'");
   });
 
-  it("handles document navigation without stealing Next data requests", () => {
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "navigate")).toBe(true);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "cors")).toBe(false);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", "navigate")).toBe(false);
-    expect(isNavigateDocumentRequest("/plan/plan-123", "GET", "navigate")).toBe(false);
+  it("handles route shell requests without stealing Next RSC data requests", () => {
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", null, null)).toBe(true);
+    // Cache-warming fetches and Chromium navigations do not expose one stable
+    // mode/destination pair. Next's RSC headers are the reliable exclusion.
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "0", null)).toBe(true);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "1", null)).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", null, "1")).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", null, null)).toBe(false);
+    expect(isNavigateDocumentRequest("/plan/plan-123", "GET", null, null)).toBe(false);
   });
 });

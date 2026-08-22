@@ -31,9 +31,15 @@ export function headersForRewrittenNavigateDocument(source: Headers): Headers {
 export function isNavigateDocumentRequest(
   pathname: string,
   method: string,
-  mode: string,
+  rscHeader: string | null,
+  routerPrefetchHeader: string | null,
 ): boolean {
-  return method === "GET" && mode === "navigate" && pathname.startsWith("/navigate/");
+  return (
+    method === "GET" &&
+    pathname.startsWith("/navigate/") &&
+    rscHeader !== "1" &&
+    routerPrefetchHeader !== "1"
+  );
 }
 
 function escapeRegExp(value: string): string {
