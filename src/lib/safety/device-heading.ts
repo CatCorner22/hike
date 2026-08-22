@@ -22,6 +22,18 @@ export interface DeviceOrientationHeadingContext {
   screenOrientationDeg: number | null | undefined;
 }
 
+export interface DeviceHeadingReadingState {
+  headingTrue: number | null;
+  live: boolean;
+  message: string | null;
+}
+
+export function unavailableDeviceHeadingState(
+  message: string | null,
+): DeviceHeadingReadingState {
+  return { headingTrue: null, live: false, message };
+}
+
 const MAX_FLAT_TILT_DEG = 10;
 
 function isFlatPortrait(
@@ -101,6 +113,44 @@ export function headingFromOrientationEvent(
   return magnetic == null
     ? null
     : deviceMagneticToTrueHeading(magnetic, context.declinationDeg);
+}
+
+/**
+ * Apply one browser orientation sample without letting the relative event stream
+ * erase a valid absolute compass reading. Some browsers dispatch both
+ * `deviceorientationabsolute` and `deviceorientation`; the latter has
+ * `absolute === false` and is not a magnetic-north measurement.
+ *
+ * Missing conversion prerequisites and malformed absolute samples still clear
+ * the reading so callers never retain a heading they can no longer verify.
+ */
+export function reduceDeviceOrientationHeadingSample(
+  current: DeviceHeadingReadingState,
+  event: DeviceOrientationEvent & { webkitCompassHeading?: number },
+  context: DeviceOrientationHeadingContext,
+): DeviceHeadingReadingState {
+  if (
+    context.declinationDeg == null ||
+    !Number.isFinite(context.declinationDeg) ||
+    Math.abs(context.declinationDeg) > 90
+  ) {
+    return unavailableDeviceHeadingState(
+      "Phone compass cannot be converted to true north here — using GPS course when moving.",
+    );
+  }
+
+  const headingTrue = headingFromOrientationEvent(event, context);
+  if (headingTrue != null) {
+    return { headingTrue, live: true, message: null };
+  }
+
+  const hasAbsoluteSource =
+    event.absolute === true || typeof event.webkitCompassHeading === "number";
+  if (!hasAbsoluteSource) return current;
+
+  return unavailableDeviceHeadingState(
+    "Hold the phone flat in portrait to use its compass safely.",
+  );
 }
 
 /** Choose a true-north heading for the navigate HUD. GPS course is already true north. */

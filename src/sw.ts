@@ -109,6 +109,21 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
   if (!navId) return offlineDocument();
   try {
     const cache = await caches.open(NAVIGATE_SHELL_CACHE);
+    // A prepared shell has already been validated for this exact route and is
+    // the only launch path that does not depend on the radio. Prefer it before
+    // touching the network: a fetch can remain pending indefinitely under
+    // degraded connectivity instead of throwing an offline error.
+    try {
+      const cached = await matchNavigateShell(cache, request);
+      if (cached) {
+        const trusted = await trustedCachedShell(cached, navId);
+        if (trusted) return trusted;
+      }
+    } catch {
+      // A corrupt/unavailable cache is a miss. Try the network, but never serve
+      // an unverified cached document.
+    }
+
     let networkResponse: Response | null = null;
     try {
       networkResponse = await fetch(request);
@@ -118,19 +133,15 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
         return networkResponse;
       }
     } catch {
-      // Cache fallback below. A thrown fetch is expected when the radio is off.
-    }
-
-    const cached = await matchNavigateShell(cache, request);
-    if (cached) {
-      const trusted = await trustedCachedShell(cached, navId);
-      if (trusted) return trusted;
+      // A thrown fetch is expected when the radio is off.
     }
     return networkResponse ?? offlineDocument();
   } catch {
     return offlineDocument();
   }
 };
+
+export { navigateShellHandler };
 
 const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
