@@ -433,7 +433,7 @@ export default function NavigatePage() {
 
   // This covers a first online navigation visit before the newly registered
   // service worker has controlled the document. It is intentionally
-  // best-effort; Prepare offline remains the pre-departure guarantee.
+  // best-effort; Prepare offline is the explicit pre-departure verification flow.
   useEffect(() => {
     if (navigator.onLine) void warmNavigateShell(navId);
   }, [navId]);

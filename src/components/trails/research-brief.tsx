@@ -4,7 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertTriangle, Calendar, Car, Clock3, Dog, Tent, Users } from "lucide-react";
 import {
+  researchBriefFieldTrust,
   researchFreshness,
+  safeSourceUrl,
   type TrailResearchBrief,
 } from "@/lib/research/schema";
 import { httpsUrl } from "@/lib/urls";
@@ -15,31 +17,33 @@ interface ResearchBriefProps {
 
 export function ResearchBrief({ brief }: ResearchBriefProps) {
   const freshness = researchFreshness(brief.lastResearchedAt);
-  // Legacy cached briefs did not record evidence for these fields. Never keep
-  // displaying their plausible defaults while a refresh is in flight.
-  const evidenceAware = brief.schemaVersion === 2 && Boolean(brief.evidence);
-  const seasons = evidenceAware ? brief.bestSeasons : [];
-  const crowdLevel = evidenceAware ? brief.crowdLevel : "unknown";
-  const conditions = evidenceAware ? brief.conditions : null;
-  const summary = evidenceAware
+  const trust = researchBriefFieldTrust(brief);
+  const seasons = trust.bestSeasons ? brief.bestSeasons : [];
+  const crowdLevel = trust.crowdLevel ? brief.crowdLevel : "unknown";
+  const conditions = trust.conditions ? brief.conditions : null;
+  const summary = trust.summary
     ? brief.summary
     : "This cached brief predates source verification. Refresh it before relying on any research claim.";
-  const difficulty = evidenceAware
+  const difficulty = trust.difficultyReality
     ? brief.difficultyReality
     : "Unknown — verified difficulty evidence is unavailable.";
-  const hazards = evidenceAware ? brief.hazards : [];
-  const parking = evidenceAware
+  const hazards = trust.hazards ? brief.hazards : [];
+  const parking = trust.parking
     ? brief.parking
     : "Unknown — verified parking evidence is unavailable.";
-  const permits = evidenceAware ? brief.permits : null;
-  const dogPolicy = evidenceAware ? brief.dogPolicy : null;
-  const campingNearby = evidenceAware ? brief.campingNearby : [];
-  const sources = evidenceAware ? brief.sources : [];
-  const provenance = brief.provenance?.mode === "source_synthesis"
+  const permits = trust.permits ? brief.permits : null;
+  const dogPolicy = trust.dogPolicy ? brief.dogPolicy : null;
+  const campingNearby = trust.campingNearby ? brief.campingNearby : [];
+  const trustedSourceUrls = new Set(trust.sourceUrls);
+  const sources = brief.sources.filter((source) => {
+    const url = safeSourceUrl(source.url);
+    return Boolean(url && trustedSourceUrls.has(url));
+  });
+  const provenance = trust.cacheReusable && brief.provenance?.mode === "source_synthesis"
     ? "Source-backed synthesis"
-    : brief.provenance?.mode === "mapped_metadata_only"
+    : trust.cacheReusable && brief.provenance?.mode === "mapped_metadata_only"
       ? "Mapped metadata only"
-      : "Legacy brief — refresh provenance";
+      : "Unverified brief — refresh";
 
   return (
     <Card>
@@ -56,7 +60,7 @@ export function ResearchBrief({ brief }: ResearchBriefProps) {
         <p className="text-xs text-muted-foreground">
           Check time is not a live-condition timestamp; source pages and rules may be older or have changed.
         </p>
-        {brief.provenance?.parkCode && brief.provenance.parkName && (
+        {trust.cacheReusable && brief.provenance?.parkCode && brief.provenance.parkName && (
           <p className="text-xs text-muted-foreground">
             NPS unit verified: {brief.provenance.parkName} ({brief.provenance.parkCode}).
           </p>

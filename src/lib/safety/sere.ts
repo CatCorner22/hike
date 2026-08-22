@@ -71,7 +71,7 @@ export function sereSections(): SereSection[] {
         "Follow sun / known handrail (road, power line, river you mapped) with pace count.",
         "Leave notes at junctions (time, direction, party status) if you must move.",
         "When you regain signal: send USNG + status before celebrating.",
-        "If unsure: stay put, improve shelter, run beacon — escape is not wandering.",
+        "If unsure: stay put, improve shelter, and activate your physical PLB or satellite SOS if carried. The phone locator does not transmit.",
       ],
     },
   ];

@@ -16,7 +16,7 @@ The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). 
 - **Breadcrumbs** — Navigation tracks append durably without an 8,000-point truncation, survive a restart, and can be finished, deleted, or exported explicitly
 - **Field capture** — **Mark this place** stores a source-labeled waypoint with exact readback. Optional photos are decoded and re-encoded locally as bounded JPEGs so source EXIF/GPS metadata is not retained; places can be edited, deleted, undone, and exported as GeoJSON
 - **SOS / ICE** — One `navFix` (live GPS, last-known, or pace/heading dead reckon) for SMS, dossier, and “walk this bearing”
-- **Activities** — Start/stop/pause work offline. Pause stops GPS. Points queue in IndexedDB and replay when you are back online
+- **Activities** — Start/stop/pause work offline. Pause stops GPS. Each fix is queued durably before network delivery, Stop waits for in-flight saves, and an unfinished recording reopens paused after a hard reload instead of silently starting over
 - **Camping** — NPS / RIDB / state parks / OSM with explicit access and permit evidence. Missing evidence stays **unknown**; use **Refresh official data** for a bounded area
 - **Weather snapshot** — Pack-time conditions are cached with explicit freshness semantics; cached weather is never presented as live weather
 - **Route forecast briefing** — Prepare stores an along-route Open-Meteo snapshot (heat/cold/wind/precip/thunderstorm thresholds plus sunrise/sunset). It expires after 6 hours and is never shown as current weather. Smoke and AQI are not included
@@ -24,7 +24,7 @@ The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). 
 - **Decision-support primitives** — deterministic daylight/ETA margin, ordered decision points/bailouts, and an overdue Trip Guardian state that never equates a missing update with proof of distress
 - **Guardian status link** — An opt-in, revocable, 12–72 hour link shares only route name, progress/ETA, battery, deviation, and the server-acknowledged update time. It requires Postgres and never exposes raw GPS, ICE, or medical fields
 - **User-supplied bailout GPX** — a mapped track is stored on the pack only if it already meets the prepared route (80 m). Opening the plan page keeps that track; Klandagi will not invent a connector
-- **Research** — Optional AI brief. Reservation and source links are **https only**
+- **Research** — Optional AI brief. Every displayed model-generated field must cite its own fetched, allow-listed NPS/web evidence or it fails closed to unknown/empty; deterministic OSM metadata remains separately labeled. Reservation and source links are **https only**
 
 Commercial-product and open-source comparisons are recorded in [`docs/market-and-ml-review.md`](docs/market-and-ml-review.md). The optional on-device ML decision and its release gates are in [`docs/ml-adoption-gate.md`](docs/ml-adoption-gate.md).
 
@@ -32,7 +32,7 @@ Commercial-product and open-source comparisons are recorded in [`docs/market-and
 
 Safety calculations stay deterministic and testable. AI may summarize retrieved facts, but it must not calculate coordinates, bearings, rescue instructions, or emergency thresholds. Missing, stale, cached, and inferred information must remain visibly distinguishable.
 
-The existing route-only canvas remains the guaranteed **Safety Map** even as richer offline terrain is added later. A commercial map layer must never become a single point of failure for prepared navigation.
+The existing route-only canvas remains a deliberately simple **Safety Map** fallback even as richer offline terrain is added later. It is available only when the route and required app files were successfully saved and verified on that device; hikers should still carry a paper map and compass. A commercial map layer must never become a single point of failure for prepared navigation.
 
 ## What it is not
 
@@ -118,9 +118,9 @@ Set `SESSION_SECRET` before deploying and treat rotation as a migration event: r
 Before leaving coverage:
 
 1. Open the trail or plan on Wi-Fi.
-2. Tap **Prepare offline** to write the route pack and wait for **Offline launch files verified**. Merely saving data is not the same as verifying launch assets.
+2. Tap **Prepare offline** and wait for the readiness card to say **Ready on this device**. Merely saving route data is not the same as verifying the navigation screen and its required files.
 3. Install/test the PWA from a production build (`build && start`), not `npm run dev`.
-4. In airplane mode, fully close and reopen the installed PWA, open **Saved**, and launch the pack once before leaving.
+4. In airplane mode, fully close and reopen the installed PWA, open **Saved**, and launch the route once before leaving.
 5. Open **Go**. The verified route remains visible without tiles or network.
 6. Keep redundant power, lighting, map/compass skills, and official guidance appropriate to the trip.
 

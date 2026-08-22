@@ -5,7 +5,12 @@ import { Button } from "@/components/ui/button";
 import { copyEmergencyInfo } from "@/lib/safety/emergency";
 import { downloadTextFile, safeFilename } from "@/lib/safety/field";
 import type { IceProfile } from "@/lib/safety/profile";
-import { formatLeaveBehindCard } from "@/lib/safety/leave-behind";
+import {
+  formatLeaveBehindCard,
+  type LeaveBehindLocation,
+  type LeaveBehindRouteFact,
+} from "@/lib/safety/leave-behind";
+import { printOrDownloadPlain } from "@/components/safety/print-plain";
 import {
   formatGuardianMessage,
   guardianSmsHref,
@@ -19,6 +24,13 @@ type GuardianShareProps = {
   profile: IceProfile;
   returnAt?: string | null;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString | null;
+  plannedDate?: string | null;
+  departureTime?: string | null;
+  vehicle?: string | null;
+  planNotes?: string | null;
+  waypoints?: LeaveBehindLocation[] | null;
+  bailouts?: LeaveBehindLocation[] | null;
+  routeFacts?: LeaveBehindRouteFact[] | null;
   lat?: number;
   lng?: number;
   accuracyM?: number;
@@ -61,27 +73,18 @@ function isGuardianControl(value: unknown): value is GuardianLinkControl {
     typeof row.autoUpdate === "boolean";
 }
 
-function printPlain(title: string, body: string) {
-  const popup = window.open("", "_blank", "noopener,noreferrer,width=720,height=900");
-  if (!popup) return false;
-  const escaped = body
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-  popup.document.write(
-    `<!doctype html><html><head><title>${title.replace(/</g, "")}</title><meta charset="utf-8"></head><body style="font:14px/1.45 ui-monospace,monospace;padding:24px;white-space:pre-wrap">${escaped}</body></html>`,
-  );
-  popup.document.close();
-  popup.focus();
-  popup.print();
-  return true;
-}
-
 export function GuardianShare({
   trailName,
   profile,
   returnAt,
   geometry,
+  plannedDate,
+  departureTime,
+  vehicle,
+  planNotes,
+  waypoints,
+  bailouts,
+  routeFacts,
   lat,
   lng,
   accuracyM,
@@ -374,14 +377,29 @@ export function GuardianShare({
           type="button"
           variant="outline"
           className={compact ? "min-h-11" : undefined}
-          onClick={async () => {
-            const text = formatLeaveBehindCard({ trailName, profile, returnAt, geometry });
-            const printed = printPlain(`${trailName} leave-behind`, text);
-            if (!printed) {
-              await handOff(text, `${safeFilename(trailName)}-leave-behind.txt`, false);
-            } else {
-              flash("Print dialog opened");
-            }
+          onClick={() => {
+            const text = formatLeaveBehindCard({
+              trailName,
+              profile,
+              returnAt,
+              geometry,
+              plannedDate,
+              departureTime,
+              vehicle,
+              notes: planNotes,
+              waypoints,
+              bailouts,
+              routeFacts,
+            });
+            const outcome = printOrDownloadPlain(
+              {
+                title: `${trailName} leave-behind`,
+                body: text,
+                filename: `${safeFilename(trailName)}-leave-behind.txt`,
+              },
+              { download: downloadTextFile },
+            );
+            flash(outcome === "printed" ? "Print dialog opened" : "Popup blocked; downloaded text");
           }}
         >
           Print leave-behind

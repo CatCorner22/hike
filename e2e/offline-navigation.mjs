@@ -322,7 +322,7 @@ async function run() {
       );
       void mod;
       const btn = [...document.querySelectorAll("button")].find((b) =>
-        /prepare offline|update offline pack/i.test(b.textContent || ""),
+        /prepare offline|update offline (?:pack|route)/i.test(b.textContent || ""),
       );
       if (btn) {
         btn.click();
@@ -436,7 +436,7 @@ async function run() {
     let shellCached = await waitForVerifiedShell(navShellUrl);
     if (!shellCached && prepared.via === "button") {
       log("B1 retry prepare", "....", "verified shell missing after save — warming again");
-      await page.getByRole("button", { name: /prepare offline|update offline pack/i }).click();
+      await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click();
       await page.waitForFunction(
         () =>
           /Route saved|Route and navigation screen saved|Could not save|Navigation screen could not/i.test(
@@ -533,7 +533,7 @@ async function run() {
     if (workerStillOnline) {
       log(
         "B3b offline is not enforced for the service worker",
-        "WARN",
+        "FAIL",
         "setOffline did not cut the worker's network, so B3 below does not prove the cached shell was used. Run the CI job, or stop the server before the cold open, to test this for real.",
       );
     }
@@ -551,7 +551,10 @@ async function run() {
         navigationResponse = {
           url: response.url(),
           status: response.status(),
-          source: response.headers()["x-hike-offline-shell"] ?? null,
+          source:
+            response.headers()["x-hike-navigate-shell"] ??
+            response.headers()["x-hike-offline-shell"] ??
+            null,
         };
       }
       await page.waitForTimeout(2500);
@@ -561,12 +564,15 @@ async function run() {
         : { ...(await assessNavigateScreen(page)), navigationResponse };
     }
     const cold = await coldNavigateOnce();
+    const usedVerifiedShell =
+      cold.navigationResponse?.source === "hike-navigate-shell-v2";
+    const verifiedColdStart = !workerStillOnline && cold.ok && usedVerifiedShell;
     log(
       "B3 cold offline navigate",
-      cold.ok ? (workerStillOnline ? "PASS*" : "PASS") : "FAIL",
+      verifiedColdStart ? "PASS" : "FAIL",
       `${workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt} | response=${JSON.stringify(cold.navigationResponse)}`,
     );
-    if (!cold.ok) {
+    if (!verifiedColdStart) {
       // B1 already proved the shell is in Cache Storage, so a failure here means the
       // service worker's own lookup disagreed with the probe's. Report the state it
       // would have seen rather than leaving the next reader to guess: this scenario
@@ -618,7 +624,10 @@ async function run() {
         .catch((error) => ({ evaluateFailed: String(error) }));
       log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 1200));
     }
-    results.push(["B: cold offline navigate", cold.ok && shellCached && cacheAudit.ok]);
+    results.push([
+      "B: cold offline navigate via verified shell",
+      verifiedColdStart && shellCached && cacheAudit.ok,
+    ]);
 
     // Storage durability.
     //

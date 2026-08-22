@@ -2,7 +2,7 @@
 
 import { APP_NAME } from "@/lib/brand";
 import { GuardianShare } from "@/components/safety/guardian-share";
-import { getIceProfile, getOverdueAlarm, type IceProfile } from "@/lib/safety/profile";
+import { getIceProfile, resolveLocalDateTime, type IceProfile } from "@/lib/safety/profile";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, MapPinned, ShieldAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -24,12 +24,14 @@ import { assessDaylightMargin } from "@/lib/safety/decision-support";
 import { bailoutRouteCandidates, type PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
 import { bailoutDecisionPoints, explicitBailoutCandidates } from "@/lib/safety/bailout";
 
-interface Waypoint { name: string; lat: number; lng: number }
+interface Waypoint { name: string; lat: number; lng: number; kind?: string }
+type ReturnOccurrence = "earlier" | "later" | null;
 
 interface PreDeparturePanelProps {
   planId: string;
   trailName?: string;
   plannedDate?: string | null;
+  planNotes?: string | null;
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   waypoints?: Waypoint[] | null;
 }
@@ -47,8 +49,18 @@ function localDeparture(plannedDate: string | null | undefined, time: string): D
   return Number.isFinite(value.getTime()) ? value : null;
 }
 
-export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, waypoints = [] }: PreDeparturePanelProps) {
+export function PreDeparturePanel({
+  planId,
+  trailName,
+  plannedDate,
+  planNotes,
+  geometry,
+  waypoints = [],
+}: PreDeparturePanelProps) {
   const [departureTime, setDepartureTime] = useState("");
+  const [returnLocal, setReturnLocal] = useState("");
+  const [returnOccurrence, setReturnOccurrence] = useState<ReturnOccurrence>(null);
+  const [vehicle, setVehicle] = useState("");
   const [paceMph, setPaceMph] = useState("2.0");
   const [profile, setProfile] = useState<IceProfile>({
     name: "",
@@ -57,18 +69,16 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     medical: "",
     partySize: 1,
   });
-  const [returnAt, setReturnAt] = useState<string | null>(null);
   const [osmBailouts, setOsmBailouts] = useState<ReturnType<typeof deriveCorridorBailouts>>([]);
   const [hazardBrief, setHazardBrief] = useState<RouteHazardBrief | null>(null);
   const [officialAlerts, setOfficialAlerts] = useState<RouteOfficialAlertSnapshot | null>(null);
   const [storedBailouts, setStoredBailouts] = useState<PreparedBailoutRoute[]>([]);
 
   useEffect(() => {
-    void (async () => {
-      const [p, alarm] = await Promise.all([getIceProfile(), getOverdueAlarm()]);
-      setProfile(p);
-      setReturnAt(alarm?.returnAt ?? null);
-    })();
+    void getIceProfile().then(setProfile).catch(() => {
+      // The leave-behind formatter will show unset contact fields rather than
+      // claiming an unreadable profile was loaded.
+    });
   }, []);
 
   useEffect(() => {
@@ -97,6 +107,30 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
     () => bailoutDecisionPoints([...userBailouts, ...gpxBailouts, ...osmBailouts]),
     [userBailouts, gpxBailouts, osmBailouts],
   );
+  const leaveBehindWaypoints = useMemo(
+    () => (waypoints ?? []).map((waypoint) => ({
+      name: waypoint.name,
+      kind: waypoint.kind ? `Marked ${waypoint.kind}` : "Marked waypoint",
+      lat: waypoint.lat,
+      lng: waypoint.lng,
+    })),
+    [waypoints],
+  );
+  const leaveBehindBailouts = useMemo(
+    () => bailouts.map((point) => ({
+      name: point.name,
+      kind: "Bailout candidate",
+      lat: point.lat,
+      lng: point.lng,
+      routePosition: `${formatDistance(point.distanceMeters)} into saved route`,
+      detail: point.id.startsWith("waypoint-")
+        ? "You marked this candidate; verify the actual exit."
+        : point.id.startsWith("gpx-")
+          ? "Imported GPX meets the route; verify the track and access."
+          : "Nearby mapped feature; not a confirmed exit.",
+    })),
+    [bailouts],
+  );
 
   const daylight = useMemo(() => {
     const departure = localDeparture(plannedDate, departureTime);
@@ -111,6 +145,12 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
       paceMetersPerHour: mph * 1609.344,
     });
   }, [plannedDate, departureTime, geometry, paceMph, routeLength]);
+  const returnResolution = returnLocal
+    ? resolveLocalDateTime(returnLocal, undefined, returnOccurrence)
+    : null;
+  const returnAt = returnResolution?.kind === "resolved"
+    ? returnResolution.value.instant.toISOString()
+    : null;
 
   return (
     <Card>
@@ -128,7 +168,8 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Terrain target</p>
             <p className="mt-1 text-sm font-medium">{corridorCoverageLabel(corridor)}</p>
             <p className="text-xs text-muted-foreground">
-              {corridorSizeLabel(corridor)} · bbox estimate. Prepare stores this spec plus nearby OSM vectors when Overpass answers. Terrain tiles are not downloaded.
+              Prepare will try to save nearby trails, roads, water, shelters, campsites,
+              and landmarks. Shaded terrain and contour tiles are not saved yet.
             </p>
           </div>
           <div>
@@ -240,7 +281,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
               ))}
               <p className="text-xs text-muted-foreground">
                 {osmBailouts.length ? `${CORRIDOR_DECISION_DISCLAIMER} ` : ""}
-                Named “Bailout:” or “Exit:” waypoints stay user-marked. User-supplied GPX is stored only if it meets the route. {APP_NAME} does not invent a straight-line shortcut.
+                User-marked bailout waypoints stay explicitly labeled. User-supplied GPX is stored only if it meets the route. {APP_NAME} does not invent a straight-line shortcut.
               </p>
             </div>
           ) : (
@@ -248,7 +289,7 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
               <AlertTriangle />
               <AlertTitle>No bailout candidates yet</AlertTitle>
               <AlertDescription>
-                Add a waypoint beginning with “Bailout:” or “Exit:” after you have verified a real trail/road exit,
+                Add a waypoint with type “Bailout / exit” after you have verified a real trail or road exit,
                 or import a bailout GPX that already meets the route. Prepare offline to load OSM features that actually meet the route. {APP_NAME} will not invent a straight-line shortcut.
               </AlertDescription>
             </Alert>
@@ -261,26 +302,106 @@ export function PreDeparturePanel({ planId, trailName, plannedDate, geometry, wa
         <div className="space-y-2">
           <h3 className="font-medium">Leave-behind and Trip Guardian</h3>
           <p className="text-xs text-muted-foreground">
-            Print a card for the fridge before you lose signal. Guardian texts to ICE never treat a missed update as proof of distress.
+            Print a card for the fridge before you lose signal. It includes your schedule,
+            plan notes, named waypoints, and marked exit candidates. Guardian texts to ICE
+            never treat a missed update as proof of distress.
           </p>
+          <div className="max-w-xl">
+            <Label htmlFor={`leave-behind-return-${planId}`}>
+              Agreed overdue-action date and time (optional)
+            </Label>
+            <Input
+              id={`leave-behind-return-${planId}`}
+              type="datetime-local"
+              value={returnLocal}
+              onChange={(event) => {
+                setReturnLocal(event.target.value);
+                setReturnOccurrence(null);
+              }}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Enter and confirm this for this plan. Klandagi will not reuse a deadline
+              saved for another trip; an unset deadline prints as not set.
+            </p>
+          </div>
+          {returnResolution?.kind === "ambiguous" && (
+            <fieldset className="max-w-xl space-y-2 rounded-md border p-3">
+              <legend className="px-1 text-sm font-medium">
+                Repeated clock time — choose the agreed deadline
+              </legend>
+              <p className="text-xs text-muted-foreground">{returnResolution.message}</p>
+              {returnResolution.choices.map((choice, index) => {
+                const occurrence: ReturnOccurrence = index === 0 ? "earlier" : "later";
+                return (
+                  <label key={choice.instant.toISOString()} className="flex items-center gap-2 text-sm">
+                    <input
+                      type="radio"
+                      name={`leave-behind-return-occurrence-${planId}`}
+                      checked={returnOccurrence === occurrence}
+                      onChange={() => setReturnOccurrence(occurrence)}
+                    />
+                    {index === 0 ? "First occurrence" : "Second occurrence"} ({choice.utcOffset})
+                  </label>
+                );
+              })}
+            </fieldset>
+          )}
+          {returnResolution &&
+            returnResolution.kind !== "resolved" &&
+            returnResolution.kind !== "ambiguous" && (
+              <p role="alert" className="text-xs text-destructive">
+                {returnResolution.message} The leave-behind will omit this deadline.
+              </p>
+            )}
+          <div className="max-w-xl">
+            <Label htmlFor={`vehicle-${planId}`}>Vehicle description or plate (optional)</Label>
+            <Input
+              id={`vehicle-${planId}`}
+              value={vehicle}
+              maxLength={160}
+              autoComplete="off"
+              placeholder="Blue Subaru, plate ABC 123"
+              onChange={(event) => setVehicle(event.target.value)}
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              This stays on this screen and is included only when you print the leave-behind.
+            </p>
+          </div>
           <GuardianShare
             trailName={trailName || `Plan ${planId.slice(0, 8)}`}
             profile={profile}
             returnAt={returnAt}
             geometry={geometry}
+            plannedDate={plannedDate}
+            departureTime={departureTime}
+            vehicle={vehicle}
+            planNotes={planNotes}
+            waypoints={leaveBehindWaypoints}
+            bailouts={leaveBehindBailouts}
+            routeFacts={[{
+              label: "Saved route distance",
+              value: formatDistance(routeLength),
+              basis: "calculated from the saved route line",
+            }]}
             compact
           />
         </div>
 
         <Separator />
 
-        <div className="space-y-2">
-          <h3 className="font-medium">Planned offline context layers</h3>
-          <div className="flex flex-wrap gap-2">{corridor.layers.map((layer) => <Badge key={layer} variant="secondary">{layer}</Badge>)}</div>
-          <p className="text-xs text-muted-foreground">
-            {corridorSizeLabel(corridor)} for these layers (bounding-box estimate). Vector layers (trails, roads, water, shelters, campsites, landmarks) are fetched from OpenStreetMap when you prepare. Hillshade and contours stay as size estimates only — tiles are not downloaded. The Safety Map remains the guaranteed fallback.
-          </p>
-        </div>
+        <details className="rounded-lg border p-3 text-sm">
+          <summary className="cursor-pointer font-medium">Technical preparation details</summary>
+          <div className="mt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">{corridor.layers.map((layer) => <Badge key={layer} variant="secondary">{layer}</Badge>)}</div>
+            <p className="text-xs text-muted-foreground">
+              {corridorSizeLabel(corridor)} is a bounding-box storage estimate. Prepare
+              requests nearby vector features from OpenStreetMap; that request can fail or
+              return only partial data. Hillshade and contour tiles are estimates only and
+              are not downloaded. The route-only Safety Map works only after its route and
+              required app files have been saved and verified on this device.
+            </p>
+          </div>
+        </details>
       </CardContent>
     </Card>
   );

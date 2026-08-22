@@ -9,6 +9,7 @@ import { isoDatetimeSchema, parseJsonBody } from "@/lib/api/validation";
 import { coordsToLineString } from "@/lib/geo";
 import { requireOwner } from "@/lib/auth/owner";
 import { getActivity, listActivityPoints, updateActivity } from "@/lib/store/local";
+import { downsampleActivityPoints } from "@/lib/activities/display-points";
 
 const activityPatchSchema = z.object({
   endedAt: isoDatetimeSchema.nullable().optional(),
@@ -25,24 +26,6 @@ const activityPatchSchema = z.object({
  * true count and whether the response was reduced. Callers that need full
  * fidelity page through /api/activities/:id/points.
  */
-const DISPLAY_POINT_BUDGET = 2000;
-
-function downsampleForDisplay<T>(points: T[]): {
-  points: T[];
-  pointCount: number;
-  downsampled: boolean;
-} {
-  if (points.length <= DISPLAY_POINT_BUDGET) {
-    return { points, pointCount: points.length, downsampled: false };
-  }
-  const stride = Math.ceil(points.length / DISPLAY_POINT_BUDGET);
-  const reduced: T[] = [];
-  for (let index = 0; index < points.length; index += stride) reduced.push(points[index]);
-  const last = points[points.length - 1];
-  if (reduced[reduced.length - 1] !== last) reduced.push(last);
-  return { points: reduced, pointCount: points.length, downsampled: true };
-}
-
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const owner = await requireOwner(request);
@@ -58,26 +41,28 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         where: eq(activityPoints.activityId, id),
         orderBy: (p, { asc }) => [asc(p.recordedAt)],
       });
-      const trackGeometry = points.length >= 2
-        ? coordsToLineString(points.map((point) => ({ lat: point.lat, lng: point.lng })))
+      const display = downsampleActivityPoints(points);
+      const trackGeometry = display.points.length >= 2
+        ? coordsToLineString(display.points.map((point) => ({ lat: point.lat, lng: point.lng })))
         : null;
       // trackGeometry is a cache, not evidence. Deriving it from the authoritative
       // points on read prevents a late, accepted fix from disappearing from the line a
       // hiker reviews even if an older deployment left a stale cache behind.
       return NextResponse.json({
         activity: { ...activity, trackGeometry },
-        ...downsampleForDisplay(points),
+        ...display,
       });
     }
     const activity = await getActivity(id, owner.ownerId);
     if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const points = await listActivityPoints(id);
-    const trackGeometry = points.length >= 2
-      ? coordsToLineString(points.map((point) => ({ lat: point.lat, lng: point.lng })))
+    const display = downsampleActivityPoints(points);
+    const trackGeometry = display.points.length >= 2
+      ? coordsToLineString(display.points.map((point) => ({ lat: point.lat, lng: point.lng })))
       : null;
     return NextResponse.json({
       activity: { ...activity, trackGeometry },
-      ...downsampleForDisplay(points),
+      ...display,
     });
   } catch (error) {
     return errorResponse(error, "Failed to load activity");

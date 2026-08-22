@@ -57,6 +57,13 @@ export class LocalStoreCorruptionError extends Error {
   }
 }
 
+export class ActivityIdCollisionError extends Error {
+  constructor() {
+    super("Activity idempotency key is unavailable.");
+    this.name = "ActivityIdCollisionError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -322,17 +329,40 @@ export async function getActivity(id: string, ownerId: string) {
   return store.activities.find((a) => a.id === id && a.ownerId === ownerId) ?? null;
 }
 
+/**
+ * Creation-only lookup that never exposes another owner's row. The caller may replay
+ * `activity` or fail closed on `collision`; it must not serialize collision details.
+ */
+export async function replayActivityCreate(id: string, ownerId: string): Promise<
+  | { status: "missing" }
+  | { status: "owned"; activity: StoredActivity }
+  | { status: "collision" }
+> {
+  const store = await readStore();
+  const activity = store.activities.find((candidate) => candidate.id === id);
+  if (!activity) return { status: "missing" };
+  if (activity.ownerId !== ownerId) return { status: "collision" };
+  return { status: "owned", activity };
+}
+
 export async function createActivity(input: {
   ownerId: string;
+  clientActivityId?: string;
   trailId?: string | null;
   planId?: string | null;
   name?: string | null;
   startedAt: string;
 }) {
   return mutateStore((store) => {
+    const id = input.clientActivityId ?? crypto.randomUUID();
+    const existing = store.activities.find((activity) => activity.id === id);
+    if (existing) {
+      if (existing.ownerId !== input.ownerId) throw new ActivityIdCollisionError();
+      return existing;
+    }
     const now = new Date().toISOString();
     const activity: StoredActivity = {
-      id: crypto.randomUUID(),
+      id,
       ownerId: input.ownerId,
       planId: input.planId ?? null,
       trailId: input.trailId ?? null,

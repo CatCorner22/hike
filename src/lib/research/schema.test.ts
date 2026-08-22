@@ -1,9 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   isCurrentResearchBrief,
+  MAPPED_METADATA_SUMMARY,
+  researchBriefFieldTrust,
   researchFreshness,
   safeSourceUrl,
+  SOURCE_SYNTHESIS_SUMMARY,
   trailResearchBriefSchema,
+  UNKNOWN_MAPPED_DIFFICULTY,
+  UNKNOWN_MAPPED_PARKING,
+  UNKNOWN_SOURCE_DIFFICULTY,
+  UNKNOWN_SOURCE_PARKING,
 } from "./schema";
 
 /**
@@ -65,7 +72,7 @@ describe("trailResearchBriefSchema", () => {
 
   it("does not treat a legacy cached brief as provenance-aware", () => {
     expect(isCurrentResearchBrief(brief)).toBe(false);
-    expect(isCurrentResearchBrief({
+    const legacyV2 = {
       ...brief,
       schemaVersion: 2,
       evidence: { bestSeasons: [], crowdLevel: [], conditions: [] },
@@ -74,6 +81,138 @@ describe("trailResearchBriefSchema", () => {
         parkCode: null,
         parkName: null,
       },
+    } as const;
+
+    // Parsing remains backward compatible, but the cache is refreshed before
+    // it can be displayed because it lacks evidence decisions for newer fields.
+    expect(trailResearchBriefSchema.safeParse(legacyV2).success).toBe(true);
+    expect(isCurrentResearchBrief(legacyV2)).toBe(false);
+
+    expect(isCurrentResearchBrief({
+      ...brief,
+      schemaVersion: 2,
+      summary: MAPPED_METADATA_SUMMARY,
+      bestSeasons: [],
+      difficultyReality: UNKNOWN_MAPPED_DIFFICULTY,
+      hazards: [],
+      parking: UNKNOWN_MAPPED_PARKING,
+      permits: null,
+      crowdLevel: "unknown",
+      conditions: null,
+      dogPolicy: null,
+      campingNearby: [],
+      sources: [{
+        title: "OpenStreetMap trail record",
+        url: "https://www.openstreetmap.org/relation/123",
+        provider: "openstreetmap",
+      }],
+      evidence: {
+        summary: [],
+        bestSeasons: [],
+        difficultyReality: [],
+        hazards: [],
+        parking: [],
+        permits: [],
+        crowdLevel: [],
+        conditions: [],
+        dogPolicy: [],
+        campingNearby: [],
+      },
+      provenance: {
+        mode: "mapped_metadata_only",
+        parkCode: null,
+        parkName: null,
+      },
+    })).toBe(true);
+  });
+
+  it("does not let complete-but-empty evidence authorize generated claims", () => {
+    const unsafe = {
+      ...brief,
+      schemaVersion: 2 as const,
+      summary: SOURCE_SYNTHESIS_SUMMARY,
+      bestSeasons: ["Always"],
+      difficultyReality: "Easy for everyone.",
+      hazards: ["No hazards."],
+      parking: "Guaranteed parking.",
+      permits: "No permit required.",
+      crowdLevel: "low" as const,
+      conditions: "All clear.",
+      dogPolicy: "Dogs always allowed.",
+      campingNearby: ["Camp anywhere."],
+      sources: [],
+      evidence: {
+        summary: [],
+        bestSeasons: [],
+        difficultyReality: [],
+        hazards: [],
+        parking: [],
+        permits: [],
+        crowdLevel: [],
+        conditions: [],
+        dogPolicy: [],
+        campingNearby: [],
+      },
+      provenance: {
+        mode: "source_synthesis" as const,
+        parkCode: null,
+        parkName: null,
+      },
+    };
+
+    const trust = researchBriefFieldTrust(unsafe);
+    expect(isCurrentResearchBrief(unsafe)).toBe(false);
+    expect(trust.bestSeasons).toBe(false);
+    expect(trust.difficultyReality).toBe(false);
+    expect(trust.hazards).toBe(false);
+    expect(trust.parking).toBe(false);
+    expect(trust.permits).toBe(false);
+    expect(trust.crowdLevel).toBe(false);
+    expect(trust.conditions).toBe(false);
+    expect(trust.dogPolicy).toBe(false);
+    expect(trust.campingNearby).toBe(false);
+  });
+
+  it("requires each evidence URL to be in the displayed external source set", () => {
+    const sourceUrl = "https://example.gov/trail";
+    const evidence = {
+      summary: [],
+      bestSeasons: [],
+      difficultyReality: [],
+      hazards: [sourceUrl],
+      parking: [],
+      permits: [],
+      crowdLevel: [],
+      conditions: [],
+      dogPolicy: [],
+      campingNearby: [],
+    };
+    const base = {
+      ...brief,
+      schemaVersion: 2 as const,
+      summary: SOURCE_SYNTHESIS_SUMMARY,
+      bestSeasons: [],
+      difficultyReality: UNKNOWN_SOURCE_DIFFICULTY,
+      hazards: ["Loose rock."],
+      parking: UNKNOWN_SOURCE_PARKING,
+      permits: null,
+      crowdLevel: "unknown" as const,
+      conditions: null,
+      dogPolicy: null,
+      campingNearby: [],
+      evidence,
+      provenance: {
+        mode: "source_synthesis" as const,
+        parkCode: null,
+        parkName: null,
+      },
+    };
+
+    expect(researchBriefFieldTrust({ ...base, sources: [] }).hazards).toBe(false);
+    expect(isCurrentResearchBrief({ ...base, sources: [] })).toBe(false);
+    expect(isCurrentResearchBrief({
+      ...base,
+      sources: [{ title: "Trail bulletin", url: sourceUrl, provider: "web" as const }],
     })).toBe(true);
   });
 });

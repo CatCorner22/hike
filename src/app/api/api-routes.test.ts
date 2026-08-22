@@ -285,6 +285,90 @@ describe("activity integrity races", () => {
     await writeFile(storePath, JSON.stringify(store));
   }
 
+  it("replays a committed activity create by client UUID without changing or duplicating it", async () => {
+    const clientActivityId = "44444444-4444-4444-8444-444444444444";
+    const first = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({
+          clientActivityId,
+          name: "Original activity",
+          startedAt: "2026-08-20T12:00:00.000Z",
+        }),
+      ),
+    );
+    expect(first.status).toBe(200);
+    const original = await first.json() as {
+      id: string;
+      name: string;
+      startedAt: string;
+      createdAt: string;
+    };
+    expect(original.id).toBe(clientActivityId);
+
+    const retry = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({
+          clientActivityId,
+          name: "Changed retry must be ignored",
+          startedAt: "2026-08-21T12:00:00.000Z",
+        }),
+      ),
+    );
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toMatchObject(original);
+
+    const listed = await listActivitiesRoute(getRequest("http://localhost/api/activities"));
+    const body = await listed.json() as { activities: Array<{ id: string }> };
+    expect(body.activities.filter((activity) => activity.id === clientActivityId)).toHaveLength(1);
+  });
+
+  it("fails closed when another owner presents the same activity idempotency key", async () => {
+    const clientActivityId = "55555555-5555-4555-8555-555555555555";
+    const first = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId }),
+        session,
+      ),
+    );
+    expect(first.status).toBe(200);
+
+    const collision = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId }),
+        otherSession,
+      ),
+    );
+    expect(collision.status).toBe(409);
+
+    const mine = await listActivitiesRoute(getRequest("http://localhost/api/activities", session));
+    const theirs = await listActivitiesRoute(getRequest("http://localhost/api/activities", otherSession));
+    expect((await mine.json()).activities).toHaveLength(1);
+    expect((await theirs.json()).activities).toHaveLength(0);
+  });
+
+  it("validates clientActivityId while keeping legacy creates non-idempotent", async () => {
+    const invalid = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId: "not-a-uuid" }),
+      ),
+    );
+    expect(invalid.status).toBe(400);
+
+    const first = await createActivity(jsonRequest("http://localhost/api/activities", "POST", "{}"));
+    const second = await createActivity(jsonRequest("http://localhost/api/activities", "POST", "{}"));
+    expect((await first.json()).id).not.toBe((await second.json()).id);
+  });
+
   it("returns the first point for concurrent tuple retries and client-key retries", async () => {
     const activity = await createOwnedActivity();
     const params = { params: Promise.resolve({ id: activity.id }) };
@@ -587,4 +671,3 @@ describe("Explore OSM trail ids", () => {
     expect(badActivity.status).toBe(400);
   });
 });
-

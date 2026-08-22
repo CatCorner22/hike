@@ -85,7 +85,7 @@ export function BailoutRoutePanel({
     setBusy(true);
     try {
       await persistRoutes(routes.filter((route) => route.id !== id));
-      setMessage("Bailout track removed from this device pack.");
+      setMessage("Bailout track removed from this saved offline route.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not remove that bailout track.");
     } finally {

@@ -170,7 +170,7 @@ export function hypothermiaStage(input: {
       actions: [
         "Call emergency services and evacuate urgently; protect airway and insulate from ground, wind, and moisture.",
         "Handle gently and keep horizontal: rough handling of a severely hypothermic casualty can trigger a fatal arrhythmia.",
-        "Do not declare death in the field: no one is dead until warm and dead. Start CPR only if no signs of life and trained to do so.",
+        "Check responsiveness and normal breathing carefully — severe hypothermia can make breathing slow and shallow. If unresponsive and not breathing normally or only gasping, call 911, get an AED, and start chest compressions at 100–120/min. Use hands-only CPR if untrained or unwilling to give breaths; if trained and willing, give 30 compressions and 2 breaths. Do not declare death in the field.",
       ],
     };
   }

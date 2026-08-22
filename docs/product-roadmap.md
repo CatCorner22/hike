@@ -26,7 +26,10 @@ Klandagi should compete as a safety-first wilderness decision-support and contin
 | Route-aware briefing | Delivered baseline | Along-route forecast plus NWS/NPS official-alert snapshots are stored with provenance and freshness. Smoke and AQI remain future authoritative integrations. |
 | Bailouts and decision points | Delivered baseline | Ordered route decisions, OSM candidates, and user GPX bailouts are supported; the app never invents a connector to the prepared route. |
 | Trip Guardian | Delivered baseline | Links are opt-in, revocable, short-lived, database-backed, and expose minimal status without interpreting silence as distress. Delivery notifications and accounts remain future work. |
+| Terrain difficulty intelligence | Delivered baseline | Route distance, ascent/descent, maximum and sustained grade, altitude, and mapped terrain factors are shown as measured, reported, or unknown—never collapsed into an opaque score. |
+| Printable leave-behind | Delivered baseline | A print-ready or downloadable trip card carries the route, return deadline, ICE information, route endpoints when geometry is available, and the explicit silence-is-not-distress disclaimer. |
 | Field waypoints | Delivered text/photo baseline | Durable source-labeled marks, privacy-scrubbed bounded photos, edit/delete/undo, and GeoJSON export ship. Voice notes remain behind the ML adoption gate. |
+| Activity recording and export | Delivered baseline | Fixes are queued before upload, local/server identity is stable, Stop drains pending saves, hard-reload recovery is explicitly paused, and finished activities/navigation tracks export as GPX. |
 | Optional accounts/sync, complete terrain tiles, smoke/AQI, 3D/native/watch | Planned | These require separate product, licensing, operational, and physical-device validation; they are not represented as completed. |
 
 ### P0 — current tranche
@@ -38,7 +41,7 @@ Klandagi should compete as a safety-first wilderness decision-support and contin
 - Route-pack extension points for decision points and richer hazard briefings.
 
 ### P1 — offline terrain corridor
-Download a configurable corridor around the route containing terrain context, nearby trails, roads, water, shelters, trailheads, campsites, bridges, and landmarks. Show coverage explicitly (for example, route + 2-mile corridor). Keep the existing canvas Safety Map as the guaranteed fallback.
+Download a configurable corridor around the route containing terrain context, nearby trails, roads, water, shelters, trailheads, campsites, bridges, and landmarks. Show coverage explicitly (for example, route + 2-mile corridor). Keep the existing canvas Safety Map as a route-only fallback when its route and app files have been saved and verified; never describe any phone-based map as guaranteed.
 
 ### P1 — route-aware hazard briefing
 Sample conditions along the route and time axis. Store forecast provenance and expiry. Include precipitation, gusts, heat/cold stress inputs, severe-weather alerts, smoke/AQI where authoritative sources permit, and sunrise/sunset. The briefing must continue to work from its cached facts offline and clearly mark staleness.
@@ -58,15 +61,14 @@ Aggregate closures and notices from authoritative land managers and emergency so
 ### P2 — optional accounts and sync
 Keep anonymous device mode. Add optional accounts for backup, cross-device planning, shared trips, and device replacement. GPS history remains private by default. Never make an account a prerequisite for prepared offline navigation.
 
-### P2 — terrain difficulty intelligence
-Explain difficulty using distance, ascent/descent, maximum and sustained grade, technical/route-finding factors, crossings, exposure, shade, water, altitude, and daylight requirements rather than a single opaque rating.
+### P2 — terrain difficulty intelligence (delivered baseline)
+Explain difficulty using distance, ascent/descent, maximum and sustained grade, technical/route-finding factors, crossings, exposure, shade, water, altitude, and daylight requirements rather than a single opaque rating. The baseline distinguishes measured route facts, community-reported metadata, and unknown evidence. More complete member-way and field evidence remains future work.
 
 ### P2 — field waypoints
 Offline waypoint creation with typed categories (water, hazard, campsite, crossing, viewpoint, vehicle, obstruction, shelter, custom), text/voice/photo attachments where platform support permits, and GPX/KML-compatible export.
 
 ### P3
 - Land-management/access/permit layers.
-- Printable leave-behind trip card.
 - 3D terrain after offline terrain and bailout workflows are mature.
 - Native/watch companion only when PWA limitations justify the maintenance cost.
 
