@@ -104,41 +104,158 @@ async function trustedCachedShell(response: Response, navId: string): Promise<Re
   return (await isValidNavigateDocument(response, navId)) ? response : null;
 }
 
+const CACHE_READ_TIMEOUT_MS = 500;
+const CACHE_WRITE_TIMEOUT_MS = 500;
+const NETWORK_TIMEOUT_MS = 5_000;
+
+async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+async function readTrustedCachedShell(request: Request, navId: string): Promise<Response | null> {
+  return resolveWithin(
+    (async () => {
+      try {
+        const cache = await caches.open(NAVIGATE_SHELL_CACHE);
+        const cached = await matchNavigateShell(cache, request);
+        return cached ? trustedCachedShell(cached, navId) : null;
+      } catch {
+        // Cache Storage can be briefly unavailable while a worker wakes or the
+        // browser switches network state. Callers decide whether to retry.
+        return null;
+      }
+    })(),
+    CACHE_READ_TIMEOUT_MS,
+    null,
+  );
+}
+
+async function retryTrustedCachedShell(request: Request, navId: string): Promise<Response | null> {
+  // A prepared shell is life-safety data and has already passed validation.
+  // Give Cache Storage a short bounded chance to become visible again after a
+  // failed network fetch instead of immediately making a false missing claim.
+  for (const delayMs of [0, 25, 75, 150]) {
+    if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    const cached = await readTrustedCachedShell(request, navId);
+    if (cached) return cached;
+  }
+  return null;
+}
+
+type NetworkNavigateDocument = {
+  response: Response;
+  trusted: boolean;
+};
+
+async function persistNavigateDocument(request: Request, marked: Response): Promise<void> {
+  await resolveWithin(
+    (async () => {
+      try {
+        const cache = await caches.open(NAVIGATE_SHELL_CACHE);
+        await cache.put(request.url, marked);
+      } catch {
+        /* the live response remains usable, but was not durably prepared */
+      }
+    })(),
+    CACHE_WRITE_TIMEOUT_MS,
+    undefined,
+  );
+}
+
+async function fetchNavigateDocument(
+  request: Request,
+  navId: string,
+): Promise<NetworkNavigateDocument | null> {
+  const controller = new AbortController();
+  const attempt = (async (): Promise<{
+    response: Response;
+    marked: Response | null;
+  } | null> => {
+    try {
+      const response = await fetch(request, { signal: controller.signal });
+      const marked = await markNavigateDocument(response, navId);
+      return { response, marked };
+    } catch {
+      return null;
+    }
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve(null);
+    }, NETWORK_TIMEOUT_MS);
+  });
+  try {
+    // Do not abort after a successful fetch: the original response body is the
+    // one returned to the browser, and aborting its signal can poison that body.
+    const fetched = await Promise.race([attempt, timeout]);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    if (!fetched) return null;
+    // Persistence has its own bound. A slow/full cache must never discard a
+    // live document that completed validation before the network deadline.
+    if (fetched.marked) await persistNavigateDocument(request, fetched.marked);
+    return { response: fetched.response, trusted: fetched.marked !== null };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+function firstNonNull<T>(attempts: Array<Promise<T | null>>): Promise<T | null> {
+  return new Promise((resolve) => {
+    let remaining = attempts.length;
+    let resolved = false;
+    const consider = (value: T | null) => {
+      if (resolved) return;
+      if (value !== null) {
+        resolved = true;
+        resolve(value);
+        return;
+      }
+      remaining -= 1;
+      if (remaining === 0) {
+        resolved = true;
+        resolve(null);
+      }
+    };
+    for (const attempt of attempts) attempt.then(consider, () => consider(null));
+  });
+}
+
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   const navId = navigateIdFromRequest(request);
   if (!navId) return offlineDocument();
-  try {
-    const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-    // A prepared shell has already been validated for this exact route and is
-    // the only launch path that does not depend on the radio. Prefer it before
-    // touching the network: a fetch can remain pending indefinitely under
-    // degraded connectivity instead of throwing an offline error.
-    try {
-      const cached = await matchNavigateShell(cache, request);
-      if (cached) {
-        const trusted = await trustedCachedShell(cached, navId);
-        if (trusted) return trusted;
-      }
-    } catch {
-      // A corrupt/unavailable cache is a miss. Try the network, but never serve
-      // an unverified cached document.
-    }
+  // A prepared shell has already been validated for this exact route and is
+  // the only launch path that does not depend on the radio. Prefer it before
+  // touching the network: a fetch can remain pending indefinitely under
+  // degraded connectivity instead of throwing an offline error.
+  const prepared = await readTrustedCachedShell(request, navId);
+  if (prepared) return prepared;
 
-    let networkResponse: Response | null = null;
-    try {
-      networkResponse = await fetch(request);
-      const marked = await markNavigateDocument(networkResponse, navId);
-      if (marked) {
-        await cache.put(request.url, marked);
-        return networkResponse;
-      }
-    } catch {
-      // A thrown fetch is expected when the radio is off.
-    }
-    return networkResponse ?? offlineDocument();
-  } catch {
-    return offlineDocument();
-  }
+  // Retry Cache Storage while the network is attempted. Neither source is
+  // allowed to hold navigation open forever: a degraded radio can leave fetch
+  // pending, and Cache Storage can briefly stall while a worker wakes.
+  const recovered = retryTrustedCachedShell(request, navId);
+  const network = fetchNavigateDocument(request, navId);
+  const usable = await firstNonNull<Response>([
+    recovered,
+    network.then((result) => (result?.trusted ? result.response : null)),
+  ]);
+  if (usable) return usable;
+
+  const attempted = await network;
+  return attempted?.response ?? offlineDocument();
 };
 
 export { navigateShellHandler };

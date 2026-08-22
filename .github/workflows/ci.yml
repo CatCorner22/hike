@@ -62,13 +62,9 @@ jobs:
       - name: Cold-start offline navigation
         env:
           BASE: http://127.0.0.1:3111
-        run: |
-          for attempt in 1 2; do
-            node e2e/offline-navigation.mjs && exit 0
-            echo "offline-navigation attempt ${attempt} failed; retrying..." >&2
-            sleep 5
-          done
-          exit 1
+        # A workflow-level retry hid a first-launch service-worker regression.
+        # The probe must pass on its first cold start to protect the field case.
+        run: node e2e/offline-navigation.mjs
       # The probes below were written but never wired into CI, so they rotted:
       # two pinned an IndexedDB version the app had since migrated past and
       # failed with a timeout that read as a hang. Running them here means a
