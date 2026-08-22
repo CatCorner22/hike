@@ -53,11 +53,13 @@ export function nineLineMedevac(input: {
     })`,
     "L4 SPECIAL EQUIPMENT: None stated",
     `L5 PATIENTS BY TYPE: ${reportField(litter)}L ${reportField(amb)}A`,
-    "L6 SECURITY: N — civilian wilderness",
+    // Peacetime 9-line: line 6 is the number and type of wounds, injuries, or illness
+    // (the wartime "security at pickup site" form is meaningless to a civilian SAR
+    // dispatcher, and line 9 below already uses the peacetime terrain form).
+    `L6 INJURIES: ${reportField(input.profile?.medical ?? "Not stated")}`,
     `L7 MARKING: ${reportField(input.marking ?? "Phone strobe / voice")}`,
     `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${reportField(input.profile.name)})` : ""}${party}`,
     `L9 TERRAIN/LZ: ${reportField(input.terrain ?? input.trailName ?? "Trail / unknown LZ")}`,
-    input.profile?.medical ? `MEDICAL: ${reportField(input.profile.medical)}` : "",
   ]);
 }
 

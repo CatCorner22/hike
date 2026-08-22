@@ -213,7 +213,7 @@ export function wildernessFirstAidCard(): string[] {
     "M — Massive bleed: direct pressure, tourniquet if spurting won't stop.",
     "A — Airway: check responsiveness; open the airway and check for normal breathing. Gasping is not normal breathing.",
     "R — Respiration: if unresponsive and not breathing normally or only gasping, call 911 and send for an AED; activate satellite SOS or a PLB if 911 is unavailable.",
-    "C — Circulation: start CPR now — compress the center of the chest 100–120/min. Use hands-only CPR if untrained or unwilling to give breaths; if trained and willing, give 30 compressions and 2 breaths.",
+    "C — Circulation: if unresponsive and not breathing normally, start CPR — compress the center of the chest 100–120/min. Use hands-only CPR if untrained or unwilling to give breaths; if trained and willing, give 30 compressions and 2 breaths. Do not start CPR on someone who is breathing normally.",
     "H — Hypothermia: get dry, insulate from ground, warm core — not hot bath if severe.",
     "Sprains: RICE — rest, ice (10 min), compression wrap, elevate.",
     "Allergic reaction: epinephrine auto-injector if prescribed; antihistamine secondary.",

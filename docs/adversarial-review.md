@@ -1475,6 +1475,28 @@ the idempotency key rotates, queued points move back under the stable local ID, 
 whole recording replays under the current owner. `e2e/offline-navigation.mjs` also
 diagnoses a stuck service-worker install by naming the unservable precache URLs.
 
+## Nineteenth pass — survival-content accuracy vs public doctrine
+
+Inline claims audit of the static content cards against public standards (FCC Part
+95/97, USCG, NOAA SARSAT, ITU-R M.1677, the peacetime 9-line, WMS/AHA lay-rescuer
+guidance, NPS/IGBC wildlife doctrine, SAR litter-carry teaching). Verified sound:
+`comms.ts` (every frequency, licensing and SARSAT claim), `strobe.ts` (Morse unit
+ratios exact; the letter-gapped SOS is the decodable practical form), `sar-advanced.ts`
+(LZ ≤ 8° with walk-it hedge; 6/12 carriers at ~1 mph), `field.ts`, and the wildlife
+SOPs (including the deliberately contrasted run-from-moose vs never-run-from-bears).
+
+Fixed:
+- `sere.ts` — the downstream-travel line read **inverted** ("follow downstream only if
+  cliffs and waterfalls are likely"), recommending exactly the terrain that traps lost
+  hikers; and "treat MARCH" now names the app's canonical MARCH-PAWS sequence.
+- `medevac.ts` — the 9-line mixed wartime and peacetime forms: L6 rendered the wartime
+  "Security" line (meaningless to a civilian SAR dispatcher) while L9 already used the
+  peacetime terrain form. L6 is now the peacetime form — number and type of injuries —
+  absorbing the redundant MEDICAL trailer.
+- `wilderness.ts` — the first-aid card's C line opened with "start CPR now",
+  unconditioned on a card of standalone one-liners; CPR is now explicitly conditioned
+  on unresponsive + not breathing normally, with the contraindication stated.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

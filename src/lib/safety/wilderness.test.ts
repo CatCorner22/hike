@@ -210,3 +210,17 @@ describe("wilderness cards", () => {
     expect(griz).toMatch(/play dead/i);
   });
 });
+
+/**
+ * The first-aid card is read as standalone one-liners under stress. The C line used to
+ * open with "start CPR now" — unconditioned, which is wrong-harmful for a breathing
+ * casualty. CPR is conditioned on unresponsive + not breathing normally, always.
+ */
+describe("first-aid card CPR conditioning", () => {
+  it("never instructs CPR without the responsiveness/breathing condition", () => {
+    const cpr = wildernessFirstAidCard().find((line) => /CPR/.test(line)) ?? "";
+    expect(cpr).toMatch(/if unresponsive and not breathing normally/i);
+    expect(cpr).not.toMatch(/^C — Circulation: start CPR now/);
+    expect(cpr).toMatch(/Do not start CPR on someone who is breathing normally/);
+  });
+});
