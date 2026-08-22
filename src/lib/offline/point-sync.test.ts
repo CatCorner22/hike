@@ -325,3 +325,82 @@ describe("point sync failure handling", () => {
     expect(result.pending).toBe(0);
   });
 });
+
+/**
+ * The 30-second background flush and the re-homing path (activity-sync) share this
+ * queue. A 404 during an owner change — cleared cookies, rotated SESSION_SECRET — used
+ * to be treated as permanent here, so the background flush destroyed the only copy of
+ * the track before re-homing ever ran. Now a 404 discards only true orphans: points
+ * whose activity no local recording references any more.
+ */
+describe("owner-change 404s do not destroy re-homeable recordings", () => {
+  const LOCAL_ID = "44444444-4444-4444-8444-444444444444";
+  const REMOTE_ID = "55555555-5555-4555-8555-555555555555";
+
+  async function putLocalRow(row: Record<string, unknown>) {
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    await db.put("localActivities", {
+      id: LOCAL_ID,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+      ...row,
+    });
+  }
+
+  it("keeps every point of a live recording and stops after one 404", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID });
+    await queue(202, REMOTE_ID);
+    const gone = respondWith(404);
+    vi.stubGlobal("fetch", gone);
+
+    const result = await flushPendingPoints();
+
+    expect(result.dropped).toBe(0);
+    expect(result.pending).toBe(202);
+    expect(await getPendingPointCount()).toBe(202);
+    // Three batches were queued (100+100+2); the 404 must stop the flush after the first.
+    expect(gone).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the kept points to the activity queue, which re-homes and syncs them", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID, endedAt: "2026-08-20T13:00:00.000Z", pendingStop: true });
+    await queue(2, REMOTE_ID);
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(REMOTE_ID)) return new Response("nope", { status: 404 });
+      if (url === "/api/activities" && init?.method === "POST") {
+        return new Response(JSON.stringify({ id: "remote-rehomed" }), { status: 200 });
+      }
+      if (url === "/api/activities/remote-rehomed/points" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientPointId?: string };
+        if (body.clientPointId) posted.push(body.clientPointId);
+        return new Response("{}", { status: 200 });
+      }
+      if (url === "/api/activities/remote-rehomed" && init?.method === "PATCH") {
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }));
+
+    const result = await flushPendingPoints();
+    expect(result.dropped).toBe(0);
+
+    // The re-homed replay is scheduled outside the flush's single-flight guard.
+    await vi.waitFor(async () => {
+      expect(await getPendingPointCount()).toBe(0);
+    });
+    expect(posted).toHaveLength(2);
+  });
+
+  it("still discards points for an activity this device fully completed", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID, endedAt: "2026-08-20T13:00:00.000Z", pendingStop: false });
+    await queue(2, REMOTE_ID);
+    vi.stubGlobal("fetch", respondWith(404));
+
+    const result = await flushPendingPoints();
+    expect(result.dropped).toBe(2);
+    expect(result.pending).toBe(0);
+  });
+});

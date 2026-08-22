@@ -277,10 +277,30 @@ export async function discardPendingPoints(ids: string[]) {
  * people to conserve both, and unbounded growth in the same IndexedDB quota that holds
  * the offline route packs navigation depends on.
  */
+/**
+ * A 404/410 is only safely permanent when no local recording still references the
+ * activity. When an open or pending-Stop local row maps to it, the activity is merely
+ * gone FOR THE CURRENT OWNER — the cookie was cleared or SESSION_SECRET rotated — and
+ * the queued points are the only copy of the track. Re-homing (activity-sync) replays
+ * them under a fresh server activity; discarding here would destroy them. This flush
+ * runs every 30 s from the recorder, so without this check it would usually destroy the
+ * backlog before the re-homing path ever saw it.
+ */
+async function isRehomeableActivity(activityId: string): Promise<boolean> {
+  const db = await getOfflineDb();
+  if (!db || !db.objectStoreNames.contains("localActivities")) return false;
+  const locals = await db.getAll("localActivities");
+  return locals.some(
+    (local) =>
+      (local.remoteId === activityId || local.id === activityId) &&
+      !(local.endedAt && !local.pendingStop),
+  );
+}
+
 async function flushActivityPoints(
   activityId: string,
   points: PendingPoint[],
-): Promise<{ synced: number; dropped: number }> {
+): Promise<{ synced: number; dropped: number; rehome: boolean }> {
   let synced = 0;
   let dropped = 0;
   for (let index = 0; index < points.length; index += 100) {
@@ -304,6 +324,14 @@ async function flushActivityPoints(
       break;
     }
     if (PERMANENT_STATUSES.has(response.status)) {
+      if (
+        (response.status === 404 || response.status === 410) &&
+        (await isRehomeableActivity(activityId))
+      ) {
+        // Every further batch would 404 identically; keep the points queued for the
+        // re-homed replay instead of burning a request per batch.
+        return { synced, dropped, rehome: true };
+      }
       await discardPendingPoints(batch.map((point) => point.id));
       dropped += batch.length;
       continue;
@@ -312,22 +340,23 @@ async function flushActivityPoints(
     await markPointsSynced(batch.map((point) => point.id));
     synced += batch.length;
   }
-  return { synced, dropped };
+  return { synced, dropped, rehome: false };
 }
 
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
-  task: (item: T) => Promise<{ synced: number; dropped: number }>,
+  task: (item: T) => Promise<{ synced: number; dropped: number; rehome: boolean }>,
 ) {
   let next = 0;
-  const total = { synced: 0, dropped: 0 };
+  const total = { synced: 0, dropped: 0, rehome: false };
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const item = items[next++];
       const result = await task(item);
       total.synced += result.synced;
       total.dropped += result.dropped;
+      total.rehome = total.rehome || result.rehome;
     }
   });
   await Promise.all(workers);
@@ -340,12 +369,20 @@ export async function flushPendingPoints(): Promise<FlushResult> {
     const points = await getAllUnsyncedPoints();
     const grouped = new Map<string, PendingPoint[]>();
     for (const point of points) grouped.set(point.activityId, [...(grouped.get(point.activityId) ?? []), point]);
-    const { synced, dropped } = await runWithConcurrency(
+    const { synced, dropped, rehome } = await runWithConcurrency(
       [...grouped.entries()],
       2,
       ([activityId, activityPoints]) => flushActivityPoints(activityId, activityPoints),
     );
     await deleteSyncedPointsOlderThan();
+    if (rehome) {
+      // Replay the kept points under the current owner. Dynamic import breaks the
+      // static cycle (activity-sync imports this module), and fire-and-forget keeps
+      // this flush's single-flight guard from deadlocking on its own successor.
+      void import("./activity-sync")
+        .then(({ flushActivityQueue }) => flushActivityQueue())
+        .catch(() => undefined);
+    }
     return { synced, dropped, pending: await getPendingPointCount() };
   })();
   try {
