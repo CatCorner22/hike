@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatDistance } from "@/lib/geo";
+import { trailPageHref } from "@/lib/ids";
 import type { TrailSearchResult } from "@/lib/osm/overpass";
 
 interface TrailCardProps {
@@ -10,11 +11,7 @@ interface TrailCardProps {
 }
 
 export function TrailCard({ trail, href }: TrailCardProps) {
-  const link =
-    href ||
-    (trail.id
-      ? `/trails/${trail.id}`
-      : `/trails/osm-${trail.osmType}-${trail.osmId}`);
+  const link = href || trailPageHref(trail.id ?? "", trail.osmType, trail.osmId);
 
   return (
     <Link href={link}>

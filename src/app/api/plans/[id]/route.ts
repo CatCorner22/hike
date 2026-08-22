@@ -9,13 +9,15 @@ import {
   geoJsonLineOrMultiLineStringSchema,
   isoDatetimeSchema,
   parseJsonBody,
+  trailRefSchema,
 } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import { deletePlan, getPlan, updatePlan } from "@/lib/store/local";
+import { postgresTrailFk, resolveStoredTrailId } from "@/lib/trails/service";
 
 const planPatchSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  trailId: z.string().uuid().nullable().optional(),
+  trailId: trailRefSchema.nullable().optional(),
   plannedDate: isoDatetimeSchema.nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
   waypoints: z.unknown().nullable().optional(),
@@ -57,6 +59,19 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!parsed.ok) return parsed.response;
   const body = parsed.data;
 
+  let patchTrailId: { apply: boolean; trailId: string | null } = { apply: false, trailId: null };
+  if ("trailId" in body) {
+    if (body.trailId == null) {
+      patchTrailId = { apply: true, trailId: null };
+    } else {
+      const resolved = await resolveStoredTrailId(body.trailId);
+      // A failed OSM lookup must not blank an existing plan trail or block notes.
+      patchTrailId = resolved
+        ? { apply: true, trailId: resolved }
+        : { apply: false, trailId: null };
+    }
+  }
+
   try {
     return await withActivityMutation(`plan:${id}`, async () => {
       if (hasDatabase()) {
@@ -84,7 +99,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
             : now,
         };
         if ("name" in body) values.name = body.name;
-        if ("trailId" in body) values.trailId = body.trailId;
+        if (patchTrailId.apply) values.trailId = postgresTrailFk(patchTrailId.trailId);
         if ("plannedDate" in body) values.plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
         if ("notes" in body) values.notes = body.notes;
         if ("waypoints" in body) values.waypoints = body.waypoints;
@@ -130,7 +145,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
       }
       const updates: Parameters<typeof updatePlan>[2] = {};
       if ("name" in body) updates.name = body.name;
-      if ("trailId" in body) updates.trailId = body.trailId;
+      if (patchTrailId.apply) updates.trailId = patchTrailId.trailId;
       if ("plannedDate" in body) updates.plannedDate = body.plannedDate;
       if ("notes" in body) updates.notes = body.notes;
       if ("waypoints" in body) updates.waypoints = body.waypoints;

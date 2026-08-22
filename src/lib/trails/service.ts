@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { trails } from "@/lib/db/schema";
-import { osmTrailId } from "@/lib/ids";
+import { parseOsmTrailId, osmTrailId } from "@/lib/ids";
 import {
   getTrailDetail,
   searchTrails,
@@ -104,4 +104,28 @@ export async function listRecentTrails(limit = 10) {
   if (!hasDatabase()) return [];
   const db = getDb();
   return db.query.trails.findMany({ limit, orderBy: (t, { desc }) => [desc(t.cachedAt)] });
+}
+
+/**
+ * Plans/activities store a UUID FK when Postgres is on. Explore trails are
+ * `osm-relation-123`. Resolve that to a real row (or keep the OSM id on the
+ * file store) so "Add to plan" and trail links keep working.
+ *
+ * The file store never writes a trails table, so Overpass is skipped there —
+ * the Explore href is already a stable key.
+ */
+export async function resolveStoredTrailId(trailId: string | null | undefined): Promise<string | null> {
+  if (!trailId) return null;
+  const osm = parseOsmTrailId(trailId);
+  if (!osm) return trailId;
+  if (!hasDatabase()) return trailId;
+  const created = await findOrCreateTrail(osm.osmId, osm.osmType);
+  if (!created || parseOsmTrailId(created.id)) return null;
+  return created.id;
+}
+
+/** Postgres `hike_plans.trail_id` / `activities.trail_id` are UUID FKs. */
+export function postgresTrailFk(trailId: string | null | undefined): string | null {
+  if (!trailId || parseOsmTrailId(trailId)) return null;
+  return trailId;
 }

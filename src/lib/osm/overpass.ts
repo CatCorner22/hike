@@ -118,7 +118,15 @@ function parseLength(tags?: Record<string, string>): number | undefined {
 function toWikipediaUrl(tags?: Record<string, string>): string | undefined {
   const wiki = tags?.wikipedia || tags?.wikidata;
   if (!wiki) return undefined;
-  if (wiki.startsWith("http")) return wiki;
+  if (wiki.startsWith("http")) {
+    try {
+      const url = new URL(wiki.trim());
+      if (url.protocol === "http:") url.protocol = "https:";
+      return url.protocol === "https:" ? url.toString() : undefined;
+    } catch {
+      return undefined;
+    }
+  }
   if (wiki.includes(":")) {
     const [lang, title] = wiki.split(":");
     return `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;

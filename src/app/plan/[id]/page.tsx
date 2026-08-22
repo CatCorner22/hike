@@ -17,6 +17,7 @@ import { BailoutRoutePanel } from "@/components/offline/bailout-route-panel";
 import { enrichRoutePack, packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import { getRoutePack } from "@/lib/offline/route-pack";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
+import { trailPageHref } from "@/lib/ids";
 import { httpsUrl } from "@/lib/urls";
 import { Search, Trash2 } from "lucide-react";
 
@@ -52,6 +53,8 @@ interface CampHit {
 
 interface TrailData {
   id?: string;
+  osmId?: string;
+  osmType?: string;
   name: string;
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox: [number, number, number, number];
@@ -209,7 +212,7 @@ export default function PlanDetailPage() {
       </div>
 
       {trail && (
-        <p className="text-sm text-muted-foreground">Trail: <Link href={`/trails/${plan.trailId}`} className="text-primary hover:underline">{trail.name}</Link></p>
+        <p className="text-sm text-muted-foreground">Trail: <Link href={trailPageHref(plan.trailId ?? trail.id ?? "", trail.osmType, trail.osmId)} className="text-primary hover:underline">{trail.name}</Link></p>
       )}
 
       {geometry && (

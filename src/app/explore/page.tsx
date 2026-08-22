@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { TrailCard } from "@/components/trails/trail-card";
+import { osmTrailId } from "@/lib/ids";
 import { Search, Loader2 } from "lucide-react";
 import type { TrailSearchResult } from "@/lib/osm/overpass";
 
@@ -14,6 +16,7 @@ const MapView = dynamic(
 );
 
 export default function ExplorePage() {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [trails, setTrails] = useState<TrailSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
@@ -72,14 +75,17 @@ export default function ExplorePage() {
           center={selectedTrail?.center}
           zoom={selectedTrail ? 11 : 5}
           markers={trails.map((t) => ({
-            id: t.osmId,
+            id: osmTrailId(t.osmType, t.osmId),
             lat: t.center.lat,
             lng: t.center.lng,
-            color: selectedTrail?.osmId === t.osmId ? "#16a34a" : "#64748b",
+            color: selectedTrail?.osmId === t.osmId && selectedTrail?.osmType === t.osmType ? "#16a34a" : "#64748b",
             label: t.name,
           }))}
-          onClick={(coords) => {
-            void coords;
+          onMarkerClick={(id) => {
+            const trail = trails.find((t) => osmTrailId(t.osmType, t.osmId) === id);
+            if (!trail) return;
+            setSelectedTrail(trail);
+            router.push(`/trails/${osmTrailId(trail.osmType, trail.osmId)}`);
           }}
         />
       </div>
@@ -92,7 +98,7 @@ export default function ExplorePage() {
           >
             <TrailCard
               trail={trail}
-              href={`/trails/osm-${trail.osmType}-${trail.osmId}`}
+              href={`/trails/${osmTrailId(trail.osmType, trail.osmId)}`}
             />
           </div>
         ))}
