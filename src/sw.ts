@@ -166,8 +166,8 @@ const serwist = new Serwist({
       matcher: ({ url, request }) => isNavigateDocumentRequest(
         url.pathname,
         request.method,
-        request.mode,
-        request.destination,
+        request.headers.get("RSC"),
+        request.headers.get("Next-Router-Prefetch"),
       ),
       handler: navigateShellHandler,
     },
