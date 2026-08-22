@@ -3,12 +3,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ActivityIdCollisionError,
   addActivityPoint,
   createActivity,
   createPlan,
   deletePlan,
   getPlan,
   isLocalStoreEnabled,
+  listActivities,
   listActivityPoints,
   listPlans,
   LocalStoreDisabledError,
@@ -63,6 +65,43 @@ describe("local store durability", () => {
     );
 
     expect(await listActivityPoints(activity.id)).toHaveLength(count);
+  });
+
+  it("replays a stable client activity UUID without changing or duplicating the row", async () => {
+    const clientActivityId = "66666666-6666-4666-8666-666666666666";
+    const first = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      name: "Original activity",
+      startedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const retry = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      name: "Changed retry must be ignored",
+      startedAt: "2026-08-21T12:00:00.000Z",
+    });
+
+    expect(retry).toEqual(first);
+    expect(await listActivities(OWNER)).toEqual([first]);
+  });
+
+  it("fails closed when another owner reuses a client activity UUID", async () => {
+    const clientActivityId = "77777777-7777-4777-8777-777777777777";
+    const first = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    await expect(createActivity({
+      ownerId: OTHER,
+      clientActivityId,
+      startedAt: "2026-08-21T12:00:00.000Z",
+    })).rejects.toBeInstanceOf(ActivityIdCollisionError);
+    expect(await listActivities(OWNER)).toEqual([first]);
+    expect(await listActivities(OTHER)).toEqual([]);
   });
 
   it("surfaces corruption instead of overwriting the store as empty", async () => {

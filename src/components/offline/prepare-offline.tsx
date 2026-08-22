@@ -6,25 +6,22 @@ import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack, withNetworkTimeout } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import {
-  describeCorridorFeatures,
   validCorridorFeatures,
   type CorridorFeatureSet,
 } from "@/lib/offline/corridor-features";
 import {
-  describeHazardBrief,
   fetchRouteHazardBrief,
   packWeatherFromHazardBrief,
   selectHazardSamplePoints,
   validHazardBrief,
 } from "@/lib/offline/hazard-brief";
 import {
-  describeOfficialAlertSnapshot,
   validOfficialAlertSnapshot,
   type RouteOfficialAlertSnapshot,
 } from "@/lib/offline/official-alerts";
 import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
 import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
-import { buildTerrainCorridorSpec, describePersistedCorridor } from "@/lib/offline/terrain-corridor";
+import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { getNavigateOfflineStatus, warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
@@ -220,7 +217,7 @@ export function PrepareOffline({
       const saved = await persistRoutePack(pack);
       const savedPackReady = await hasRoutePack(packId);
       if (!savedPackReady) {
-        throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
+        throw new Error("The saved route could not be verified for offline use. Re-download it before relying on this device.");
       }
       const [persistent, shell] = await Promise.all([
         persistentStorageRequest,
@@ -233,28 +230,27 @@ export function PrepareOffline({
           ? shell.error ?? "Navigation screen was not cached."
           : null,
         !persistent
-          ? "Browser storage is not persistent, so this pack may be evicted under storage pressure."
+          ? "The browser may remove this saved route when device storage is low."
           : null,
       ].filter(Boolean);
-      const weatherNote = weather
-        ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
-        : "Type temp/wind in Safety if you want field weather.";
-      const corridorNote = saved.corridor
-        ? describePersistedCorridor(saved.corridor)
-        : "Terrain corridor was not recorded on this pack.";
-      const featureNote = saved.corridorFeatures
-        ? describeCorridorFeatures(saved.corridorFeatures)
-        : "OSM corridor features were not stored (Overpass unavailable, or the bbox is too large for one snapshot).";
-      const hazardNote = saved.hazardBrief
-        ? describeHazardBrief(saved.hazardBrief)
-        : "Route forecast snapshot was not stored (Open-Meteo unavailable).";
-      const officialAlertNote = saved.officialAlerts
-        ? describeOfficialAlertSnapshot(saved.officialAlerts)
-        : "Official NWS/NPS alerts were not stored; this is not an all-clear.";
+      const savedDetails = [
+        saved.corridorFeatures
+          ? "Nearby trail and landmark context saved."
+          : "Nearby trail and landmark context was not saved.",
+        saved.hazardBrief
+          ? "Along-route forecast snapshot saved."
+          : "Along-route forecast snapshot was not saved.",
+        saved.officialAlerts
+          ? "Official alert snapshot saved; recheck it before departure."
+          : "Official alerts were not saved; this is not an all-clear.",
+        weather
+          ? "Basic weather snapshot saved."
+          : "Basic weather snapshot was not saved.",
+      ];
       setMessage(
         shell.ok
-          ? `Route saved and offline launch files verified on this device. Test the route once in airplane mode before leaving signal. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${officialAlertNote} ${weatherNote}`
-          : `Route saved as basic data, but this trip is not verified for offline launch. ${warnings.join(" ")} ${corridorNote}. ${featureNote} ${hazardNote} ${officialAlertNote} ${weatherNote}`,
+          ? `Route and navigation screen verified on this device. Test it once in airplane mode before leaving signal. ${savedDetails.join(" ")} ${warnings.join(" ")}`
+          : `The route was saved, but the navigation screen is not verified for offline use. Retry on a stable connection before relying on it. ${savedDetails.join(" ")} ${warnings.join(" ")}`,
       );
     } catch (error) {
       await refreshReady();
@@ -287,7 +283,7 @@ export function PrepareOffline({
             ? "Saved"
             : "Save"
           : tripReady
-            ? "Update offline pack"
+            ? "Update offline route"
             : "Prepare offline"}
       </Button>
       {message && (

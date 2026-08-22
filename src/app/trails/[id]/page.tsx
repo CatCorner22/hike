@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ElevationChart } from "@/components/trails/elevation-chart";
 import { ResearchBrief } from "@/components/trails/research-brief";
+import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
 import { NavigateLink } from "@/components/offline/navigate-link";
@@ -248,6 +249,13 @@ export default function TrailDetailPage() {
         <h2 className="mb-2 text-lg font-semibold">Elevation profile</h2>
         <ElevationChart profile={trail.elevationProfile} />
       </div>
+
+      <RouteDifficultyPanel
+        geometry={trail.geometry}
+        elevationProfile={trail.elevationProfile}
+        reportedDistanceMeters={trail.lengthMeters}
+        tags={trail.tags}
+      />
 
       <div>
         <div className="mb-2 flex items-center justify-between">

@@ -14,11 +14,12 @@ import {
 import {
   NavTrackStorageError,
   deleteNavSession,
+  exportNavSession,
   listNavSessions,
   serializeNavSessionExport,
   type NavTrackSessionSummary,
 } from "@/lib/offline/nav-track";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { breadcrumbGpx, downloadTextFile, safeFilename } from "@/lib/safety/field";
 
 export type CompletedTrackLoadState =
   | { status: "loading" }
@@ -33,7 +34,8 @@ interface CompletedNavigationTrackListProps {
   confirmDeleteId: string | null;
   workingId: string | null;
   onRetry: () => void;
-  onExport: (track: NavTrackSessionSummary) => void;
+  onExportGpx: (track: NavTrackSessionSummary) => void;
+  onExportJson: (track: NavTrackSessionSummary) => void;
   onRequestDelete: (sessionId: string) => void;
   onCancelDelete: () => void;
   onConfirmDelete: (track: NavTrackSessionSummary) => void;
@@ -60,6 +62,13 @@ function trackFilename(track: NavTrackSessionSummary): string {
   return `${safeFilename(track.name)}-${timestamp}-navigation-track.json`;
 }
 
+function trackGpxFilename(track: NavTrackSessionSummary): string {
+  const timestamp = Number.isFinite(Date.parse(track.startedAt))
+    ? safeFilename(track.startedAt.replace(/\.\d{3}Z$/, "Z").replace(/[:]/g, "-"))
+    : "undated";
+  return `${safeFilename(track.name)}-${timestamp}-navigation-track.gpx`;
+}
+
 function assertFinishedTrack(track: NavTrackSessionSummary): void {
   if (track.status !== "finished") {
     throw new NavTrackStorageError(
@@ -83,6 +92,35 @@ export async function exportFinishedNavigationTrack(
   return { filename };
 }
 
+export async function exportFinishedNavigationTrackGpx(
+  track: NavTrackSessionSummary,
+  dependencies: {
+    read?: typeof exportNavSession;
+    download?: typeof downloadTextFile;
+  } = {},
+): Promise<{ filename: string; pointCount: number }> {
+  assertFinishedTrack(track);
+  const exported = await (dependencies.read ?? exportNavSession)(track.id);
+  if (exported.session.status !== "finished") {
+    throw new NavTrackStorageError(
+      "invalid-input",
+      "Only a completed navigation track can be exported here.",
+    );
+  }
+  if (exported.points.length === 0) {
+    throw new NavTrackStorageError("invalid-input", "This completed track has no GPS points to export.");
+  }
+  const gpx = breadcrumbGpx(track.name, exported.points.map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+    altitude: point.altitude,
+    recordedAt: point.recordedAt,
+  })));
+  const filename = trackGpxFilename(track);
+  (dependencies.download ?? downloadTextFile)(filename, gpx, "application/gpx+xml");
+  return { filename, pointCount: exported.points.length };
+}
+
 export async function deleteFinishedNavigationTrack(
   track: NavTrackSessionSummary,
   dependencies: {
@@ -100,7 +138,8 @@ interface CompletedNavigationTrackItemProps {
   track: NavTrackSessionSummary;
   confirming: boolean;
   working: boolean;
-  onExport: (track: NavTrackSessionSummary) => void;
+  onExportGpx: (track: NavTrackSessionSummary) => void;
+  onExportJson: (track: NavTrackSessionSummary) => void;
   onRequestDelete: (sessionId: string) => void;
   onCancelDelete: () => void;
   onConfirmDelete: (track: NavTrackSessionSummary) => void;
@@ -110,7 +149,8 @@ function CompletedNavigationTrackItem({
   track,
   confirming,
   working,
-  onExport,
+  onExportGpx,
+  onExportJson,
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
@@ -179,11 +219,25 @@ function CompletedNavigationTrackItem({
             size="sm"
             variant="outline"
             disabled={working}
-            onClick={() => onExport(track)}
+            onClick={() => onExportGpx(track)}
           >
             <Download className="mr-2 size-4" />
-            {working ? "Exporting…" : "Export JSON"}
+            {working ? "Exporting…" : "Export GPX"}
           </Button>
+          <details className="self-center text-xs text-muted-foreground">
+            <summary className="cursor-pointer">Backup / technical export</summary>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="mt-1"
+              disabled={working}
+              onClick={() => onExportJson(track)}
+            >
+              <Download className="mr-2 size-4" />
+              Export JSON backup
+            </Button>
+          </details>
           <Button
             ref={deleteButtonRef}
             type="button"
@@ -207,7 +261,8 @@ export function CompletedNavigationTrackList({
   confirmDeleteId,
   workingId,
   onRetry,
-  onExport,
+  onExportGpx,
+  onExportJson,
   onRequestDelete,
   onCancelDelete,
   onConfirmDelete,
@@ -223,7 +278,8 @@ export function CompletedNavigationTrackList({
           </CardTitle>
           <CardDescription>
             Breadcrumbs from finished navigation sessions are saved only in this
-            browser on this device. Export downloads a JSON backup; nothing is uploaded.
+            browser on this device. GPX and optional JSON backup exports stay on this device;
+            nothing is uploaded.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -250,7 +306,8 @@ export function CompletedNavigationTrackList({
                   track={track}
                   confirming={confirmDeleteId === track.id}
                   working={workingId === track.id}
-                  onExport={onExport}
+                  onExportGpx={onExportGpx}
+                  onExportJson={onExportJson}
                   onRequestDelete={onRequestDelete}
                   onCancelDelete={onCancelDelete}
                   onConfirmDelete={onConfirmDelete}
@@ -314,7 +371,24 @@ export function CompletedNavigationTracks() {
     };
   }, []);
 
-  async function exportTrack(track: NavTrackSessionSummary) {
+  async function exportTrackGpx(track: NavTrackSessionSummary) {
+    if (track.status !== "finished" || workingId !== null) return;
+    setWorkingId(track.id);
+    setNotice(null);
+    try {
+      await exportFinishedNavigationTrackGpx(track);
+      setNotice({
+        tone: "success",
+        message: `Downloaded “${track.name}” as GPX. Nothing was uploaded.`,
+      });
+    } catch (error) {
+      setNotice({ tone: "error", message: `${storageMessage(error)} Nothing was exported.` });
+    } finally {
+      setWorkingId(null);
+    }
+  }
+
+  async function exportTrackJson(track: NavTrackSessionSummary) {
     if (track.status !== "finished" || workingId !== null) return;
     setWorkingId(track.id);
     setNotice(null);
@@ -322,7 +396,7 @@ export function CompletedNavigationTracks() {
       await exportFinishedNavigationTrack(track);
       setNotice({
         tone: "success",
-        message: `Downloaded “${track.name}” as a device file. Nothing was uploaded.`,
+        message: `Downloaded “${track.name}” as a JSON backup. Nothing was uploaded.`,
       });
     } catch (error) {
       setNotice({ tone: "error", message: `${storageMessage(error)} Nothing was exported.` });
@@ -362,7 +436,8 @@ export function CompletedNavigationTracks() {
       confirmDeleteId={confirmDeleteId}
       workingId={workingId}
       onRetry={() => void loadTracks()}
-      onExport={(track) => void exportTrack(track)}
+      onExportGpx={(track) => void exportTrackGpx(track)}
+      onExportJson={(track) => void exportTrackJson(track)}
       onRequestDelete={(sessionId) => {
         setNotice(null);
         setConfirmDeleteId(sessionId);

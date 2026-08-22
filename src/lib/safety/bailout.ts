@@ -14,12 +14,14 @@ export interface BailoutCandidate {
 }
 
 export function explicitBailoutCandidates(
-  waypoints: Array<{ name: string; lat: number; lng: number }>,
+  waypoints: Array<{ name: string; lat: number; lng: number; kind?: string }>,
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): BailoutCandidate[] {
   const cumulative = cumulativeDistancesForGeometry(geometry);
   return waypoints
-    .filter((waypoint) => /^(bailout|exit):/i.test(waypoint.name.trim()))
+    .filter(
+      (waypoint) => waypoint.kind === "bailout" || /^(bailout|exit):/i.test(waypoint.name.trim()),
+    )
     .flatMap<BailoutCandidate>((waypoint, index) => {
       const snapped = nearestPointOnTrail(waypoint, geometry);
       if (!snapped || !Number.isFinite(snapped.distanceMeters)) return [];

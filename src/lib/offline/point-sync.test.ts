@@ -222,6 +222,35 @@ describe("point sync failure handling", () => {
     expect((await flushPendingPoints()).pending).toBe(2);
   });
 
+  it("never uploads a device-local activity ID before its server mapping exists", async () => {
+    const localId = "local-activity";
+    const remoteId = "33333333-3333-4333-8333-333333333333";
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    await db.put("localActivities", {
+      id: localId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+    });
+    await queue(1, localId);
+    const request = respondWith(404);
+    vi.stubGlobal("fetch", request);
+
+    expect(await flushPendingPoints()).toMatchObject({ pending: 1, dropped: 0 });
+    expect(request).not.toHaveBeenCalled();
+
+    await db.put("localActivities", {
+      id: localId,
+      remoteId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+    });
+    const accepted = respondWith(200);
+    vi.stubGlobal("fetch", accepted);
+    expect(await flushPendingPoints()).toMatchObject({ pending: 0, synced: 1 });
+    expect(String(accepted.mock.calls[0][0])).toContain(`/activities/${remoteId}/points`);
+  });
+
   /**
    * Regression: a permanent failure used to `break` and leave the points queued with
    * `synced: 0` forever. `deleteSyncedPointsOlderThan` only prunes `synced: 1`, so they
@@ -257,6 +286,19 @@ describe("point sync failure handling", () => {
     const result = await flushPendingPoints();
     expect(result.dropped).toBe(2);
     expect(result.pending).toBe(0);
+  });
+
+  it("drops a novel point rejected after finalization instead of retrying forever", async () => {
+    await queue(2);
+    const finalized = respondWith(409);
+    vi.stubGlobal("fetch", finalized);
+
+    const result = await flushPendingPoints();
+    expect(result).toMatchObject({ dropped: 2, pending: 0, synced: 0 });
+
+    const callsAfterFirstFlush = finalized.mock.calls.length;
+    await flushPendingPoints();
+    expect(finalized.mock.calls.length).toBe(callsAfterFirstFlush);
   });
 
   it("does not drop points on 401, which resolves on the next navigation", async () => {

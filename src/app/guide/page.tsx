@@ -95,20 +95,24 @@ export default function GuidePage() {
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <strong>Install the app</strong> when the browser offers &quot;Add to Home
-              Screen&quot; — an installed app keeps its offline storage far more reliably.
+              Screen&quot; — installation can make the app easier to retain and reopen, but
+              it does not guarantee that saved data will remain on the device.
             </li>
             <li>
               Don&apos;t clear the browser&apos;s site data before a trip: that deletes
               saved routes, and your plans are tied to this browser.
             </li>
-            <li>Start with a full battery. The navigate screen keeps the display on.</li>
             <li>
-              Already-saved packs live on{" "}
-              <Link href="/offline" className="font-medium text-primary hover:underline">
-                this phone&apos;s pack backup page
+              Start with a full battery. The navigation screen requests a wake lock, but
+              the browser or battery policy can still let the display sleep.
+            </li>
+            <li>
+              Already-saved routes live on{" "}
+              <Link href="/saved" className="font-medium text-primary hover:underline">
+                the Saved page
               </Link>
-              . That list is a device backup and export — it is not cloud sync, and it is
-              a different page from these prepare steps.
+              . That list is stored on this device and offers file backup/export; it is not
+              cloud sync and is separate from these preparation steps.
             </li>
           </ul>
         </CardContent>
@@ -138,8 +142,10 @@ export default function GuidePage() {
               turns red, vibrates, and shows the compass bearing back to the trail.
             </li>
             <li>
-              <strong>Backtrack</strong> retraces your own breadcrumb trail — the fastest
-              way out is usually the way you came.
+              <strong>Backtrack</strong> draws the breadcrumbs this phone successfully
+              recorded. Confirm the line is continuous and that retracing it is still
+              safe; GPS, battery, browser limits, weather, fire, water, or terrain can
+              make a saved track incomplete or unsafe to follow.
             </li>
             <li>
               GPS drops in canyons and heavy trees. The app holds your last known position
@@ -173,21 +179,25 @@ export default function GuidePage() {
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <strong className="text-foreground">Lost?</strong> Stop walking. Open the
-              Safety panel — it shows your exact coordinates in every format rescuers use,
-              and Backtrack leads you along your own trail.
+              Safety panel — it shows the phone&apos;s current or last-known position in
+              several common coordinate formats, together with fix age and accuracy.
+              Backtrack draws the breadcrumbs this phone successfully recorded; gaps can
+              occur when GPS, battery, or browser recording fails.
             </li>
             <li>
               <strong className="text-foreground">Need help?</strong> The{" "}
               <strong>Share location</strong> button writes a complete message — position,
-              route, your ICE details — ready to send the moment one bar of signal
-              appears. Text messages get through when calls can&apos;t.
+              route, and your ICE details — ready for you to send when service is
+              available. SMS may sometimes work when a voice call does not, but delivery
+              is never guaranteed; look for an acknowledgement.
             </li>
             <li>
               <strong className="text-foreground">Need to be found?</strong>{" "}
               <strong>Sound &amp; flash locator</strong> strobes the screen and loops a
               distress tone. It does not contact 911, SAR, or transmit your location.
-              Volume up. Three of anything — whistle blasts, light flashes — is the
-              universal distress signal.
+              Volume up. Three repeated whistle blasts or light flashes are a widely
+              recognized distress convention, but responders may use different local
+              procedures.
             </li>
             <li>
               <strong className="text-foreground">Hurt, cold, or at altitude?</strong> The

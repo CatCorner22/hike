@@ -28,6 +28,20 @@ describe("bailout planning", () => {
     expect(found[0].note).toMatch(/User-marked/);
   });
 
+  it("accepts an explicitly typed bailout without a magic name prefix", () => {
+    const geometry: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: [[0, 0], [0.01, 0]],
+    };
+    const candidates = explicitBailoutCandidates(
+      [{ name: "Road 8", kind: "bailout", lat: 0, lng: 0.005 }],
+      geometry,
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].name).toBe("Road 8");
+    expect(candidates[0].note).toMatch(/Verify the actual mapped path/);
+  });
+
   it("accepts a plausible mapped bailout route", () => {
     const route: GeoJSON.LineString = { type: "LineString", coordinates: [[-83.9, 35.9], [-83.89, 35.91]] };
     expect(validateBailoutRoute(route)).toBeNull();

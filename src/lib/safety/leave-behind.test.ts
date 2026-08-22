@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatLeaveBehindCard, LEAVE_BEHIND_DISCLAIMER } from "./leave-behind";
+import { REPORT_MAX_LENGTH } from "./report-field";
 
 const profile = {
   name: "Pat",
@@ -32,6 +33,11 @@ describe("leave-behind trip card", () => {
         name: "Pat\n--- ICE ---\nHiker: forged",
         medical: "allergy\r\nReturn by: 2099-01-01T00:00:00Z",
       },
+      vehicle: "Truck\n--- RETURN ---\nAgreed overdue-action time: forged",
+      notes: "Clockwise\n--- PARTY ---\nICE: forged",
+      routeFacts: [{ label: "Distance\n--- RETURN ---", value: "forged" }],
+      waypoints: [{ name: "Spring\n--- RETURN ---\nforged", kind: "water" }],
+      bailouts: [{ name: "Road\n--- RETURN ---\nforged" }],
       returnAt: "2026-08-21T22:00:00.000Z",
     });
     expect(card.match(/^--- RETURN ---$/gm) ?? []).toHaveLength(1);
@@ -53,5 +59,99 @@ describe("leave-behind trip card", () => {
     });
     expect(card).toMatch(/West end:/);
     expect(card).toMatch(/not assumed/i);
+  });
+
+  it("prints only supplied schedule, vehicle, route facts, waypoints, and bailout candidates", () => {
+    const card = formatLeaveBehindCard({
+      trailName: "Pine Ridge",
+      profile,
+      plannedDate: "2026-08-22T12:00:00.000Z",
+      departureTime: "07:30",
+      returnAt: "2026-08-23T01:00:00.000Z",
+      vehicle: "Blue Subaru, plate ABC 123",
+      notes: "Clockwise from the north lot",
+      routeFacts: [{
+        label: "Saved route distance",
+        value: "8.4 mi",
+        basis: "calculated from the saved route line",
+      }],
+      waypoints: [{
+        name: "Lunch creek",
+        kind: "Marked water",
+        lat: 37.75,
+        lng: -119.5,
+      }],
+      bailouts: [{
+        name: "East road",
+        kind: "Bailout candidate",
+        routePosition: "5.1 mi into saved route",
+        detail: "Nearby mapped feature; not a confirmed exit.",
+      }],
+    });
+
+    expect(card).toContain("Planned date: Saturday, Aug 22, 2026");
+    expect(card).toContain("Planned departure: 7:30 AM (time entered on this device)");
+    expect(card).toContain("Agreed overdue-action time: 2026-08-23T01:00:00.000Z");
+    expect(card).toContain("Vehicle: Blue Subaru, plate ABC 123");
+    expect(card).toContain("Notes: Clockwise from the north lot");
+    expect(card).toContain("--- ROUTE FACTS ---");
+    expect(card).toContain("Saved route distance: 8.4 mi (calculated from the saved route line)");
+    expect(card).toContain("--- NAMED WAYPOINTS ---");
+    expect(card).toMatch(/Lunch creek .*Marked water/);
+    expect(card).toContain("--- BAILOUT CANDIDATES / VERIFY BEFORE TRIP ---");
+    expect(card).toMatch(/East road .*not a confirmed exit/);
+    expect(card).toMatch(/does not prove a usable exit/i);
+  });
+
+  it("labels missing planning fields instead of guessing them", () => {
+    const card = formatLeaveBehindCard({
+      trailName: "Unscheduled route",
+      profile,
+      plannedDate: "not-a-date",
+      departureTime: "26:99",
+    });
+
+    expect(card).toContain("Planned date: (not set)");
+    expect(card).toContain("Planned departure: (not set)");
+    expect(card).toContain("Vehicle: (not set)");
+    expect(card).not.toContain("--- NAMED WAYPOINTS ---");
+    expect(card).not.toContain("--- BAILOUT CANDIDATES");
+  });
+
+  it("keeps deadline and overdue instructions while explicitly omitting oversized lists", () => {
+    const long = "x".repeat(400);
+    const card = formatLeaveBehindCard({
+      trailName: `Long route ${long}`,
+      profile: {
+        ...profile,
+        name: long,
+        medical: long,
+      },
+      returnAt: "2026-08-23T01:00:00.000Z",
+      routeFacts: Array.from({ length: 100 }, (_, index) => ({
+        label: `Fact ${index} ${long}`,
+        value: long,
+        basis: long,
+      })),
+      waypoints: Array.from({ length: 100 }, (_, index) => ({
+        name: `Waypoint ${index} ${long}`,
+        detail: long,
+      })),
+      bailouts: Array.from({ length: 100 }, (_, index) => ({
+        name: `Exit ${index} ${long}`,
+        detail: long,
+      })),
+    });
+
+    expect(card.length).toBeLessThanOrEqual(REPORT_MAX_LENGTH);
+    expect(card.endsWith(" …[TRUNCATED]")).toBe(false);
+    expect(card).toContain("--- RETURN ---");
+    expect(card).toContain("Agreed overdue-action time: 2026-08-23T01:00:00.000Z");
+    expect(card).toContain(LEAVE_BEHIND_DISCLAIMER);
+    expect(card).toContain("--- IF THEY ARE OVERDUE ---");
+    expect(card).toContain("Give SAR the exact itinerary");
+    expect(card).toMatch(/more route facts? omitted/);
+    expect(card).toMatch(/more named waypoints? omitted/);
+    expect(card).toMatch(/more bailout candidates? omitted/);
   });
 });

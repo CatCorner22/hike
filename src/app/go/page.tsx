@@ -10,7 +10,8 @@ export default function GoPage() {
         <p className="text-sm font-medium text-muted-foreground">Start a prepared route</p>
         <h1 className="text-3xl font-bold tracking-tight">Go hiking</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Open a route saved on this device. “Basic route saved” does not prove a cold offline launch; verify the route and test airplane mode before leaving signal.
+          Start a route only after this device confirms both the route and the app are ready offline.
+          Test airplane mode before leaving signal.
         </p>
       </div>
       <section className="rounded-xl border bg-card p-5 shadow-sm">
