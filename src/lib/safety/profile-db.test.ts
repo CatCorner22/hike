@@ -146,10 +146,12 @@ describe("storage failures are reported, not swallowed", () => {
       },
       get: async () => row,
     });
+    // The readiness gate always arms with a fresh "now" and verifies the read-back
+    // byte-for-byte; a stale armedAt is deliberately re-stamped by saveCheckinSettings.
     const settings = {
       enabled: true,
       intervalMin: 60,
-      armedAt: "2026-08-22T12:00:00.000Z",
+      armedAt: new Date().toISOString(),
     };
 
     await expect(saveCheckinSettings(settings)).resolves.toBe(true);

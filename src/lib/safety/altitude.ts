@@ -275,7 +275,11 @@ export function expectedSpo2(elevationM: number): number | null {
 /** Wilderness Medical Society altitude guidance and pulse-oximeter limitations: use a low reading as a symptom check, not a diagnosis. */
 export function spo2Warning(spo2Pct: number, elevationM: number): string | null {
   if (!Number.isFinite(spo2Pct) || spo2Pct < 0 || spo2Pct > 100) return null;
-  const expected = expectedSpo2(elevationM);
+  if (!Number.isFinite(elevationM)) return null;
+  // Below sea level (Badwater, coastal GPS noise) the sea-level expectation is the
+  // conservative floor — barometric pressure only rises below 0 m. Returning null
+  // there silently dropped every warning for a hypoxic reading.
+  const expected = expectedSpo2(Math.max(0, elevationM));
   if (expected == null || spo2Pct > expected - 5) return null;
   return `SpO2 ${Math.round(spo2Pct)}% is well below the rough ${expected}% expectation at ${Math.round(elevationM)} m. Recheck a warm finger, assess symptoms, stop ascent, and descend for severe symptoms.`;
 }

@@ -757,7 +757,7 @@ export function overdueStatus(returnAt: string, now = Date.now()) {
  * Degrade to coarser units and cap the display, since past a few days the exact
  * figure carries no operational meaning and usually indicates a bad clock.
  */
-function formatElapsed(minutes: number): string {
+export function formatElapsed(minutes: number): string {
   if (!Number.isFinite(minutes) || minutes < 0) return "an unknown amount of time";
   if (minutes < 60) return `${minutes} min`;
   const hours = Math.floor(minutes / 60);
