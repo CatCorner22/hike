@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   containsNavigateRouteMarker,
+  headersForRewrittenNavigateDocument,
   isValidNavigateShellDocument,
   looksLikeNavigateHtml,
   NAVIGATE_ASSETS_CACHE,
@@ -40,5 +41,21 @@ describe("navigate shell validation", () => {
   it("exports cache names aligned with the service worker", () => {
     expect(NAVIGATE_SHELL_CACHE).toBe("hike-navigate-shell");
     expect(NAVIGATE_ASSETS_CACHE).toBe("hike-navigate-assets");
+  });
+
+  it("drops stale representation headers when a decoded shell body is rewritten", () => {
+    const headers = headersForRewrittenNavigateDocument(new Headers({
+      "content-encoding": "br",
+      "content-length": "123",
+      etag: '"old-body"',
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'",
+    }));
+
+    expect(headers.get("content-encoding")).toBeNull();
+    expect(headers.get("content-length")).toBeNull();
+    expect(headers.get("etag")).toBeNull();
+    expect(headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(headers.get("content-security-policy")).toBe("default-src 'self'");
   });
 });

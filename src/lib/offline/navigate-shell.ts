@@ -1,4 +1,5 @@
 import {
+  headersForRewrittenNavigateDocument,
   isValidNavigateShellDocument,
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
@@ -68,7 +69,7 @@ function nextStaticUrls(html: string, baseUrl: URL): URL[] {
 function ownMarkedDocument(response: Response, html: string, navId: string): Response | null {
   const contentType = response.headers.get("content-type") ?? "";
   if (!isValidNavigateShellDocument(html, contentType, null, navId)) return null;
-  const headers = new Headers(response.headers);
+  const headers = headersForRewrittenNavigateDocument(response.headers);
   headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
   return new Response(stampNavigateShellHtml(html), {
     status: response.status,

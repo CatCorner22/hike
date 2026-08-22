@@ -2,6 +2,7 @@ import { defaultCache } from "@serwist/next/worker";
 import type { PrecacheEntry, SerwistGlobalConfig } from "serwist";
 import { CacheFirst, ExpirationPlugin, NetworkOnly, Serwist } from "serwist";
 import {
+  headersForRewrittenNavigateDocument,
   isValidNavigateShellDocument,
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
@@ -53,7 +54,7 @@ async function markNavigateDocument(response: Response, navId: string): Promise<
   try {
     const body = await response.clone().text();
     if (!isValidNavigateShellDocument(body, contentType, null, navId)) return null;
-    const headers = new Headers(response.headers);
+    const headers = headersForRewrittenNavigateDocument(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
     return new Response(stampNavigateShellHtml(body), {
       status: response.status,

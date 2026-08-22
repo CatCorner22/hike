@@ -582,6 +582,8 @@ async function run() {
               out.entry = {
                 status: hit.status,
                 contentType: hit.headers.get("content-type"),
+                contentEncoding: hit.headers.get("content-encoding"),
+                contentLength: hit.headers.get("content-length"),
                 markerHeader: hit.headers.get("x-hike-navigate-shell"),
                 bytes: body.length,
                 markerInBody: body.includes("hike-navigate-shell-v2"),

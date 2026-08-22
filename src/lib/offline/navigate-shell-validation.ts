@@ -4,6 +4,29 @@ export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
 export const NAVIGATE_ASSETS_CACHE = "hike-navigate-assets";
 export const MIN_NAVIGATE_DOCUMENT_BYTES = 512;
 
+const REWRITTEN_BODY_HEADERS = [
+  "content-encoding",
+  "content-length",
+  "content-md5",
+  "content-range",
+  "digest",
+  "etag",
+  "transfer-encoding",
+] as const;
+
+/**
+ * A fetched response body has already been decoded by the browser.  When that
+ * text is stamped and wrapped in a new Response, representation metadata from
+ * the wire no longer describes its bytes and can make a cached navigation fail
+ * with a content-decoding error.  Preserve policy/cache headers, but discard
+ * payload encodings, lengths, ranges, and validators tied to the old body.
+ */
+export function headersForRewrittenNavigateDocument(source: Headers): Headers {
+  const headers = new Headers(source);
+  for (const name of REWRITTEN_BODY_HEADERS) headers.delete(name);
+  return headers;
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
