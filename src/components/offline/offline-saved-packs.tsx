@@ -2,42 +2,82 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { Download, MapPinned, Trash2, Upload, X } from "lucide-react";
+import { Download, Loader2, MapPinned, RefreshCw, Trash2, Upload, X } from "lucide-react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
 import { parseRoutePackBackup, PACK_BACKUP_DISCLAIMER, serializeRoutePackBackup } from "@/lib/offline/pack-backup";
 import { deleteRoutePack, listRoutePacks, routePackStatus, type RoutePack } from "@/lib/offline/route-pack";
-import { removeNavigateShell } from "@/lib/offline/navigate-shell";
+import {
+  getNavigateOfflineStatus,
+  removeNavigateShell,
+  warmNavigateShell,
+  type NavigateOfflineStatus,
+} from "@/lib/offline/navigate-shell";
 import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { savedPackLaunchCopy, savedPackLaunchState } from "@/lib/offline/saved-pack-readiness";
 
 export function OfflineSavedPacks() {
   const [packs, setPacks] = useState<RoutePack[] | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [repairingId, setRepairingId] = useState<string | null>(null);
+  const [navigation, setNavigation] = useState<Record<string, NavigateOfflineStatus | null>>({});
+  const [online, setOnline] = useState(true);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
     const readPacks = () => {
       void listRoutePacks()
-        .then((next) => {
-          if (!cancelled) setPacks(next);
+        .then(async (next) => {
+          if (cancelled) return;
+          setPacks(next);
+          setNavigation(Object.fromEntries(next.map((pack) => [pack.id, null])));
+          const statuses = await Promise.all(
+            next.map(async (pack) => [pack.id, await getNavigateOfflineStatus(pack.id)] as const),
+          );
+          if (!cancelled) setNavigation(Object.fromEntries(statuses));
         })
         .catch(() => {
           if (!cancelled) {
             setPacks([]);
-            setMessage("Saved route packs could not be read on this device.");
+            setMessage("Saved routes could not be read on this device.");
           }
         });
     };
+    const updateOnline = () => setOnline(navigator.onLine);
+    updateOnline();
     readPacks();
     window.addEventListener("hike:offline-readiness-changed", readPacks);
+    window.addEventListener("online", updateOnline);
+    window.addEventListener("offline", updateOnline);
     return () => {
       cancelled = true;
       window.removeEventListener("hike:offline-readiness-changed", readPacks);
+      window.removeEventListener("online", updateOnline);
+      window.removeEventListener("offline", updateOnline);
     };
   }, []);
+
+  async function finishSetup(pack: RoutePack) {
+    if (!online || repairingId !== null) return;
+    setRepairingId(pack.id);
+    setMessage(null);
+    try {
+      const result = await warmNavigateShell(pack.id);
+      const status = await getNavigateOfflineStatus(pack.id);
+      setNavigation((current) => ({ ...current, [pack.id]: status }));
+      setMessage(result.ok
+        ? `“${pack.name}” is ready offline.`
+        : result.error ?? `“${pack.name}” could not finish offline setup.`);
+      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Offline setup could not be completed.");
+    } finally {
+      setRepairingId(null);
+    }
+  }
 
   function exportPack(pack: RoutePack) {
     try {
@@ -48,7 +88,7 @@ export function OfflineSavedPacks() {
       );
       setMessage("Backup downloaded. This is a device file, not cloud sync.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not export this pack.");
+      setMessage(error instanceof Error ? error.message : "Could not export this saved route.");
     }
   }
 
@@ -89,7 +129,7 @@ export function OfflineSavedPacks() {
   return (
     <div className="space-y-3 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-sm font-medium">Saved route packs</h2>
+        <h2 className="text-sm font-medium">Saved routes</h2>
         <div>
           <input
             ref={fileRef}
@@ -110,23 +150,25 @@ export function OfflineSavedPacks() {
       </div>
       <p className="text-xs text-muted-foreground">{PACK_BACKUP_DISCLAIMER}</p>
       {packs === null ? (
-        <p className="text-sm text-muted-foreground">Checking saved route packs…</p>
+        <p className="text-sm text-muted-foreground">Checking saved routes…</p>
       ) : packs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No route packs are saved on this device.</p>
+        <p className="text-sm text-muted-foreground">No routes are saved on this device.</p>
       ) : (
         <ul className="space-y-2">
           {packs.map((pack) => {
             const status = routePackStatus(pack);
-            const ready = status === "ready";
+            const navStatus = navigation[pack.id];
+            const launchState = savedPackLaunchState(status, navStatus);
+            const launchCopy = savedPackLaunchCopy(launchState);
+            const ready = launchState === "ready";
             return (
               <li key={pack.id} className="space-y-3 rounded-lg bg-muted px-3 py-3 text-sm">
                 <div className="min-w-0">
                   <p className="font-medium">{pack.name}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {ready
-                      ? "Basic route data is saved. Verify offline launch files before leaving signal."
-                      : "Saved, but needs an online refresh before relying on it."}
+                  <p className={`text-sm font-medium ${ready ? "text-green-700 dark:text-green-400" : ""}`}>
+                    {launchCopy.label}
                   </p>
+                  <p className="text-xs text-muted-foreground">{launchCopy.detail}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {ready && (
@@ -135,8 +177,28 @@ export function OfflineSavedPacks() {
                       className={buttonVariants({ size: "sm" })}
                     >
                       <MapPinned className="mr-2 h-4 w-4" />
-                      Open map
+                      Start
                     </Link>
+                  )}
+                  {launchState === "finish-setup" && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="default"
+                      disabled={!online || repairingId !== null}
+                      onClick={() => void finishSetup(pack)}
+                    >
+                      {repairingId === pack.id ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      {!online
+                        ? "Reconnect to finish"
+                        : repairingId === pack.id
+                          ? "Checking…"
+                          : "Finish setup"}
+                    </Button>
                   )}
                   <Button
                     type="button"
@@ -183,6 +245,20 @@ export function OfflineSavedPacks() {
                     </Button>
                   )}
                 </div>
+                <details className="text-xs text-muted-foreground">
+                  <summary className="cursor-pointer">Technical details</summary>
+                  <ul className="mt-1 list-disc space-y-1 pl-5">
+                    <li>Route record: {status === "ready" ? "current" : status}</li>
+                    <li>
+                      Offline app files: {navStatus == null
+                        ? "checking"
+                        : `${navStatus.cachedAssets}/${navStatus.expectedAssets || "?"} verified`}
+                    </li>
+                    <li>
+                      Offline control: {navStatus?.serviceWorkerControlled ? "active" : "not active on this page"}
+                    </li>
+                  </ul>
+                </details>
               </li>
             );
           })}

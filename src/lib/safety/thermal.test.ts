@@ -50,6 +50,25 @@ describe("thermal medical triage", () => {
     expect(result?.actions.join(" ")).toMatch(/handle gently/i);
   });
 
+  it("does not delay CPR for an untrained lay rescuer in severe hypothermia", () => {
+    const result = hypothermiaStage({
+      coreTempC: 27,
+      shivering: false,
+      alteredMental: true,
+      conscious: false,
+    });
+    const actions = result?.actions.join(" ") ?? "";
+
+    expect(actions).toMatch(/check responsiveness and normal breathing/i);
+    expect(actions).toMatch(/not breathing normally or only gasping/i);
+    expect(actions).toMatch(/call 911/i);
+    expect(actions).toMatch(/AED/i);
+    expect(actions).toMatch(/100–120\/min/i);
+    expect(actions).toMatch(/hands-only CPR if untrained or unwilling/i);
+    expect(actions).toMatch(/30 compressions and 2 breaths/i);
+    expect(actions).not.toMatch(/(?:check|feel for|if no) (?:a )?pulse|only if .*trained/i);
+  });
+
   it("returns null for a NaN core temperature", () => {
     expect(hypothermiaStage({ coreTempC: Number.NaN, shivering: true, alteredMental: false, conscious: true })).toBeNull();
   });

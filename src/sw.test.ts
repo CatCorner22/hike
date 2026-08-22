@@ -25,6 +25,7 @@ describe("navigate service-worker shell handler", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -87,5 +88,203 @@ describe("navigate service-worker shell handler", () => {
     expect(failedFetch).toHaveBeenCalledOnce();
     expect(body).toContain("Offline navigation is unavailable");
     expect(body).not.toContain("plan-someone-else");
+  });
+
+  it("retries a transient Cache Storage read after the offline fetch fails", async () => {
+    const prepared = new Response(VALID_SHELL, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
+      },
+    });
+    const cache = {
+      match: vi.fn(async () => prepared.clone()),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    const open = vi.fn()
+      .mockRejectedValueOnce(new DOMException("cache waking", "InvalidStateError"))
+      .mockResolvedValue(cache);
+    vi.stubGlobal("caches", { open });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("network unavailable");
+    }));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+
+    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a verified cache entry while a degraded network fetch remains pending", async () => {
+    const prepared = new Response(VALID_SHELL, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
+      },
+    });
+    const cache = {
+      match: vi.fn(async () => prepared.clone()),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    const open = vi.fn()
+      .mockRejectedValueOnce(new DOMException("cache waking", "InvalidStateError"))
+      .mockResolvedValue(cache);
+    vi.stubGlobal("caches", { open });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+
+    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(open).toHaveBeenCalledTimes(2);
+  });
+
+  it("bounds unavailable Cache Storage and a never-settling network", async () => {
+    vi.useFakeTimers();
+    const open = vi.fn(() => new Promise<Cache>(() => {}));
+    vi.stubGlobal("caches", { open });
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+
+    const { navigateShellHandler } = await import("./sw");
+    const pending = navigateShellHandler({ request: new Request(NAV_URL) });
+    await vi.advanceTimersByTimeAsync(10_000);
+    const result = await pending;
+
+    expect(await result.text()).toContain("Offline navigation is unavailable");
+    expect(open).toHaveBeenCalledTimes(5);
+  });
+
+  it("uses a recovered exact-route shell instead of an invalid live document", async () => {
+    const miss = {
+      match: vi.fn(async () => undefined),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    const prepared = new Response(VALID_SHELL, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
+      },
+    });
+    const hit = {
+      match: vi.fn(async () => prepared.clone()),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", {
+      open: vi.fn().mockResolvedValueOnce(miss).mockResolvedValue(hit),
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("not a route document", {
+      headers: { "content-type": "text/plain" },
+    })));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+
+    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+  });
+
+  it("stamps and sanitizes a valid live document before caching it", async () => {
+    const cache = {
+      match: vi.fn(async () => undefined),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    const unmarked = VALID_SHELL.replace(`<!--${NAVIGATE_SHELL_MARKER}-->`, "");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(unmarked, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "content-length": "999",
+        etag: '"stale-wire-validator"',
+      },
+    })));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+    const cached = cache.put as unknown as ReturnType<typeof vi.fn>;
+    const stored = cached.mock.calls[0]?.[1] as Response;
+
+    expect(result.status).toBe(200);
+    expect(cache.put).toHaveBeenCalledOnce();
+    expect(stored.headers.get("x-hike-navigate-shell")).toBe(NAVIGATE_SHELL_MARKER);
+    expect(stored.headers.has("content-length")).toBe(false);
+    expect(stored.headers.has("etag")).toBe(false);
+    expect(await stored.text()).toContain(NAVIGATE_SHELL_MARKER);
+  });
+
+  it("does not abort a completed untrusted network response that must be returned", async () => {
+    const cache = {
+      match: vi.fn(async () => undefined),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    const captured: { signal: AbortSignal | null } = { signal: null };
+    vi.stubGlobal("fetch", vi.fn(async (_request: Request, init?: RequestInit) => {
+      captured.signal = init?.signal ?? null;
+      return new Response("Temporarily unavailable", {
+        status: 503,
+        headers: { "content-type": "text/plain" },
+      });
+    }));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+
+    expect(result.status).toBe(503);
+    expect(captured.signal?.aborted).toBe(false);
+    expect(await result.text()).toBe("Temporarily unavailable");
+  });
+
+  it("keeps a near-deadline valid live response when its cache write stalls", async () => {
+    vi.useFakeTimers();
+    const cache = {
+      match: vi.fn(async () => undefined),
+      keys: vi.fn(async () => []),
+      put: vi.fn(() => new Promise<void>(() => {})),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    const captured: { signal: AbortSignal | null } = { signal: null };
+    vi.stubGlobal("fetch", vi.fn((_request: Request, init?: RequestInit) => new Promise<Response>((resolve) => {
+      captured.signal = init?.signal ?? null;
+      setTimeout(() => resolve(new Response(VALID_SHELL, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })), 4_800);
+    })));
+
+    const { navigateShellHandler } = await import("./sw");
+    const pending = navigateShellHandler({ request: new Request(NAV_URL) });
+    await vi.advanceTimersByTimeAsync(6_000);
+    const result = await pending;
+
+    expect(result.status).toBe(200);
+    expect(captured.signal?.aborted).toBe(false);
+    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(cache.put).toHaveBeenCalledOnce();
+  });
+
+  it("serves a valid live document even when caching that document fails", async () => {
+    const cache = {
+      match: vi.fn(async () => undefined),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => {
+        throw new DOMException("storage full", "QuotaExceededError");
+      }),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(VALID_SHELL, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    })));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({ request: new Request(NAV_URL) });
+
+    expect(result.status).toBe(200);
+    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(cache.put).toHaveBeenCalledOnce();
   });
 });

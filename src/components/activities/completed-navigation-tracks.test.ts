@@ -5,6 +5,7 @@ import {
   CompletedNavigationTrackList,
   deleteFinishedNavigationTrack,
   exportFinishedNavigationTrack,
+  exportFinishedNavigationTrackGpx,
   finishedTrackSummaries,
   type CompletedTrackLoadState,
 } from "./completed-navigation-tracks";
@@ -41,7 +42,8 @@ function render(
       confirmDeleteId: options.confirmDeleteId ?? null,
       workingId: options.workingId ?? null,
       onRetry: vi.fn(),
-      onExport: vi.fn(),
+      onExportGpx: vi.fn(),
+      onExportJson: vi.fn(),
       onRequestDelete: vi.fn(),
       onCancelDelete: vi.fn(),
       onConfirmDelete: vi.fn(),
@@ -74,7 +76,8 @@ describe("completed navigation track management", () => {
 
     expect(html).toContain("River Loop");
     expect(html).toContain("412 GPS points");
-    expect(html).toContain("Export JSON");
+    expect(html).toContain("Export GPX");
+    expect(html).toContain("Export JSON backup");
     expect(html).toContain("Delete");
     expect(html).toContain("nothing is uploaded");
     expect(html).not.toContain("private-pack");
@@ -92,7 +95,63 @@ describe("completed navigation track management", () => {
     expect(html).toContain("Cancel");
     expect(html).toMatch(/aria-describedby="[^"]+"/);
     expect(html).not.toContain("finished-1");
-    expect(html).not.toContain("Export JSON");
+    expect(html).not.toContain("Export GPX");
+  });
+
+  it("exports every finished navigation point as GPX with time and elevation", async () => {
+    const read = vi.fn(async () => ({
+      format: "klandagi-nav-track" as const,
+      version: 2 as const,
+      exportedAt: "2026-08-22T14:00:00.000Z",
+      session: finished,
+      points: [
+        {
+          pointId: "p1",
+          sessionId: finished.id,
+          sequence: 0,
+          lat: 35,
+          lng: -83,
+          altitude: 1000,
+          recordedAt: "2026-08-22T12:00:00.000Z",
+        },
+        {
+          pointId: "p2",
+          sessionId: finished.id,
+          sequence: 1,
+          lat: 35.1,
+          lng: -83.1,
+          recordedAt: "2026-08-22T12:00:05.000Z",
+        },
+      ],
+    }));
+    const download = vi.fn();
+
+    const result = await exportFinishedNavigationTrackGpx(finished, { read, download });
+
+    expect(result.pointCount).toBe(2);
+    expect(result.filename).toMatch(/navigation-track\.gpx$/);
+    const gpx = download.mock.calls[0][1] as string;
+    expect(gpx).toContain("<ele>1000</ele>");
+    expect(gpx).toContain("<time>2026-08-22T12:00:05.000Z</time>");
+    expect(download.mock.calls[0][2]).toBe("application/gpx+xml");
+  });
+
+  it("rejects active and empty navigation GPX exports", async () => {
+    const read = vi.fn();
+    await expect(exportFinishedNavigationTrackGpx(active, { read })).rejects.toMatchObject({
+      code: "invalid-input",
+    });
+    expect(read).not.toHaveBeenCalled();
+
+    await expect(exportFinishedNavigationTrackGpx(finished, {
+      read: vi.fn(async () => ({
+        format: "klandagi-nav-track" as const,
+        version: 2 as const,
+        exportedAt: "2026-08-22T14:00:00.000Z",
+        session: finished,
+        points: [],
+      })),
+    })).rejects.toMatchObject({ code: "invalid-input" });
   });
 
   it("exports only finished tracks through the expected JSON download contract", async () => {

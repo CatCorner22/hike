@@ -4,6 +4,7 @@ import {
   avalancheTerrainWarning,
   bearSafetyCard,
   snakeBiteSop,
+  wildernessFirstAidCard,
   wildlifeEncounterSop,
 } from "./wilderness";
 
@@ -187,6 +188,19 @@ describe("wilderness cards", () => {
 
   it("includes snake bite do-nots", () => {
     expect(snakeBiteSop().join(" ")).toMatch(/Do NOT cut/);
+  });
+
+  it("gives lay rescuers action-first CPR guidance without a pulse check", () => {
+    const card = wildernessFirstAidCard().join(" ");
+
+    expect(card).toMatch(/check responsiveness/i);
+    expect(card).toMatch(/not breathing normally or only gasping/i);
+    expect(card).toMatch(/call 911/i);
+    expect(card).toMatch(/AED/i);
+    expect(card).toMatch(/100–120\/min/i);
+    expect(card).toMatch(/hands-only CPR if untrained or unwilling/i);
+    expect(card).toMatch(/30 compressions and 2 breaths/i);
+    expect(card).not.toMatch(/5 compressions|(?:check|feel for|if no) (?:a )?pulse|only if .*trained/i);
   });
 
   it("differs grizzly vs black bear response", () => {

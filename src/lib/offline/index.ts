@@ -88,6 +88,10 @@ function notifyQueueChanged() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("hike-points-queued"));
 }
 
+export function notifyPendingPointsChanged() {
+  notifyQueueChanged();
+}
+
 function notifyQueueProblem(error: OfflinePointQueueFullError) {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent("hike-points-queue-error", { detail: error }));
@@ -137,7 +141,7 @@ async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>, activityId: s
 
 export async function queueActivityPoint(point: {
   id?: string; activityId: string; lat: number; lng: number; elevation?: number; recordedAt: Date;
-}) {
+}, options: { notify?: boolean } = {}) {
   const write = pointWriteQueue.then(async () => {
     const db = await getOfflineDb();
     if (!db) {
@@ -160,7 +164,7 @@ export async function queueActivityPoint(point: {
       }
       throw error;
     }
-    notifyQueueChanged();
+    if (options.notify !== false) notifyQueueChanged();
   });
   pointWriteQueue = write.catch(() => undefined);
   return write;
@@ -182,7 +186,38 @@ export async function getPendingPointCount() {
 async function getAllUnsyncedPoints() {
   const db = await getOfflineDb();
   if (!db) return [];
-  return db.getAllFromIndex("pendingPoints", "by-synced", 0);
+  const points = await db.getAllFromIndex("pendingPoints", "by-synced", 0);
+  if (!db.objectStoreNames.contains("localActivities")) return points;
+
+  const locals = await db.getAll("localActivities");
+  const byLocalId = new Map(locals.map((activity) => [activity.id, activity]));
+  const knownRemoteIds = new Set(
+    locals.flatMap((activity) => activity.remoteId ? [activity.remoteId] : []),
+  );
+  const uploadable: PendingPoint[] = [];
+  for (const point of points) {
+    // A server ID can also be the key of a synthetic row left by the old finish bug.
+    // Prefer a known remote mapping before interpreting the value as a local ID.
+    if (knownRemoteIds.has(point.activityId)) {
+      uploadable.push(point);
+      continue;
+    }
+    const local = byLocalId.get(point.activityId);
+    if (!local) {
+      // Legacy callers queued directly against a server ID and have no local row.
+      uploadable.push(point);
+      continue;
+    }
+    if (!local.remoteId) {
+      // Never POST a device-local UUID as though it were a server activity. The
+      // activity queue will create the server row and migrate this point first.
+      continue;
+    }
+    const migrated = { ...point, activityId: local.remoteId };
+    await db.put("pendingPoints", migrated);
+    uploadable.push(migrated);
+  }
+  return uploadable;
 }
 
 export async function markPointsSynced(ids: string[]) {
@@ -213,19 +248,23 @@ export interface FlushResult { synced: number; pending: number; dropped: number;
  * Statuses that will never succeed on retry, however long we wait.
  *
  * 404/410: the activity does not exist for this owner — deleted, or created under a
- * different owner. 400/413/422: the server rejected the payload itself.
+ * different owner. 400/413/422: the server rejected the payload itself. 409 means the
+ * activity is already finalized. The points API returns a successful idempotent replay
+ * when a clientPointId was previously accepted, so a 409 is specifically a novel point
+ * that the finalized activity can never accept.
  *
  * 401 is deliberately NOT here: a session is re-minted on the next document navigation,
  * so those points are still deliverable.
  */
-const PERMANENT_STATUSES = new Set([400, 404, 410, 413, 422]);
+const PERMANENT_STATUSES = new Set([400, 404, 409, 410, 413, 422]);
 
-async function deletePoints(ids: string[]) {
+export async function discardPendingPoints(ids: string[]) {
   const db = await getOfflineDb();
   if (!db || ids.length === 0) return;
   const transaction = db.transaction("pendingPoints", "readwrite");
   await Promise.all(ids.map((id) => transaction.store.delete(id)));
   await transaction.done;
+  notifyQueueChanged();
 }
 
 /**
@@ -265,7 +304,7 @@ async function flushActivityPoints(
       break;
     }
     if (PERMANENT_STATUSES.has(response.status)) {
-      await deletePoints(batch.map((point) => point.id));
+      await discardPendingPoints(batch.map((point) => point.id));
       dropped += batch.length;
       continue;
     }

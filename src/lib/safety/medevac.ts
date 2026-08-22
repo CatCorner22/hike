@@ -67,7 +67,7 @@ export function lostProcedure(): string[] {
     "Mark this spot as LKP (last known point).",
     "Terrain associate: ridgeline, drainage, sun, last handrail.",
     "Backtrack on your breadcrumb line if you have one.",
-    "If still lost: stay put, run the beacon, send the 9-line.",
+    "If still lost: stay put, activate your physical PLB or satellite SOS if carried, and send the 9-line when communications are available. The phone locator does not transmit.",
   ];
 }
 
@@ -76,7 +76,7 @@ export function pacePlan(): string[] {
     "P — Primary: SMS ICE with USNG",
     "A — Alternate: Share / copy grid",
     "C — Contingency: Voice 9-line over phone when you have signal",
-    "E — Emergency: Stay put, beacon, whistle SOS",
+    "E — Emergency: Stay put; activate a physical PLB or satellite SOS if carried; use whistle signals",
   ];
 }
 

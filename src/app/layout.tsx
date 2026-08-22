@@ -34,7 +34,6 @@ export const viewport: Viewport = {
   themeColor: APP_THEME_COLOR,
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   // Without viewport-fit=cover, iOS reports every env(safe-area-inset-*) as 0 —
   // which silently disabled the SOS button's and navigate footer's notch offsets.
   viewportFit: "cover",

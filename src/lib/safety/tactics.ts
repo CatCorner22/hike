@@ -177,7 +177,11 @@ export function casevacDecision(input: {
       reason: "Long way yet — consider a short assisted move to a better LZ / handrail, then stay.",
     };
   }
-  return { choice: "stay", medicalPriority: false, reason: "Default: stay, improve shelter, run beacon." };
+  return {
+    choice: "stay",
+    medicalPriority: false,
+    reason: "Default: stay, improve shelter, and activate a physical PLB or satellite SOS if carried. The phone locator does not transmit.",
+  };
 }
 
 export function fordSop(): string[] {

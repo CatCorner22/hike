@@ -64,6 +64,7 @@ const waypointSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   kind: z.string().trim().min(1).max(64).optional(),
   notes: z.string().max(2_000).optional(),
+  sourceUrl: z.string().url().max(2_048).optional(),
 }).strict();
 
 export const waypointsSchema = z.array(waypointSchema).max(1_000).superRefine((value, ctx) => {

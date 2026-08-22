@@ -105,7 +105,7 @@ async function openSeeded(planId, opts = {}) {
   await page.waitForTimeout(1200);
   if (opts.prepare) {
     await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: /prepare offline|update offline pack/i }).click({ timeout: 10_000 });
+    await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click({ timeout: 10_000 });
     await page.waitForTimeout(1500);
   }
   return { context, page, errors, url };
@@ -277,7 +277,7 @@ try {
         return { installed: true, aliases };
       } finally { /* restored after caller observes write */ }
     });
-    await env.page.getByRole("button", { name: /prepare offline|update offline pack/i }).click(); await env.page.waitForTimeout(800);
+    await env.page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click(); await env.page.waitForTimeout(800);
     const state = await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => { const o = indexedDB.open("hike-nav-packs"); o.onsuccess = () => { const tx = o.result.transaction(["routePacks", "aliases"], "readonly"); const p = tx.objectStore("routePacks").get(id); const a = tx.objectStore("aliases").get(id); tx.oncomplete = () => resolve({ pack: p.result != null, alias: a.result != null }); tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); }), { id: `plan-${planId}` });
     const text = await env.page.locator("body").innerText();
     // The wording is owned by formatOfflineRouteStorageError, which maps a
@@ -313,7 +313,7 @@ try {
   {
     const planId = await createPlan("two tabs"); const context = await newOwnedContext({ permissions: ["geolocation"], geolocation: GEO, serviceWorkers: "allow" }); const a = await context.newPage(), b = await context.newPage();
     await Promise.all([a.goto(`${BASE}/plan/${planId}`), b.goto(`${BASE}/navigate/plan-${planId}`)]); await waitForController(a);
-    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800);
+    const button = a.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }); await button.click(); await b.waitForTimeout(1800);
     const first = await screen(b);
     if (!first.ready && !first.appError) {
       await b.reload({ waitUntil: "domcontentloaded" }).catch(() => {});

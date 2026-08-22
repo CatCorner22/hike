@@ -4,9 +4,12 @@ import withSerwistInit from "@serwist/next";
 const withSerwist = withSerwistInit({
   swSrc: "src/sw.ts",
   swDest: "public/sw.js",
-  // /offline is an app route, not a webpack static asset. Listing it makes
-  // Serwist fetch and precache the real fallback document during install.
-  additionalPrecacheEntries: [{ url: "/offline", revision: null }],
+  // These are app routes, not webpack static assets. Precache both the genuine
+  // failure fallback and the neutral device-saved-routes destination.
+  additionalPrecacheEntries: [
+    { url: "/offline", revision: null },
+    { url: "/saved", revision: null },
+  ],
   disable: process.env.NODE_ENV === "development",
 });
 

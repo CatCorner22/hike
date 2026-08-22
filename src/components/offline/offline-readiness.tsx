@@ -18,6 +18,7 @@ import { describeOfficialAlertSnapshot, type RouteOfficialAlertSnapshot } from "
 import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { InstallOfflineHint } from "@/components/offline/install-offline-hint";
 
 interface ReadinessState {
   packStatus: RoutePackStatus;
@@ -78,7 +79,7 @@ export function formatOfflineRouteStorageError(error: unknown): {
     };
   }
   return {
-    message: diagnostic ?? "Could not save the route pack on this device.",
+    message: diagnostic ?? "Could not save this route for offline use on this device.",
     diagnostic,
   };
 }
@@ -90,18 +91,24 @@ function formatBytes(value?: number): string {
 }
 
 function CheckRow({
+  checkId,
   icon,
   title,
   ok,
   detail,
 }: {
+  checkId?: string;
   icon: React.ReactNode;
   title: string;
   ok: boolean;
   detail: string;
 }) {
   return (
-    <li className="flex gap-3 rounded-lg border bg-background p-3">
+    <li
+      className="flex gap-3 rounded-lg border bg-background p-3"
+      data-offline-check={checkId}
+      data-offline-status={ok ? "ready" : "warning"}
+    >
       <span className={ok ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}>
         {icon}
       </span>
@@ -187,8 +194,8 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             <CardTitle>Offline readiness</CardTitle>
             <CardDescription>
               {tripReady
-                ? "This route passed the on-device file check. Test airplane mode before leaving signal."
-                : "Not fully verified. Basic route data and offline launch are checked separately."}
+                ? "Ready on this device. Test airplane mode before leaving signal."
+                : "Finish every item below while you still have a stable connection."}
             </CardDescription>
           </div>
           <Button
@@ -203,19 +210,21 @@ export function OfflineReadiness({ packId }: { packId: string }) {
         </div>
       </CardHeader>
       <CardContent>
+        <InstallOfflineHint />
         <ul className="space-y-2">
           <CheckRow
+            checkId="route-pack"
             icon={<Route className="mt-0.5 h-4 w-4" />}
-            title={packReady ? "Route pack saved" : "Route pack missing — re-download before relying on this device"}
+            title={packReady ? "Route saved" : "Route missing — prepare it again while online"}
             ok={packReady}
             detail={
               packReady
-                ? "Route geometry and safety data are saved on this device."
+                ? "The marked route and its safety information are saved on this device."
                 : state.packStatus === "stale"
-                  ? "This pack is older than the current safety-data format. Refresh it while online."
+                  ? "This saved route uses an older safety-data format. Update it while online."
                   : state.packCheckFailed
                     ? "Offline route storage could not be checked. Treat this route as missing; reconnect and re-download it before relying on this device."
-                    : "Navigation cannot start without a saved, current route pack. Reconnect and re-download before relying on this device."
+                    : "Navigation cannot start without a current saved route. Reconnect and prepare it again."
             }
           />
           <CheckRow
@@ -223,29 +232,27 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             title={
               packReady && state.corridor
                 ? state.corridorFeatures
-                  ? "Offline corridor plan and OSM context recorded"
-                  : "Offline corridor plan recorded"
-                : "Offline corridor plan missing — update the pack while online"
+                  ? "Nearby trail and landmark context saved"
+                  : "Nearby coverage recorded; context not saved"
+                : "Nearby context missing — prepare again while online"
             }
             ok={Boolean(packReady && state.corridor)}
             detail={
               packReady && state.corridor
-                ? `${describePersistedCorridor(state.corridor)}. ${
-                  state.corridorFeatures
-                    ? describeCorridorFeatures(state.corridorFeatures)
-                    : "OSM context is not stored on this pack. Update it while online if you want nearby trails, roads, water, and shelters."
-                }`
+                ? state.corridorFeatures
+                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date."
+                  : "The nearby coverage target is recorded, but nearby details were not saved. Update while online if you want that context."
                 : packReady
-                  ? "This pack has no corridor record. Update the offline pack while online to store coverage and the planned download size."
-                  : "Save the route pack to record the planned corridor. Terrain tiles themselves are not downloaded yet."
+                  ? "This saved route has no nearby coverage record. Update it while online."
+                  : "Save the route to record its nearby coverage target. Shaded terrain and contour tiles are not downloaded yet."
             }
           />
           <CheckRow
             icon={<ShieldAlert className="mt-0.5 h-4 w-4" />}
             title={
               packReady && state.officialAlerts
-                ? "Official alert check recorded"
-                : "Official alert check missing — update the pack while online"
+                ? "Official alerts checked"
+                : "Official alerts not checked — update while online"
             }
             ok={Boolean(packReady && state.officialAlerts)}
             detail={
@@ -260,57 +267,71 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             icon={<CloudSun className="mt-0.5 h-4 w-4" />}
             title={
               packReady && state.hazardBrief
-                ? "Route forecast snapshot recorded"
-                : "Route forecast snapshot missing — update the pack while online"
+                ? "Route forecast saved"
+                : "Route forecast not saved — update while online"
             }
             ok={Boolean(packReady && state.hazardBrief)}
             detail={
               packReady && state.hazardBrief
                 ? describeHazardBrief(state.hazardBrief)
                 : packReady
-                  ? "This pack has no along-route forecast snapshot. Update it while online, or enter field weather in Safety. Cached weather is not current weather."
-                  : "Save the route pack to store a 24-hour forecast snapshot along the route. Navigation still works without it."
+                  ? "This saved route has no along-route forecast snapshot. Update it while online, or enter field weather in Safety. Cached weather is not current weather."
+                  : "Save the route to store a 24-hour forecast snapshot along it. Navigation still works without that snapshot."
             }
           />
           <CheckRow
             icon={<ScreenShare className="mt-0.5 h-4 w-4" />}
             title={
               state.navigation.ready
-                ? "Offline launch files verified"
+                ? "App works offline for this route"
                 : state.navigation.filesReady
-                  ? "Files saved — reopen the installed app to activate offline launch"
+                  ? "App files saved — reopen the installed app"
                   : state.navigation.shellCached
-                    ? "Offline launch files incomplete"
-                    : "Offline launch not prepared"
+                    ? "Offline app setup incomplete"
+                    : "App not prepared for an offline start"
             }
             ok={state.navigation.ready}
             detail={
               state.navigation.ready
-                ? `${state.navigation.cachedAssets} of ${state.navigation.expectedAssets} versioned app files are present, and this page is controlled by the offline worker.`
+                ? "The app screen and required files are present, and the offline system is active."
                 : state.navigation.filesReady
-                  ? `${state.navigation.cachedAssets} of ${state.navigation.expectedAssets} app files are present, but this tab is not controlled by the offline worker. Close and reopen the installed app, then verify.`
+                  ? "The required files are present, but this tab is not using them yet. Close and reopen the installed app, then verify."
                   : state.navigation.expectedAssets > 0
-                    ? `${state.navigation.cachedAssets} of ${state.navigation.expectedAssets} required app files are present. Retry Prepare offline on a stable connection.`
+                    ? "Some required app files are missing. Retry Prepare offline on a stable connection."
                     : "The basic route may still be stored, but a first offline open is not verified and may show offline help instead of navigation."
             }
           />
           <CheckRow
+            checkId="storage-persistence"
             icon={<HardDriveDownload className="mt-0.5 h-4 w-4" />}
-            title="Storage marked persistent"
+            title="Saved routes less likely to be removed"
             ok={state.persistent}
             detail={
               state.persistent
-                ? "The browser has marked this app's storage persistent."
-                : "The browser may evict this pack under storage pressure. Keep the app installed and open."
+                ? "The browser granted persistent storage for this app."
+                : "The browser may remove saved data when device storage is low. Keep the app installed and recheck before leaving signal."
             }
           />
           <CheckRow
             icon={<HardDriveDownload className="mt-0.5 h-4 w-4" />}
-            title="Approximate space used"
+            title="Storage space can be checked"
             ok={state.usage !== undefined}
             detail={spaceDetail}
           />
         </ul>
+        <details className="mt-3 text-xs text-muted-foreground">
+          <summary className="cursor-pointer font-medium">Technical details</summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5">
+            <li>Route record: {state.packStatus}</li>
+            <li>
+              App files: {state.navigation.cachedAssets}/{state.navigation.expectedAssets || "?"} verified
+            </li>
+            <li>Offline worker control: {state.navigation.serviceWorkerControlled ? "active" : "inactive"}</li>
+            <li>Storage persistence: {state.persistent ? "granted" : "not granted"}</li>
+            {state.corridor && <li>{describePersistedCorridor(state.corridor)}</li>}
+            {state.corridorFeatures && <li>{describeCorridorFeatures(state.corridorFeatures)}</li>}
+          </ul>
+        </details>
       </CardContent>
     </Card>
   );

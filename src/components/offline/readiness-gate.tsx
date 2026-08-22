@@ -249,7 +249,7 @@ export function ReadinessGate({
             </Button>
           )}
           <p className="text-xs text-muted-foreground">
-            Skip always opens a ready map. Edits on this form will not be saved, and
+            Skip opens the map already loaded on this screen. Edits on this form will not be saved, and
             navigation will keep showing any stored ICE or deadline details that are missing.
           </p>
         </CardContent>

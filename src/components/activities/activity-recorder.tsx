@@ -15,8 +15,11 @@ import {
   beginActivity,
   finishActivity,
   flushActivityQueue,
+  loadOpenActivityRecovery,
+  saveLocalActivitySnapshot,
   saveActivityPoint,
 } from "@/lib/offline/activity-sync";
+import { PointSaveBarrier } from "@/components/activities/point-save-barrier";
 import { usePointSync } from "@/hooks/use-point-sync";
 import { Pause, Play, Square } from "lucide-react";
 
@@ -35,6 +38,12 @@ interface LiveStats {
 
 type RecordedPoint = { lat: number; lng: number; elevation?: number; recordedAt: Date };
 
+type RecorderRecoveryUi =
+  | { state: "checking" }
+  | { state: "none" }
+  | { state: "recovered"; message: string; serverVerified: boolean }
+  | { state: "blocked"; message: string; candidateCount: number };
+
 const EMPTY_STATS: LiveStats = {
   distanceMeters: 0,
   elevationGainMeters: 0,
@@ -47,11 +56,14 @@ export function ActivityRecorder({
   planId,
   onComplete,
 }: ActivityRecorderProps) {
-  const [status, setStatus] = useState<"idle" | "recording" | "paused">("idle");
+  const [status, setStatus] = useState<"idle" | "recording" | "paused" | "stopping">("idle");
   const [activityId, setActivityId] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [stats, setStats] = useState<LiveStats>(EMPTY_STATS);
   const [error, setError] = useState<string | null>(null);
+  const [queueProblem, setQueueProblem] = useState<string | null>(null);
+  const [recoveryUi, setRecoveryUi] = useState<RecorderRecoveryUi>({ state: "checking" });
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const pointSync = usePointSync();
 
   const watchIdRef = useRef<number | null>(null);
@@ -63,12 +75,22 @@ export function ActivityRecorder({
   const activityIdRef = useRef<string | null>(null);
   const statsRef = useRef(stats);
   const gainTrackerRef = useRef<GainTracker>(createGainTracker());
+  const recoveredGainBaseRef = useRef(0);
+  const pointSavesRef = useRef(new PointSaveBarrier());
+  const stoppingRef = useRef(false);
+
+  const updateStats = useCallback((update: LiveStats | ((current: LiveStats) => LiveStats)) => {
+    const next = typeof update === "function" ? update(statsRef.current) : update;
+    // Persistence and Stop read the ref because React may not commit state before a
+    // navigation cleanup or a same-turn button action. Keep it current synchronously.
+    statsRef.current = next;
+    setStats(next);
+  }, []);
 
   useEffect(() => {
     statusRef.current = status;
     activityIdRef.current = activityId;
-    statsRef.current = stats;
-  }, [status, activityId, stats]);
+  }, [status, activityId]);
 
   const stopWatch = useCallback(() => {
     if (watchIdRef.current != null) {
@@ -85,10 +107,12 @@ export function ActivityRecorder({
 
   const persistSnapshot = useCallback(async (keepalive = false) => {
     const id = activityIdRef.current;
-    if (!id || statusRef.current === "idle") return;
+    if (!id || statusRef.current === "idle" || statusRef.current === "stopping") return;
     const current = { ...statsRef.current, durationSeconds: activeDurationSec() };
     try {
-      await apiFetch(`/api/activities/${encodeURIComponent(id)}`, {
+      const remoteId = await saveLocalActivitySnapshot(id, current);
+      if (!remoteId) return;
+      await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stats: current }),
@@ -126,8 +150,9 @@ export function ActivityRecorder({
           if (distance < 10 && elapsedMs < 30_000) return;
 
           // Two-stage filter (≥8 m hysteresis): never a raw positive-delta sum.
-          const elevationGainMeters = gainTrackerRef.current.add(point.elevation);
-          setStats((prev) => ({
+          const elevationGainMeters =
+            recoveredGainBaseRef.current + gainTrackerRef.current.add(point.elevation);
+          updateStats((prev) => ({
             distanceMeters: prev.distanceMeters + distance,
             elevationGainMeters,
             durationSeconds: activeDurationSec(),
@@ -135,7 +160,7 @@ export function ActivityRecorder({
           }));
         } else {
           gainTrackerRef.current.add(point.elevation);
-          setStats((prev) => ({
+          updateStats((prev) => ({
             ...prev,
             durationSeconds: activeDurationSec(),
             pointCount: prev.pointCount + 1,
@@ -143,14 +168,28 @@ export function ActivityRecorder({
         }
 
         lastPointRef.current = point;
-        void saveActivityPoint(id, point).then((ok) => {
-          if (!ok) setOffline(true);
-        });
+        const save = pointSavesRef.current.track(saveActivityPoint(id, point));
+        void save
+          .then((result) => {
+            if (result === "queued") setOffline(true);
+            if (result === "rejected-finalized") {
+              setQueueProblem(
+                "A GPS point was not saved because this activity was already finalized on the server.",
+              );
+            }
+          })
+          .catch((saveError) => {
+            setQueueProblem(
+              saveError instanceof Error
+                ? saveError.message
+                : "A GPS point could not be saved on this device.",
+            );
+          });
       },
       (err) => setError(err.message),
       { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
     );
-  }, [activeDurationSec, stopWatch]);
+  }, [activeDurationSec, stopWatch, updateStats]);
 
   useEffect(() => () => stopWatch(), [stopWatch]);
 
@@ -162,7 +201,6 @@ export function ActivityRecorder({
    * the hiker believed their track was being saved when it was not. This is
    * sticky on purpose: a transient banner is no use to someone who is walking.
    */
-  const [queueProblem, setQueueProblem] = useState<string | null>(null);
   useEffect(() => {
     const onQueueError = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
@@ -178,12 +216,82 @@ export function ActivityRecorder({
   useEffect(() => {
     if (status !== "recording") return;
     const tick = window.setInterval(() => {
-      setStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
+      updateStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
     }, 1000);
     return () => window.clearInterval(tick);
-  }, [status, activeDurationSec]);
+  }, [status, activeDurationSec, updateStats]);
 
   useEffect(() => {
+    let cancelled = false;
+    void Promise.resolve().then(() => {
+      if (!cancelled) setRecoveryUi({ state: "checking" });
+    });
+    void loadOpenActivityRecovery({ trailId, planId })
+      .then((recovery) => {
+        if (cancelled) return;
+        if (recovery.status === "none") {
+          setRecoveryUi({ state: "none" });
+          return;
+        }
+        if (recovery.status === "blocked") {
+          statusRef.current = "idle";
+          activityIdRef.current = null;
+          setStatus("idle");
+          setActivityId(null);
+          setRecoveryUi({
+            state: "blocked",
+            message: recovery.message,
+            candidateCount: recovery.candidateCount,
+          });
+          return;
+        }
+
+        const recoveredStats: LiveStats = {
+          distanceMeters: recovery.activity.stats?.distanceMeters ?? 0,
+          elevationGainMeters: recovery.activity.stats?.elevationGainMeters ?? 0,
+          durationSeconds: recovery.activity.stats?.durationSeconds ?? 0,
+          pointCount: recovery.activity.stats?.pointCount ?? 0,
+        };
+        const recoveredAt = Date.now();
+        pointSavesRef.current = new PointSaveBarrier();
+        stoppingRef.current = false;
+        activityIdRef.current = recovery.activity.id;
+        statusRef.current = "paused";
+        startTimeRef.current = recoveredAt - recoveredStats.durationSeconds * 1000;
+        pauseAccumRef.current = 0;
+        pausedAtRef.current = recoveredAt;
+        lastPointRef.current = null;
+        recoveredGainBaseRef.current = recoveredStats.elevationGainMeters;
+        gainTrackerRef.current = createGainTracker();
+        setActivityId(recovery.activity.id);
+        updateStats(recoveredStats);
+        setOffline(!recovery.activity.remoteId);
+        setStatus("paused");
+        setRecoveryUi({
+          state: "recovered",
+          message: recovery.message,
+          serverVerified: recovery.serverVerified,
+        });
+      })
+      .catch((recoveryError) => {
+        if (cancelled) return;
+        statusRef.current = "idle";
+        setStatus("idle");
+        setRecoveryUi({
+          state: "blocked",
+          candidateCount: 0,
+          message: recoveryError instanceof Error
+            ? `Could not safely check unfinished recordings: ${recoveryError.message}`
+            : "Could not safely check unfinished recordings. GPS remains off.",
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [planId, recoveryAttempt, trailId, updateStats]);
+
+  useEffect(() => {
+    if (recoveryUi.state === "checking" || recoveryUi.state === "blocked") return;
     const onOnline = () => {
       void flushActivityQueue().then(() => setOffline(false));
     };
@@ -199,12 +307,22 @@ export function ActivityRecorder({
       window.removeEventListener("online", onOnline);
       window.removeEventListener("pagehide", onKeepalive);
       document.removeEventListener("visibilitychange", onKeepalive);
+      // Next.js client navigation does not fire pagehide or visibilitychange.
+      // Start the durable snapshot before the replacement recorder can recover
+      // this activity; activity-sync's recovery gate waits for this write.
+      void persistSnapshot(true);
     };
-  }, [persistSnapshot]);
+  }, [persistSnapshot, recoveryUi.state]);
 
   const startRecording = async () => {
+    if (recoveryUi.state !== "none") return;
     setError(null);
+    setQueueProblem(null);
     const started = await beginActivity({ trailId, planId });
+    pointSavesRef.current = new PointSaveBarrier();
+    stoppingRef.current = false;
+    activityIdRef.current = started.id;
+    statusRef.current = "recording";
     setActivityId(started.id);
     setOffline(started.offline);
     if (started.offline) {
@@ -214,17 +332,19 @@ export function ActivityRecorder({
     pauseAccumRef.current = 0;
     pausedAtRef.current = null;
     lastPointRef.current = null;
+    recoveredGainBaseRef.current = 0;
     gainTrackerRef.current = createGainTracker();
-    setStats(EMPTY_STATS);
+    updateStats(EMPTY_STATS);
     setStatus("recording");
     startWatch();
   };
 
   const pauseRecording = () => {
     if (statusRef.current !== "recording") return;
+    statusRef.current = "paused";
     stopWatch();
     pausedAtRef.current = Date.now();
-    setStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
+    updateStats((prev) => ({ ...prev, durationSeconds: activeDurationSec() }));
     setStatus("paused");
     void flushActivityQueue();
   };
@@ -238,30 +358,63 @@ export function ActivityRecorder({
     // Movement while paused must not become hiking distance on the first fix after
     // resume — the hiker may have walked to a new spot before tapping Resume.
     lastPointRef.current = null;
+    if (recoveryUi.state === "recovered") setRecoveryUi({ state: "none" });
+    statusRef.current = "recording";
     setStatus("recording");
     startWatch();
     void flushActivityQueue();
   };
 
   const stopRecording = async () => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
     if (statusRef.current === "recording") {
       pausedAtRef.current = Date.now();
     }
+    // Reject any geolocation callback already queued by the browser before waiting for
+    // saves that have passed the recording-state check.
+    statusRef.current = "stopping";
+    setStatus("stopping");
     stopWatch();
-    const id = activityIdRef.current;
-    if (!id) return;
-    const current = {
-      ...statsRef.current,
-      durationSeconds: activeDurationSec(),
-    };
-    setStats(current);
-    const result = await finishActivity(id, current);
-    setOffline(!result.synced);
-    setStatus("idle");
-    setActivityId(null);
-    onComplete?.(id);
-    if (!result.synced) {
-      setError("Saved on this device. Will sync when you are back online.");
+    try {
+      await pointSavesRef.current.drain();
+      const id = activityIdRef.current;
+      if (!id) {
+        statusRef.current = "idle";
+        setStatus("idle");
+        return;
+      }
+      const current = {
+        ...statsRef.current,
+        durationSeconds: activeDurationSec(),
+      };
+      updateStats(current);
+      const result = await finishActivity(id, current);
+      setOffline(!result.synced);
+      statusRef.current = "idle";
+      activityIdRef.current = null;
+      setStatus("idle");
+      setActivityId(null);
+      setRecoveryUi({ state: "none" });
+      onComplete?.(id);
+      if (result.rejectedPoints > 0) {
+        setQueueProblem(
+          `${result.rejectedPoints} GPS point${result.rejectedPoints === 1 ? " was" : "s were"} not saved because this activity was already finalized on the server.`,
+        );
+      }
+      if (!result.synced) {
+        setError("Saved on this device. Will sync when you are back online.");
+      }
+    } catch (stopError) {
+      statusRef.current = "paused";
+      setStatus("paused");
+      setError(
+        stopError instanceof Error
+          ? `Could not finish this activity: ${stopError.message}`
+          : "Could not finish this activity. Try Stop again.",
+      );
+    } finally {
+      stoppingRef.current = false;
     }
   };
 
@@ -296,6 +449,26 @@ export function ActivityRecorder({
             {queueProblem}
           </p>
         )}
+        {recoveryUi.state === "checking" && (
+          <p role="status" className="text-sm text-muted-foreground">
+            Checking this device for an unfinished recording…
+          </p>
+        )}
+        {recoveryUi.state === "recovered" && (
+          <p role="status" className="rounded-md border border-amber-500/50 bg-amber-500/10 p-2 text-sm">
+            <strong>Unfinished recording recovered.</strong> {recoveryUi.message} Resume continues
+            from the saved totals; Stop finishes it without turning GPS on.
+            {recoveryUi.serverVerified
+              ? " The server still reports this activity open."
+              : " Server status is unverified, so review the saved totals before resuming."}
+          </p>
+        )}
+        {recoveryUi.state === "blocked" && (
+          <p role="alert" className="rounded-md border border-destructive bg-destructive/10 p-2 text-sm text-destructive">
+            <strong>Recording recovery needs attention.</strong> {recoveryUi.message} Do not start
+            another recording until the unfinished activities are reconciled.
+          </p>
+        )}
         {pointSync.pending > 0 && (
           <p className="text-sm text-muted-foreground">
             {pointSync.syncing
@@ -313,10 +486,24 @@ export function ActivityRecorder({
         )}
 
         <div className="flex gap-2">
-          {status === "idle" && (
+          {status === "idle" && recoveryUi.state === "none" && (
             <Button onClick={() => void startRecording()} className="flex-1">
               <Play className="mr-2 h-4 w-4" />
               Start recording
+            </Button>
+          )}
+          {status === "idle" && recoveryUi.state === "checking" && (
+            <Button disabled className="flex-1">
+              Checking unfinished recordings…
+            </Button>
+          )}
+          {status === "idle" && recoveryUi.state === "blocked" && (
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={() => setRecoveryAttempt((attempt) => attempt + 1)}
+            >
+              Retry unfinished activity recovery
             </Button>
           )}
           {status === "recording" && (
@@ -342,6 +529,11 @@ export function ActivityRecorder({
                 Stop
               </Button>
             </>
+          )}
+          {status === "stopping" && (
+            <Button disabled className="flex-1">
+              Saving final point…
+            </Button>
           )}
         </div>
       </CardContent>
