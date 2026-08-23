@@ -270,7 +270,16 @@ export function FieldCapture({
             : effectiveSource === "lastKnown"
               ? "GPS is not live. This saves the last known position and labels it that way."
               : "Saves your current GPS position on this phone for this route."}
-          {accuracyM != null ? ` Reported accuracy is about ${Math.round(accuracyM)} m.` : ""}
+          {/*
+            A non-positive accuracy is how CoreLocation and the W3C Geolocation
+            API both say "no valid estimate". Rendering it as "about 0 m" turned
+            the absence of a measurement into a claim of a perfect one, on the
+            screen where somebody is recording a place they may have to find
+            again in the dark.
+          */}
+          {accuracyM != null && Number.isFinite(accuracyM) && accuracyM > 0
+            ? ` Reported accuracy is about ${Math.round(accuracyM)} m.`
+            : " No accuracy estimate came with this fix."}
         </p>
       </div>
 

@@ -19,8 +19,8 @@ describe("emergency-card field validation", () => {
     });
 
     expect(result.ok).toBe(false);
-    expect(result.missing.join("\n")).toMatch(/Your name.*longer than 120/i);
-    expect(result.missing.join("\n")).toMatch(/ICE phone.*placeholder/i);
+    expect(result.missing.map((gap) => gap.detail).join("\n")).toMatch(/Your name.*longer than 120/i);
+    expect(result.missing.map((gap) => gap.detail).join("\n")).toMatch(/ICE phone.*placeholder/i);
   });
 
   it("rejects zero-width-only hiker and ICE names", () => {
@@ -33,7 +33,7 @@ describe("emergency-card field validation", () => {
 
     expect(isIceFilled(profile)).toBe(false);
     expect(result.ok).toBe(false);
-    expect(result.missing.join("\n")).toMatch(/invisible characters/i);
+    expect(result.missing.map((gap) => gap.detail).join("\n")).toMatch(/invisible characters/i);
   });
 
   it("accepts a normally formatted dialable ICE number", () => {

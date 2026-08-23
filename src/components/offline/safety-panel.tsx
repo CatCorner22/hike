@@ -865,7 +865,7 @@ export function SafetyPanel({
         <div className="mt-4 space-y-4 px-4 pb-6">
           {daylightWarning && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              <Sun className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <Sun className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
               <p>{daylightWarning}</p>
             </div>
           )}
@@ -2637,6 +2637,7 @@ export function SafetyPanel({
                 void persistProfile({
                   ...profile,
                   partySize: Math.max(1, Number(e.target.value) || 1),
+                  partySizeConfirmed: true,
                 })
               }
             />

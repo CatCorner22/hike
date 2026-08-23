@@ -228,6 +228,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             }
           />
           <CheckRow
+            checkId="corridor-context"
             icon={<Mountain className="mt-0.5 h-4 w-4" />}
             title={
               packReady && state.corridor
@@ -236,7 +237,11 @@ export function OfflineReadiness({ packId }: { packId: string }) {
                   : "Nearby coverage recorded; context not saved"
                 : "Nearby context missing — prepare again while online"
             }
-            ok={Boolean(packReady && state.corridor)}
+            // The pass mark has to mean what the title says. This row printed a
+            // green check beside "context not saved" -- a screen reader read it
+            // out as "Nearby coverage recorded; context not saved. Pass." -- the
+            // one row in this list where the two disagreed.
+            ok={Boolean(packReady && state.corridor && state.corridorFeatures)}
             detail={
               packReady && state.corridor
                 ? state.corridorFeatures

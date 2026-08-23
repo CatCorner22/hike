@@ -1,4 +1,5 @@
 import { formatDdm, formatMgrs10, formatUsng, formatUtm, GRID_DATUM, gridDigitsForAccuracy, phonetic } from "@/lib/safety/usng";
+import { partySizeLine } from "@/lib/safety/party";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
 import { APP_SENT_FROM } from "@/lib/brand";
@@ -105,7 +106,7 @@ export function emergencyMessage(input: {
   const profile = input.profile;
   if (profile) {
     if (profile.name) lines.push(`Hiker: ${reportField(profile.name)}`);
-    if (profile.partySize) lines.push(`Party size: ${reportField(profile.partySize)}`);
+    lines.push(`Party size: ${reportField(partySizeLine(profile))}`);
     if (profile.medical) lines.push(`Medical: ${reportField(profile.medical)}`);
     if (profile.bloodType) lines.push(`Blood type: ${reportField(profile.bloodType)}`);
     if (profile.iceName || profile.icePhone) {

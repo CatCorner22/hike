@@ -52,6 +52,7 @@ const PROFILE_FIELDS = [
   "password",
   "responderAgency",
   "responderPhone",
+  "partySizeConfirmed",
 ] as const satisfies ReadonlyArray<keyof IceProfile>;
 
 function sameProfile(expected: IceProfile, actual: IceProfile): boolean {

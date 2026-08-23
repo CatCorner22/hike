@@ -1,4 +1,5 @@
 import { APP_NAME } from "@/lib/brand";
+import { partySizeLine } from "@/lib/safety/party";
 import { missedCheckInPolicy } from "@/lib/safety/comms";
 import { guardianStatus } from "@/lib/safety/decision-support";
 import type { IceProfile } from "@/lib/safety/profile";
@@ -209,7 +210,7 @@ export function formatLeaveBehindCard(input: {
     "",
     "--- PARTY ---",
     `Hiker: ${input.profile.name ? reportField(input.profile.name) : "(not set)"}`,
-    `Party size: ${reportField(input.profile.partySize)}`,
+    `Party size: ${reportField(partySizeLine(input.profile))}`,
     `ICE: ${input.profile.iceName ? reportField(input.profile.iceName) : "—"} ${
       input.profile.icePhone ? reportField(input.profile.icePhone) : ""
     }`.trim(),

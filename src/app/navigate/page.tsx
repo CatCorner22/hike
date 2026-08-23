@@ -54,7 +54,7 @@ import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/
 import { subscribePlatformAdapters } from "@/lib/platform/adapters";
 import { bailoutRouteCandidates } from "@/lib/offline/bailout-routes";
 import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
-import { hikeReadiness } from "@/lib/safety/readiness";
+import { hikeReadiness, summarizeGaps, type ReadinessGap } from "@/lib/safety/readiness";
 import { nextDecisionPoint } from "@/lib/safety/decision-support";
 import { bailoutDecisionPoints } from "@/lib/safety/bailout";
 import { wayfindingAssessment } from "@/lib/safety/wayfinding";
@@ -179,7 +179,7 @@ function NavigateScreen({ navId }: { navId: string }) {
   const [navUnlocked, setNavUnlocked] = useState(false);
   // Items the hiker chose to skip on the pre-hike checklist, kept so navigation
   // can keep showing them. Skipping must not silently drop the safety net.
-  const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
+  const [readinessSkipped, setReadinessSkipped] = useState<ReadinessGap[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
   /**
    * Whether the hiker WANTS the screen held awake, which is a different thing
@@ -807,7 +807,7 @@ function NavigateScreen({ navId }: { navId: string }) {
     hudBanners.push({
       key: "readiness",
       tone: "warn",
-      text: `Not set up: ${readinessSkipped.join(", ")}. Nobody is expecting you back at a known time.`,
+      text: `Still not set up: ${summarizeGaps(readinessSkipped)}. Nobody is expecting you back at a known time.`,
     });
   }
   if (trackPersistence.status === "error") {

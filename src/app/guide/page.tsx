@@ -40,7 +40,7 @@ export default function GuidePage() {
       <Card id="start">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <ClipboardList className="h-5 w-5 text-green-600" />
+            <ClipboardList className="h-5 w-5 text-green-700 dark:text-green-400" />
             1 · At home — plan the hike
           </CardTitle>
         </CardHeader>
@@ -76,7 +76,7 @@ export default function GuidePage() {
       <Card id="offline">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Download className="h-5 w-5 text-green-600" />
+            <Download className="h-5 w-5 text-green-700 dark:text-green-400" />
             2 · Before you lose signal — the step that matters
           </CardTitle>
         </CardHeader>
@@ -121,7 +121,7 @@ export default function GuidePage() {
       <Card id="navigate">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Compass className="h-5 w-5 text-green-600" />
+            <Compass className="h-5 w-5 text-green-700 dark:text-green-400" />
             3 · On the trail — navigate
           </CardTitle>
         </CardHeader>
@@ -220,7 +220,7 @@ export default function GuidePage() {
       <Card id="faq">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Phone className="h-5 w-5 text-green-600" />
+            <Phone className="h-5 w-5 text-green-700 dark:text-green-400" />
             Quick answers
           </CardTitle>
         </CardHeader>
@@ -266,7 +266,7 @@ export default function GuidePage() {
             </p>
           </div>
           <div className="flex items-start gap-2">
-            <BatteryCharging className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+            <BatteryCharging className="mt-0.5 h-4 w-4 shrink-0 text-green-700 dark:text-green-400" />
             <p>
               <span className="font-medium text-foreground">Battery discipline:</span>{" "}
               airplane mode with GPS on, screen dim, and the app warns you at 20% with what

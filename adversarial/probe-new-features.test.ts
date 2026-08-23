@@ -36,7 +36,7 @@ describe("new-feature adversarial probes", () => {
     });
     // A 10,000-character name and a 7-digit "phone" are not usable by SAR.
     expect(result.ok).toBe(false);
-    expect(result.missing.join(" ")).toMatch(/name|phone/i);
+    expect(result.missing.map((gap) => gap.detail).join(" ")).toMatch(/name|phone/i);
   });
 
   it("treats invisible zero-width names as filled ICE/readiness fields", () => {
