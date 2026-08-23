@@ -46,6 +46,7 @@ export interface PlatformAdapters {
   haptics?: HapticsAdapter;
   saveFile?: SaveFileAdapter;
   notifications?: NotificationsAdapter;
+  heading?: import("@/lib/platform/heading").HeadingAdapter;
 }
 
 let adapters: PlatformAdapters = {};
