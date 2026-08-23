@@ -98,3 +98,32 @@ describe("the store metadata describes the app that exists", () => {
     expect(recorder.indexOf("noticeably faster")).toBeLessThan(recorder.indexOf("Start recording"));
   });
 });
+
+/**
+ * The roadmap conceded that no terrain tiles are downloaded; the app did not,
+ * except in the failure branch of one readiness row. "Nearby context saved"
+ * reads as "the map is on the phone", and the thing that is not on the phone is
+ * the shape of the ground.
+ */
+describe("the app concedes its two biggest limits where a user will read them", () => {
+  it("says there is no terrain in the guide, the readiness list, and the listing", () => {
+    for (const [name, path] of [
+      ["guide", "src/app/guide/page.tsx"],
+      ["readiness", "src/components/offline/offline-readiness.tsx"],
+      ["listing", "docs/app-store.md"],
+    ] as const) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${name} does not mention the missing terrain`).toMatch(
+        /contours|shaded relief/i,
+      );
+    }
+  });
+
+  it("says it follows one phone, not a party, in the guide and the listing", () => {
+    for (const path of ["src/app/guide/page.tsx", "docs/app-store.md"]) {
+      expect(readFileSync(resolve(process.cwd(), path), "utf8")).toMatch(
+        /one phone, not a party/i,
+      );
+    }
+  });
+});

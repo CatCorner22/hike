@@ -92,6 +92,20 @@ export default function GuidePage() {
             Do this <em>before</em> you drive out of coverage. Navigation cannot download a
             route it has never seen.
           </p>
+          <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
+            <strong>What the offline map is, and is not.</strong> Klandagi draws your route,
+            your track, and nearby trails, roads, water and landmarks. It does not download
+            terrain tiles — no contours, no shaded relief, no satellite imagery — so it
+            cannot show you the slope of the ground between you and where you are going.
+            Carry a paper topo map for that. This app is not one.
+          </p>
+          <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
+            <strong>Klandagi follows one phone, not a party.</strong> The party size you
+            enter is printed on the leave-behind card and the SOS text so a searcher knows
+            how many people to look for. Nothing tracks the others: if the group splits up,
+            this app cannot tell anyone, and the return-time alarm belongs to this phone
+            alone.
+          </p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <strong>Install the app</strong> when the browser offers &quot;Add to Home

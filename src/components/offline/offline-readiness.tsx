@@ -245,7 +245,11 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             detail={
               packReady && state.corridor
                 ? state.corridorFeatures
-                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date."
+                  // Said on the success branch too, not only on the failure one.
+                  // "Nearby context saved" reads as "the map is on the phone",
+                  // and the thing that is not on the phone -- the shape of the
+                  // ground -- is the thing a hiker would most want on it.
+                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date, and no terrain tiles are downloaded: there are no contours, shaded relief, or imagery on this map."
                   : "The nearby coverage target is recorded, but nearby details were not saved. Update while online if you want that context."
                 : packReady
                   ? "This saved route has no nearby coverage record. Update it while online."

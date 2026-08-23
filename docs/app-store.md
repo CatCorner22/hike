@@ -55,6 +55,12 @@ moment you need help is the moment you have no bars.
 - Field references: first aid checklists, land navigation, signaling —
   readable with no connection.
 
+**What it is not.** Klandagi draws your route and the trails, roads, water and
+landmarks near it. It does not download terrain tiles: no contours, no shaded
+relief, no imagery. Carry a paper topo. And it follows one phone, not a party —
+the party size you enter tells a searcher how many people to look for, but if
+the group splits up nothing here can tell anyone.
+
 Klandagi states uncertainty plainly. A stale GPS fix is labeled stale.
 Cached weather is labeled cached. A dead reckoning position carries its
 error radius. No ads, no advertising identifiers, no analytics SDKs, and nothing
