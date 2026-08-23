@@ -77,6 +77,8 @@ const capacitorConfig: NextConfig = {
   // Its own build dir: sharing .next with the web build meant whichever build
   // ran last was what `next start` silently served — the web server then 404'd
   // every API route because it was serving the exported shell's manifest.
+  // NOTE: with output:"export" this directory IS the export destination; the
+  // build script renames it to out/ afterwards so the public contract holds.
   distDir: ".next-cap",
   output: "export",
   trailingSlash: true,

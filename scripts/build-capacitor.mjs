@@ -10,7 +10,7 @@
  * src/proxy.ts aside for the duration of the build and always restores it —
  * on success, failure, and signals — so the working tree ends unchanged.
  */
-import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -63,6 +63,20 @@ try {
     stdio: "inherit",
     env: { ...process.env, BUILD_TARGET: "capacitor" },
   });
+  if (result.status === 0) {
+    // With output:"export", distDir IS the export destination (docs:
+    // "Change the output directory out -> dist"), so the site lands in
+    // .next-cap. Publish it at the stable out/ path every consumer uses
+    // (capacitor webDir, CI checks, the runbook).
+    const exportDir = path.join(root, ".next-cap");
+    const outDir = path.join(root, "out");
+    if (!existsSync(path.join(exportDir, "index.html"))) {
+      console.error("build:cap: export completed but .next-cap/index.html is missing");
+      process.exit(1);
+    }
+    rmSync(outDir, { recursive: true, force: true });
+    renameSync(exportDir, outDir);
+  }
   process.exit(result.status ?? 1);
 } finally {
   restore();
