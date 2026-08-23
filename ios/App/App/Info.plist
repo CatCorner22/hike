@@ -24,6 +24,8 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Klandagi uses the camera only to scan a position QR code shown on another phone, so you can share locations with no signal. Nothing is recorded, stored, or sent anywhere.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Klandagi shows your position on the downloaded trail map and computes off-route alerts on this phone. Location never leaves the device except in the emergency messages you send yourself.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

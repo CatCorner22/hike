@@ -23,6 +23,35 @@ export interface ScannedPosition {
   label: string;
   /** The handoff's own provenance line ("Fix at … · DEAD RECKON — not live GPS"), when present. */
   provenance: string | null;
+  /**
+   * When the SCANNED FIX was taken, epoch ms — parsed out of the handoff's own
+   * Zulu stamp, never the time of the scan. The two are not the same: a relayed
+   * position can be an hour old, and treating the scan moment as the fix moment
+   * would silently make every stale position look fresh.
+   */
+  fixAtMs: number | null;
+}
+
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+/** Parse the `formatZulu` shape — "1300Z 23 AUG 2026" — back to epoch ms. */
+export function parseZuluStamp(text: string): number | null {
+  const match = text.match(/\b(\d{2})(\d{2})Z (\d{1,2}) ([A-Z]{3}) (\d{4})\b/);
+  if (!match) return null;
+  const [, hh, mm, day, mon, year] = match;
+  const month = MONTHS.indexOf(mon);
+  if (month < 0) return null;
+  const hours = Number(hh);
+  const minutes = Number(mm);
+  const dayNum = Number(day);
+  if (hours > 23 || minutes > 59 || dayNum < 1 || dayNum > 31) return null;
+  const ms = Date.UTC(Number(year), month, dayNum, hours, minutes, 0, 0);
+  if (!Number.isFinite(ms)) return null;
+  // Date.UTC rolls impossible dates over (31 FEB becomes 3 MAR); reject rather
+  // than accept a date the sender never wrote.
+  const round = new Date(ms);
+  if (round.getUTCDate() !== dayNum || round.getUTCMonth() !== month) return null;
+  return ms;
 }
 
 const MAX_PAYLOAD_CHARS = 4096;
@@ -43,7 +72,7 @@ function parseGeoUri(text: string): ScannedPosition | null {
   const lat = Number(match[1]);
   const lng = Number(match[2]);
   if (!validPair(lat, lng)) return null;
-  return { lat, lng, kind: "geo-uri", label: "", provenance: null };
+  return { lat, lng, kind: "geo-uri", label: "", provenance: null, fixAtMs: null };
 }
 
 function parseSarHandoff(text: string): ScannedPosition | null {
@@ -61,7 +90,7 @@ function parseSarHandoff(text: string): ScannedPosition | null {
   const label =
     candidate && candidate !== positionLine && !candidate.startsWith("Fix at") ? candidate : "";
   const provenance = lines.find((line) => line.startsWith("Fix at ")) ?? null;
-  return { lat, lng, kind: "sar-handoff", label, provenance };
+  return { lat, lng, kind: "sar-handoff", label, provenance, fixAtMs: provenance ? parseZuluStamp(provenance) : null };
 }
 
 function parsePlainPair(text: string): ScannedPosition | null {
@@ -73,7 +102,7 @@ function parsePlainPair(text: string): ScannedPosition | null {
   const lat = Number(match[1]);
   const lng = Number(match[2]);
   if (!validPair(lat, lng)) return null;
-  return { lat, lng, kind: "coordinates", label: "", provenance: null };
+  return { lat, lng, kind: "coordinates", label: "", provenance: null, fixAtMs: null };
 }
 
 export function parseScannedPosition(payload: string): ScannedPosition | null {
