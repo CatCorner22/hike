@@ -4,6 +4,9 @@ import {
   gainLastHourM,
   rapidAscentWarning,
   reverseTrackLine,
+  reverseTrackSegments,
+  backtrackAlongContiguousTrack,
+  isBreadcrumbGap,
   stationaryMinutes,
 } from "./backtrack";
 import { overdueStatus } from "./profile";
@@ -170,5 +173,68 @@ describe("track points that cannot be trusted", () => {
     expect(rapidAscentWarning([], now)).toBeNull();
     expect(stationaryMinutes([], now)).toBe(0);
     expect(gainLastHourM(climb, Number.NaN)).toBe(0);
+  });
+});
+
+/**
+ * Regression: `reverseTrackLine` joined every consecutive pair with no gap
+ * check, and `backtrackProgress` handed that geometry straight to
+ * `progressAlongTrail` for bearing and distance. A pocketed phone, a suspended
+ * GPS watch or a flat battery leaves a hole, and two points 4 km apart become a
+ * chord across a drainage and a cliff band the hiker actually walked around.
+ * The map draws it as one unbroken dashed polyline, so there is no visual tell,
+ * and "Remaining" and "Est. time back" are computed off the same fabrication.
+ * The seventeenth pass audited this file for NaN and future timestamps and never
+ * looked at the line it builds.
+ */
+describe("a retrace that stops at the hole in the breadcrumb", () => {
+  const minute = 60_000;
+  const start = Date.parse("2026-08-23T15:00:00.000Z");
+  // Walking east along a line, then a 90-minute hole, then more points.
+  // The older run, before the phone went in a pocket.
+  const beforeGap = [0, 1].map((i) => ({
+    lat: 37.02,
+    lng: -119.05 + i * 0.001,
+    recordedAt: start + i * minute,
+  }));
+  // The run leading up to where the hiker is standing now, 90 minutes later.
+  const contiguous = [0, 1, 2].map((i) => ({
+    lat: 37.0,
+    lng: -119.0 + i * 0.001,
+    recordedAt: start + 90 * minute + i * minute,
+  }));
+  // Oldest first, the order the recorder appends in.
+  const track = [...beforeGap, ...contiguous];
+
+  it("recognises a hole by time or by impossible distance", () => {
+    expect(isBreadcrumbGap(contiguous[0], contiguous[1])).toBe(false);
+    expect(isBreadcrumbGap(beforeGap[1], contiguous[0])).toBe(true);
+    // Distance alone is enough, even with no timestamps at all.
+    expect(isBreadcrumbGap({ lat: 37, lng: -119 }, { lat: 37, lng: -118.9 })).toBe(true);
+  });
+
+  it("splits the reversed track instead of bridging it", () => {
+    const segments = reverseTrackSegments(track);
+    expect(segments).toHaveLength(2);
+    expect(segments[0].coordinates).toHaveLength(3);
+    // The first segment is the run leading back from where the hiker is now.
+    expect(segments[0].coordinates[0]).toEqual([contiguous[2].lng, contiguous[2].lat]);
+  });
+
+  it("reports the gap rather than quoting a bearing across it", () => {
+    const here = { lat: 37.0, lng: -119.002 };
+    const result = backtrackAlongContiguousTrack(here, track);
+    expect(result.gapAhead).not.toBeNull();
+    // beforeGap[1] at +1 min, contiguous[0] at +90: 89 minutes unrecorded.
+    expect(result.gapAhead!.minutes).toBe(89);
+    expect(result.gapAhead!.meters).toBeGreaterThan(1_000);
+    // Guidance is still given along the part that was actually recorded.
+    expect(result.progress).not.toBeNull();
+  });
+
+  it("says nothing about a gap when the track has none", () => {
+    const result = backtrackAlongContiguousTrack({ lat: 37.0, lng: -119.002 }, contiguous);
+    expect(result.gapAhead).toBeNull();
+    expect(result.progress).not.toBeNull();
   });
 });

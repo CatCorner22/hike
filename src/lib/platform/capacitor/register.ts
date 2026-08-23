@@ -15,6 +15,12 @@ import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { KeepAwake } from "@capacitor-community/keep-awake";
+
+/**
+ * Metres of movement between GNSS fixes. See the comment at the watcher below:
+ * zero means kCLDistanceFilterNone, which never lets the radio sleep.
+ */
+const NAVIGATION_DISTANCE_FILTER_M = 10;
 import type {
   BackgroundGeolocationPlugin,
   CallbackError,
@@ -244,15 +250,21 @@ function buildGeolocationAdapter(): GeolocationAdapter {
     watch(onFix, onError, options) {
       let removed = false;
       let watcherId: string | null = null;
+      // distanceFilter 0 is kCLDistanceFilterNone: the GNSS runs flat out with no
+      // duty cycling, which is the single most expensive thing an app can ask an
+      // iPhone to do — in an app whose own advice at field-ops.ts is "dim the
+      // screen to save battery". Ten metres is roughly a fix every ten seconds at
+      // walking pace, which is denser than either off-route alerting or a
+      // breadcrumb needs, and it lets the radio sleep between fixes.
       void BackgroundGeolocation.addWatcher(
         options.background
           ? {
-              backgroundMessage: "Recording your track so the route home stays on this phone.",
-              backgroundTitle: "Klandagi is recording",
+              backgroundMessage: "Keeping your position and breadcrumb while the screen is off.",
+              backgroundTitle: "Klandagi is navigating",
               requestPermissions: true,
-              distanceFilter: 0,
+              distanceFilter: NAVIGATION_DISTANCE_FILTER_M,
             }
-          : { requestPermissions: true, distanceFilter: 0 },
+          : { requestPermissions: true, distanceFilter: NAVIGATION_DISTANCE_FILTER_M },
         (position, error) => {
           if (removed) return;
           if (error) {

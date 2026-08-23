@@ -61,7 +61,7 @@ import { wayfindingAssessment } from "@/lib/safety/wayfinding";
 import { copyEmergencyInfo, emergencyMessage } from "@/lib/safety/emergency";
 import { offTrailLevel, shouldRepeatAlert, vibrateOffTrail } from "@/lib/safety/alerts";
 import {
-  backtrackProgress,
+  backtrackAlongContiguousTrack,
   gainLastHourM,
   rapidAscentWarning,
   reverseTrackLine,
@@ -180,6 +180,15 @@ function NavigateScreen({ navId }: { navId: string }) {
   // can keep showing them. Skipping must not silently drop the safety net.
   const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
+  /**
+   * Whether the hiker WANTS the screen held awake, which is a different thing
+   * from whether it currently is. The screen was pinned on for the whole hike
+   * with no way to turn it off, and the only surfaced control was a read-only
+   * 10px string that a screenshot showed truncated to "wake lock ne" by the SOS
+   * button. Now that the position watch runs in the background, holding the
+   * screen is a preference rather than a requirement.
+   */
+  const [wakeWanted, setWakeWanted] = useState(true);
   const [deniedError, setDeniedError] = useState<string | null>(null);
   const [refreshingPack, setRefreshingPack] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -478,6 +487,12 @@ function NavigateScreen({ navId }: { navId: string }) {
   }, []);
 
   useEffect(() => {
+    if (!wakeWanted) {
+      void releaseWakeLock();
+      // The repo's ticking-clock pattern: publish after the flush, never during it.
+      queueMicrotask(() => setWakeHeld(false));
+      return;
+    }
     void requestWakeLock();
     const id = window.setInterval(() => setWakeHeld(isWakeLockHeld()), 4000);
     queueMicrotask(() => setWakeHeld(isWakeLockHeld()));
@@ -495,7 +510,7 @@ function NavigateScreen({ navId }: { navId: string }) {
       stopWatchingAdapters();
       void releaseWakeLock();
     };
-  }, []);
+  }, [wakeWanted]);
 
   const unlockIfReady = useCallback(() => {
     void (async () => {
@@ -722,6 +737,16 @@ function NavigateScreen({ navId }: { navId: string }) {
     return hours >= 1 ? `saved ${hours} h ago` : "saved today";
   }, [loadState, nowMs]);
 
+  const retraceResult = useMemo(() => {
+    if (!backtrackOn || !navFix || !trusted) return null;
+    // Only the contiguous run leading back from here. Bridging a recording gap
+    // draws a straight line across ground nobody walked and then quotes a
+    // distance and bearing along it.
+    return backtrackAlongContiguousTrack({ lat: navFix.lat, lng: navFix.lng }, trackPoints);
+  }, [backtrackOn, navFix, trusted, trackPoints]);
+  const retrace = retraceResult?.progress ?? null;
+  const retraceGap = retraceResult?.gapAhead ?? null;
+
   // Stacked HUD, ranked by time-to-harm: untrusted → OFF TRAIL → overdue/check-in → fall → exposure/AMS → rest.
   const hudBanners: Array<{ key: string; tone: "critical" | "warn" | "info"; text: string }> = [];
   if (deniedWarning) {
@@ -729,6 +754,17 @@ function NavigateScreen({ navId }: { navId: string }) {
       key: "denied",
       tone: gpsDenied || deniedNeedHeading ? "critical" : "warn",
       text: deniedWarning,
+    });
+  }
+  if (retraceGap) {
+    // Ranked with the navigation criticals: the hiker is actively following a
+    // retrace that runs out, and the numbers beyond the gap do not exist.
+    hudBanners.push({
+      key: "retrace-gap",
+      tone: "critical",
+      text: `Breadcrumb gap ahead — ${retraceGap.meters} m${
+        retraceGap.minutes != null ? ` and about ${retraceGap.minutes} min` : ""
+      } was not recorded. The retrace ends there; beyond it there is no track to follow.`,
     });
   }
   if (severity === "critical" && progress && trusted && Number.isFinite(progress.offsetMeters)) {
@@ -843,10 +879,6 @@ function NavigateScreen({ navId }: { navId: string }) {
     () => reverseTrackLine(trackPoints),
     [trackPoints],
   );
-  const retrace = useMemo(() => {
-    if (!backtrackOn || !navFix || !trusted) return null;
-    return backtrackProgress({ lat: navFix.lat, lng: navFix.lng }, trackPoints);
-  }, [backtrackOn, navFix, trusted, trackPoints]);
 
   useEffect(() => {
     if (loadState.status !== "ready") return;
@@ -1112,7 +1144,11 @@ function NavigateScreen({ navId }: { navId: string }) {
                   {gps.status === "stale" && " · GPS stale"}
                 </p>
                 <p
-                  className={`text-[10px] font-medium ${
+                  /* navigate-keep: a short-window media query hides the route
+                     card's other paragraphs, and this one says whether the
+                     breadcrumb is being saved at all. Rotating the phone must
+                     not delete it. */
+                  className={`navigate-keep text-[10px] font-medium ${
                     trackPersistence.status === "error"
                       ? "text-destructive"
                       : "text-muted-foreground"
@@ -1203,7 +1239,11 @@ function NavigateScreen({ navId }: { navId: string }) {
             // Offset by the measured header rather than a fixed top-16. The header
             // card carries the USNG grid reference -- the line you read aloud to a
             // rescuer -- and a banner sat on top of it.
-            className="navigate-hud pointer-events-none absolute inset-x-3 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto"
+            /* pointer-events-auto, not none: the container scrolls, and a
+               scrollable region nobody can touch is a scrollable region that
+               does not scroll. The map beneath stays reachable because this
+               layer only ever covers the height of its own banners. */
+            className="navigate-hud pointer-events-auto absolute inset-x-3 z-20 flex max-h-[45%] flex-col gap-1.5 overflow-y-auto"
             style={{ top: (headerHeight || 64) + 8 }}
             aria-live="off"
           >
@@ -1259,7 +1299,9 @@ function NavigateScreen({ navId }: { navId: string }) {
             headingTrue={navHeading}
             lat={navFix?.lat}
             lng={navFix?.lng}
-            headingUp={headingUp}
+            /* Same gate the map uses six hundred lines below. A rotating card
+               driven by an untrusted heading is a dial that lies quietly. */
+            headingUp={headingUp && trusted && navHeading != null}
             nightMode={nightMode}
             sourceLabel={headingSourceLabel(navHeadingSource)}
             headingWarning={headingConflict.message}
@@ -1422,9 +1464,17 @@ function NavigateScreen({ navId }: { navId: string }) {
                 ? `check-in ${formatFixAge(Date.parse(lastCheckinAt))}`
                 : "no check-in yet"
               : "check-in off"}
-            {" · "}
-            wake lock {wakeHeld ? "held" : "not held"}
           </p>
+          <Button
+            size="sm"
+            variant={wakeWanted ? "default" : "outline"}
+            className="mt-1"
+            onClick={() => setWakeWanted((on) => !on)}
+          >
+            {wakeWanted
+              ? `Keep screen on${wakeHeld ? "" : " (not held)"}`
+              : "Let screen sleep"}
+          </Button>
           {checkinOverdue && (
             <Button
               size="sm"

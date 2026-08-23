@@ -253,9 +253,16 @@ export default function GuidePage() {
           <div>
             <p className="font-medium text-foreground">Where are my plans stored?</p>
             <p>
-              They belong to this browser on this phone — there&apos;s no account to sign
-              into. Clearing cookies or switching browsers starts you fresh (already-saved
-              offline routes keep working either way).
+              On {APP_NAME}&apos;s own server, under an anonymous device identity — there is
+              no account to sign into and no email address involved, but the plans
+              themselves are not only on this phone. Finished tracks upload the same way
+              once you are back in range, so losing the phone does not lose the hike.
+              Clearing cookies or switching browsers starts you fresh (already-saved
+              offline routes keep working either way). The{" "}
+              <Link href="/privacy" className="underline underline-offset-2">
+                privacy page
+              </Link>{" "}
+              lists exactly what leaves the phone.
             </p>
           </div>
           <div className="flex items-start gap-2">

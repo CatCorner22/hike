@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { isNative } from "@/lib/platform/native";
 import { Download, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,6 +19,13 @@ interface InstallPromptEvent extends Event {
 
 function isInstalled(): boolean {
   if (typeof window === "undefined") return false;
+  // Inside the Capacitor shell neither of these is true — the page is served
+  // from capacitor://localhost, not a home-screen web app — so this card used to
+  // render INSIDE the shipped iOS app, telling the user to go install it from
+  // Safari. docs/app-store.md sends the App Store reviewer to exactly that
+  // screen, on a submission whose entire 4.2 defense is "this is not a wrapped
+  // website". `isNative()` is the check that already exists for this.
+  if (isNative()) return true;
   const iosNavigator = navigator as Navigator & { standalone?: boolean };
   return Boolean(
     window.matchMedia("(display-mode: standalone)").matches || iosNavigator.standalone,

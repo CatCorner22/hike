@@ -1,5 +1,6 @@
 import Foundation
 import CoreLocation
+import UIKit
 import Capacitor
 
 /**
@@ -25,6 +26,49 @@ public class HeadingPlugin: CAPPlugin, CAPBridgedPlugin, CLLocationManagerDelega
     @objc override public func load() {
         manager.delegate = self
         manager.headingFilter = 2
+        // CLLocationManager reports heading relative to `headingOrientation`,
+        // which defaults to .portrait and is NOT tracked for you. Left unset,
+        // every heading is 90 degrees wrong whenever the phone is held sideways
+        // — silently, and on the one screen whose whole job is which way to
+        // walk. The web path guards against this by refusing samples unless the
+        // screen orientation is exactly 0; the native path has to correct
+        // instead, because it has the real device orientation available.
+        syncHeadingOrientation()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(deviceOrientationChanged),
+            name: UIDevice.orientationDidChangeNotification,
+            object: nil
+        )
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
+    }
+
+    @objc private func deviceOrientationChanged() {
+        syncHeadingOrientation()
+    }
+
+    /**
+     * Face-up, face-down and unknown are deliberately not mapped: they say
+     * nothing about which way the screen is pointing, so the last real
+     * orientation is the better answer than a guess.
+     */
+    private func syncHeadingOrientation() {
+        let orientation: CLDeviceOrientation
+        switch UIDevice.current.orientation {
+        case .portrait: orientation = .portrait
+        case .portraitUpsideDown: orientation = .portraitUpsideDown
+        case .landscapeLeft: orientation = .landscapeLeft
+        case .landscapeRight: orientation = .landscapeRight
+        default: return
+        }
+        DispatchQueue.main.async {
+            self.manager.headingOrientation = orientation
+        }
     }
 
     @objc func start(_ call: CAPPluginCall) {

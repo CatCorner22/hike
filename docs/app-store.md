@@ -42,7 +42,9 @@ moment you need help is the moment you have no bars.
   leave coverage.
 - Navigate with a live USNG grid reference you can read to a rescuer,
   off-route alerts, daylight margin, and turnaround warnings.
-- Record your track with the screen locked; breadcrumbs stay on the phone.
+- Record your track with the screen locked. The breadcrumb you follow home lives
+  on the phone and works with no signal; finished tracks upload to Klandagi's own
+  server when you are back in range, so losing the phone does not lose the hike.
 - A return-time alarm fires on the phone itself, even with the app closed —
   if you allow notifications. Decline, and the app says so and falls back to the
   in-app overdue warning.
@@ -54,7 +56,10 @@ moment you need help is the moment you have no bars.
 
 Klandagi states uncertainty plainly. A stale GPS fix is labeled stale.
 Cached weather is labeled cached. A dead reckoning position carries its
-error radius. No ads, no accounts, no tracking.
+error radius. No ads, no advertising identifiers, no analytics SDKs, and nothing
+sold or shared. There is no account to sign into — your plans and finished tracks
+are stored against an anonymous per-install identity, which is described in full
+on the app's privacy page.
 
 IMPORTANT: Klandagi is a planning and navigation aid. It is not a
 substitute for a personal locator beacon or satellite messenger, for
@@ -71,14 +76,24 @@ preventive; answer "None" to all objectionable-content questions,
 
 **Category**: Navigation (secondary: Health & Fitness).
 
+## Privacy Policy URL (required submission field)
+
+`https://<your-deployed-domain>/privacy` — the page lives at `src/app/privacy/page.tsx`
+and must be reachable on the public web before you submit; App Store Connect will
+not accept the build without it. `/terms` carries the honest-limits and
+assumption-of-risk language and is worth linking from the listing's support URL.
+
 ## Privacy nutrition labels (App Store Connect answers)
 
 - **Location → Precise Location**: collected, **App Functionality**,
-  **not linked to identity**, **no tracking**. (Position renders on-device;
-  it leaves the phone only in messages the user sends and in
-  plans/activities synced to the user's own anonymous account.)
+  **linked to the user's identity**, **no tracking**. Precise location is
+  uploaded (finished track points) against a stable per-install identifier, and
+  Apple treats a stable identifier as identity whether or not a name is attached
+  — answering "not linked" here is the kind of thing that gets a build rejected
+  on a second look. There is still no tracking: nothing is shared with a data
+  broker and nothing is used for advertising.
 - **User Content → Other User Content**: collected (plans, recorded
-  tracks), App Functionality, not linked, no tracking.
+  tracks), App Functionality, **linked**, no tracking — same reasoning.
 - Everything else: not collected. **No tracking** anywhere; there is no
   ads/analytics SDK. `PrivacyInfo.xcprivacy` in the repo matches these
   answers and declares the required-reason APIs (UserDefaults CA92.1,
