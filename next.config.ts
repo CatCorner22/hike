@@ -85,6 +85,22 @@ const webConfig: NextConfig = {
           { key: "Content-Security-Policy", value: contentSecurityPolicy },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          /*
+            The session cookie is already Secure, so it never travels in clear —
+            but without HSTS the FIRST request to a bare hostname can be plain
+            http, and a network that answers it can keep the user there. The
+            place this app is used is a trailhead's open wifi or a café before
+            the drive out, which is exactly where that happens.
+
+            One year, subdomains included, no `preload`: preloading is a
+            commitment that is hard to undo and belongs to whoever owns the
+            domain, not to this config. Browsers ignore the header over plain
+            http, so it costs nothing in local development.
+          */
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=31536000; includeSubDomains",
+          },
           // camera=(self), not camera=(): the position-scan feature reads a QR
           // code off another hiker's screen to exchange coordinates with no
           // signal, and an empty allowlist denies the app's own origin too — so

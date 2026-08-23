@@ -46,7 +46,29 @@ function describeConnectionFailure(error: unknown): string {
   return typeof code === "string" && code.length > 0 ? `${code} — ${message}` : message;
 }
 
+/**
+ * The last ping, reused for a few seconds.
+ *
+ * This endpoint is public and it takes a connection from a pool of five. A
+ * platform probing every second, a monitoring service, and anything less
+ * friendly all land on the same code path, and a burst of health checks
+ * competing for connections would degrade the requests that actually carry a
+ * hiker's data — the opposite of what a health check is for. Five seconds of
+ * staleness is nothing to a health check and caps the real work at twelve pings
+ * a minute however often it is asked.
+ */
+const DATABASE_PING_CACHE_MS = 5_000;
+let cachedPing: { at: number; check: ConfigCheck } | null = null;
+
 async function databaseCheck(): Promise<ConfigCheck> {
+  const now = Date.now();
+  if (cachedPing && now - cachedPing.at < DATABASE_PING_CACHE_MS) return cachedPing.check;
+  const check = await runDatabaseCheck();
+  cachedPing = { at: now, check };
+  return check;
+}
+
+async function runDatabaseCheck(): Promise<ConfigCheck> {
   if (!hasDatabase()) {
     return {
       name: "database-reachable",
@@ -80,9 +102,10 @@ async function databaseCheck(): Promise<ConfigCheck> {
 }
 
 export async function GET(request: Request) {
-  // Generous, but not unlimited: this endpoint is public and it opens a database
-  // connection, so it must not be a way to exhaust the pool.
-  const limited = rateLimit(request, "health", 120, 60_000);
+  // Enough for a platform probing every two seconds, and no more. Public, and
+  // the answer behind it is cached, so this is a second bound rather than the
+  // only one.
+  const limited = rateLimit(request, "health", 30, 60_000);
   if (limited) return limited;
 
   const config = configReport();

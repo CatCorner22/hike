@@ -89,6 +89,11 @@ async function main() {
   result(unsafeStats.status === 400, "F-09 rejects unsafe statistic integers", `HTTP ${unsafeStats.status}`);
   const headers = await ownerA("/api/plans");
   result(Boolean(headers.headers["content-security-policy"]) && headers.headers["x-content-type-options"] === "nosniff" && headers.headers["cache-control"] === "no-store", "F-07 and F-04 security/cache headers are present");
+  result(
+    /max-age=\d{7,}/.test(headers.headers["strict-transport-security"] ?? ""),
+    "F-11 HSTS pins the connection to https",
+    headers.headers["strict-transport-security"] ?? "(absent)",
+  );
 
   // The one request that answers "is this deployment able to do its job at all".
   const health = await ownerA("/api/health");
