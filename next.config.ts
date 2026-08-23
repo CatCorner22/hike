@@ -35,6 +35,22 @@ const sharedConfig: NextConfig = {
 const webConfig: NextConfig = {
   ...sharedConfig,
   pageExtensions: ["api.ts", "api.tsx", "ts", "tsx"],
+  /**
+   * Bookmarks and pinned tabs from before the query-param migration must not
+   * dead-end. Each pattern deliberately excludes the new `detail` segment so
+   * `/plan/detail` cannot match `/plan/:id` and redirect to itself forever.
+   *
+   * Web only: a static export has no server to redirect, and the shell has no
+   * legacy URLs to rescue — it only ever links through the route helpers.
+   */
+  async redirects() {
+    return [
+      { source: "/trails/:id((?!detail$)[^/]+)", destination: "/trails/detail?id=:id", permanent: true },
+      { source: "/plan/:id((?!detail$)[^/]+)", destination: "/plan/detail?id=:id", permanent: true },
+      { source: "/activities/:id((?!detail$)[^/]+)", destination: "/activities/detail?id=:id", permanent: true },
+      { source: "/navigate/:target([^/]+)", destination: "/navigate?target=:target", permanent: true },
+    ];
+  },
   async headers() {
     const contentSecurityPolicy = [
       "default-src 'self'",

@@ -2,8 +2,19 @@
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
-const BASE = "http://localhost:3111";
+const BASE = process.env.BASE ?? "http://localhost:3111";
 const OUT = process.env.SHOT_DIR ?? "./shots";
+/**
+ * App Store Connect requires exact pixel sizes. The 6.7" iPhone slot
+ * (1290x2796) is the one every modern listing needs; 430x932 at
+ * deviceScaleFactor 3 produces it exactly. Set SHOT_SIZE=review for the
+ * smaller review/grounding shots instead.
+ */
+const STORE_SIZE = process.env.SHOT_SIZE !== "review";
+const VIEWPORT = STORE_SIZE
+  ? { width: 430, height: 932 }
+  : { width: 390, height: 844 };
+const SCALE = STORE_SIZE ? 3 : 2;
 const GEO = { latitude: 37.7345, longitude: -119.6032 };
 mkdirSync(OUT, { recursive: true });
 
@@ -37,8 +48,8 @@ const browser = await chromium.launch(
 
 const { id: planId, cookie } = await createPlan();
 const context = await browser.newContext({
-  viewport: { width: 390, height: 844 },
-  deviceScaleFactor: 2,
+  viewport: VIEWPORT,
+  deviceScaleFactor: SCALE,
   isMobile: true,
   hasTouch: true,
   permissions: ["geolocation"],

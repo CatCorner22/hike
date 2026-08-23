@@ -4,7 +4,7 @@ import { apiFetch } from "@/lib/api/client";
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ElevationChart } from "@/components/trails/elevation-chart";
@@ -12,6 +12,7 @@ import { ResearchBrief } from "@/components/trails/research-brief";
 import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
+import { downloadTextFile, safeFilename } from "@/lib/safety/field";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
@@ -83,12 +84,14 @@ function TrailDetail({ trailId }: { trailId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [creatingPlan, setCreatingPlan] = useState(false);
+  const [gpxBusy, setGpxBusy] = useState(false);
+  const [gpxError, setGpxError] = useState<string | null>(null);
   const offlineReadiness = useOfflinePackReady(trail ? `trail-${trailId}` : null);
 
   useEffect(() => {
     async function load() {
       try {
-        const response = await apiFetch(`/api/trails/${trailId}`);
+        const response = await apiFetch(`/api/trails/${encodeURIComponent(trailId)}`);
         const data = await response.json();
         if (!response.ok) throw new Error(data.error);
         setTrail(data);
@@ -112,8 +115,11 @@ function TrailDetail({ trailId }: { trailId: string }) {
     setResearchLoading(true);
     setResearchError(null);
     try {
-      const response = await fetch(
-        `/api/research/${trailId}${refresh ? "?refresh=true" : ""}`,
+      // apiFetch, not fetch: inside the native shell a relative /api path
+      // resolves against capacitor://localhost where no API exists, and this
+      // was the one call in the migrated pages still bypassing the wrapper.
+      const response = await apiFetch(
+        `/api/research/${encodeURIComponent(trailId)}${refresh ? "?refresh=true" : ""}`,
       );
       const data = (await response.json()) as {
         brief?: TrailResearchBrief;
@@ -224,6 +230,7 @@ function TrailDetail({ trailId }: { trailId: string }) {
             )}
           </div>
           {planError && <p className="mt-2 text-sm text-destructive">{planError}</p>}
+          {gpxError && <p className="mt-2 text-sm text-destructive">{gpxError}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={createPlan} disabled={creatingPlan}>
@@ -247,14 +254,36 @@ function TrailDetail({ trailId }: { trailId: string }) {
             elevationProfile={trail.elevationProfile}
             parkCode={npsParkCodeFromTags(trail.tags)}
           />
-          <a
-            href={`/api/sync/offline?trailId=${trailId}`}
-            download
-            className={buttonVariants({ variant: "outline" })}
+          <Button
+            variant="outline"
+            disabled={gpxBusy}
+            onClick={async () => {
+              // An <a download> pointing at a relative /api path is doubly
+              // broken in the shell: the origin has no API, and WKWebView
+              // ignores the download attribute entirely. Fetch it through the
+              // wrapper and hand it to the platform save seam (share sheet on
+              // iOS, anchor download on the web).
+              setGpxBusy(true);
+              setGpxError(null);
+              try {
+                const response = await apiFetch(
+                  `/api/sync/offline?trailId=${encodeURIComponent(trailId)}`,
+                );
+                if (!response.ok) throw new Error(`Export failed (${response.status}).`);
+                const gpx = await response.text();
+                downloadTextFile(`${safeFilename(trail.name)}.gpx`, gpx, "application/gpx+xml");
+              } catch (error) {
+                setGpxError(
+                  error instanceof Error ? error.message : "The GPX export could not be produced.",
+                );
+              } finally {
+                setGpxBusy(false);
+              }
+            }}
           >
             <Calendar className="mr-2 h-4 w-4" />
-            GPX
-          </a>
+            {gpxBusy ? "Preparing GPX…" : "GPX"}
+          </Button>
         </div>
       </div>
 

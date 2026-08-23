@@ -12,6 +12,7 @@ import { trailPageHref } from "@/lib/ids";
 import { activityDetailHref, planDetailHref } from "@/lib/routes";
 import { KlandagiMascot } from "@/components/brand/klandagi-mascot";
 import { formatPlannedDate } from "@/lib/plans/date-only";
+import { sortUpcomingPlans } from "@/lib/plans/upcoming";
 import { HelpCircle, Map, ShieldCheck, Tent } from "lucide-react";
 
 type HomePlan = { id: string; name: string; plannedDate: string | null };
@@ -21,13 +22,19 @@ type HomeTrail = { id: string; name: string; osmType?: string | null; osmId?: st
 /**
  * Client component on apiFetch, not a server component on direct DB reads: the
  * static (Capacitor) build has no server to render per-owner rows into HTML,
- * and on the web the same client fetch carries the owner cookie. Failing any
- * fetch renders the empty state — the home screen is a lobby, never a gate.
+ * and on the web the same client fetch carries the owner cookie. A failed
+ * request renders as a stated failure, never as an empty list — the home
+ * screen is a lobby, never a gate, but it must not imply your trips are gone.
  */
 export default function HomePage() {
   const [plans, setPlans] = useState<HomePlan[]>([]);
   const [recentActivities, setRecentActivities] = useState<HomeActivity[]>([]);
   const [recentTrails, setRecentTrails] = useState<HomeTrail[]>([]);
+  // A failed request is not an empty list. Showing "no recorded hikes yet" and
+  // the first-hike onboarding to someone whose plans simply did not load tells
+  // them their trips are gone.
+  const [plansFailed, setPlansFailed] = useState(false);
+  const [activitiesFailed, setActivitiesFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -39,17 +46,18 @@ export default function HomePage() {
       ]);
       if (cancelled) return;
       if (plansResult.status === "fulfilled" && Array.isArray(plansResult.value?.plans)) {
-        // The API orders by updatedAt; the home card promises "Upcoming plans",
-        // so order by the planned date with undated plans last.
-        const sorted = [...(plansResult.value.plans as HomePlan[])].sort((a, b) => {
-          const aTime = a.plannedDate ? Date.parse(a.plannedDate) : Number.NEGATIVE_INFINITY;
-          const bTime = b.plannedDate ? Date.parse(b.plannedDate) : Number.NEGATIVE_INFINITY;
-          return bTime - aTime;
-        });
-        setPlans(sorted.slice(0, 5));
+        // The API orders by updatedAt; this card promises "Upcoming plans", so
+        // it must be SOONEST first — sorting descending put the furthest-future
+        // trip at the top and pushed this weekend's hike off the end of the
+        // five-row card entirely. Undated plans sort last, never first.
+        setPlans(sortUpcomingPlans(plansResult.value.plans as HomePlan[]).slice(0, 5));
+      } else {
+        setPlansFailed(true);
       }
       if (activitiesResult.status === "fulfilled" && Array.isArray(activitiesResult.value?.activities)) {
         setRecentActivities((activitiesResult.value.activities as HomeActivity[]).slice(0, 5));
+      } else {
+        setActivitiesFailed(true);
       }
       if (trailsResult.status === "fulfilled" && Array.isArray(trailsResult.value?.trails)) {
         setRecentTrails((trailsResult.value.trails as HomeTrail[]).slice(0, 5));
@@ -85,8 +93,8 @@ export default function HomePage() {
     </div>
 
     <div className="grid gap-6 md:grid-cols-2">
-      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Upcoming plans</CardTitle><Link href="/plan" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{plans.length === 0 ? <div className="space-y-2 text-sm text-muted-foreground"><p className="font-medium text-foreground">Three steps to your first prepared hike:</p><ol className="list-decimal space-y-1 pl-5"><li><Link href="/explore" className="text-primary hover:underline">Find a trail</Link> and create a plan.</li><li>Press <strong>Prepare offline</strong> while you have signal.</li><li>At the trailhead, verify readiness and open <strong>Go</strong>.</li></ol><Link href="/guide" className="text-primary hover:underline">Read the two-minute safety guide →</Link></div> : <ul className="space-y-3">{plans.map((plan) => <li key={plan.id}><Link href={planDetailHref(plan.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{plan.name}</p>{plan.plannedDate && <p className="text-sm text-muted-foreground">{formatPlannedDate(plan.plannedDate)}</p>}</Link></li>)}</ul>}</CardContent></Card>
-      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Recent activities</CardTitle><Link href="/activities" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{recentActivities.length === 0 ? <p className="text-sm text-muted-foreground">No recorded hikes yet. Start tracking from a trail page.</p> : <ul className="space-y-3">{recentActivities.map((activity) => { const stats = (activity.stats ?? null) as { distanceMeters?: number; durationSeconds?: number } | null; return <li key={activity.id}><Link href={activityDetailHref(activity.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{activity.name || "Trail activity"}</p><p className="text-sm text-muted-foreground">{format(new Date(activity.startedAt), "MMM d, yyyy")}{stats?.distanceMeters ? ` · ${formatDistance(stats.distanceMeters)}` : ""}{stats?.durationSeconds ? ` · ${formatDuration(stats.durationSeconds)}` : ""}</p></Link></li>; })}</ul>}</CardContent></Card>
+      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Upcoming plans</CardTitle><Link href="/plan" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{plansFailed ? <p className="text-sm text-amber-700 dark:text-amber-400">Your plans could not be loaded — this is a connection problem, not an empty list. Saved routes on this device are still available under Go.</p> : plans.length === 0 ? <div className="space-y-2 text-sm text-muted-foreground"><p className="font-medium text-foreground">Three steps to your first prepared hike:</p><ol className="list-decimal space-y-1 pl-5"><li><Link href="/explore" className="text-primary hover:underline">Find a trail</Link> and create a plan.</li><li>Press <strong>Prepare offline</strong> while you have signal.</li><li>At the trailhead, verify readiness and open <strong>Go</strong>.</li></ol><Link href="/guide" className="text-primary hover:underline">Read the two-minute safety guide →</Link></div> : <ul className="space-y-3">{plans.map((plan) => <li key={plan.id}><Link href={planDetailHref(plan.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{plan.name}</p>{plan.plannedDate && <p className="text-sm text-muted-foreground">{formatPlannedDate(plan.plannedDate)}</p>}</Link></li>)}</ul>}</CardContent></Card>
+      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Recent activities</CardTitle><Link href="/activities" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{activitiesFailed ? <p className="text-sm text-amber-700 dark:text-amber-400">Your activities could not be loaded — a connection problem, not an empty history.</p> : recentActivities.length === 0 ? <p className="text-sm text-muted-foreground">No recorded hikes yet. Start tracking from a trail page.</p> : <ul className="space-y-3">{recentActivities.map((activity) => { const stats = (activity.stats ?? null) as { distanceMeters?: number; durationSeconds?: number } | null; return <li key={activity.id}><Link href={activityDetailHref(activity.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{activity.name || "Trail activity"}</p><p className="text-sm text-muted-foreground">{format(new Date(activity.startedAt), "MMM d, yyyy")}{stats?.distanceMeters ? ` · ${formatDistance(stats.distanceMeters)}` : ""}{stats?.durationSeconds ? ` · ${formatDuration(stats.durationSeconds)}` : ""}</p></Link></li>; })}</ul>}</CardContent></Card>
     </div>
 
     {recentTrails.length > 0 && <Card><CardHeader><CardTitle>Recently viewed trails</CardTitle></CardHeader><CardContent><ul className="grid gap-2 sm:grid-cols-2">{recentTrails.map((trail) => <li key={trail.id}><Link href={trailPageHref(trail.id, trail.osmType, trail.osmId)} className="block rounded-lg border p-3 text-sm hover:bg-muted/50">{trail.name}</Link></li>)}</ul></CardContent></Card>}
