@@ -1,4 +1,4 @@
-import { naismithMinutes } from "@/lib/safety/pace";
+import { estimateBasisLabel, walkingEstimate, type ObservedPace } from "@/lib/safety/pace";
 import { utmZone } from "@/lib/safety/usng";
 import { isLongitudeInInterval } from "@/lib/geo/antimeridian";
 
@@ -182,7 +182,7 @@ export function isFixNearRouteBbox(
 /**
  * Fires when the remaining route cannot be finished before sunset.
  *
- * Uses `naismithMinutes` — the same estimator the navigate screen prints — so the
+ * Uses `walkingEstimate` — the same estimator the navigate screen prints — so the
  * warning cannot disagree with the ETA shown beside it. The previous flat 5 km/h with
  * no climb allowance and a 10-minute grace under-estimated in three directions at once,
  * all of them unsafe.
@@ -192,18 +192,24 @@ export function turnaroundWarning(
   remainingGainMeters: number,
   minutesUntilSunset: number,
   isDark: boolean,
+  pace: ObservedPace | null = null,
 ): string | null {
   if (isDark || remainingMeters <= 0) return null;
-  const minutesNeeded = naismithMinutes(remainingMeters, Math.max(0, remainingGainMeters));
+  const estimate = walkingEstimate(remainingMeters, Math.max(0, remainingGainMeters), pace);
+  const minutesNeeded = estimate.minutes;
   if (minutesNeeded <= 0) return null;
+  // Naming the estimator matters here: "~180 min at your pace" is a different
+  // claim from "~180 min", and a hiker who knows the number came from their own
+  // measured speed can judge whether the last hour was representative.
+  const basis = ` at ${estimateBasisLabel(estimate.basis)}`;
 
   if (minutesUntilSunset <= 0) {
-    return `The sun is already down and this route still needs ~${minutesNeeded} min. Turn around or finish with a headlamp.`;
+    return `The sun is already down and this route still needs ~${minutesNeeded} min${basis}. Turn around or finish with a headlamp.`;
   }
   if (minutesNeeded > minutesUntilSunset) {
     const climb =
       remainingGainMeters >= 25 ? ` (${Math.round(remainingGainMeters)} m of climb left)` : "";
-    return `This route still needs ~${minutesNeeded} min${climb}; sunset is in ${minutesUntilSunset} min. Turn around or finish with a headlamp.`;
+    return `This route still needs ~${minutesNeeded} min${basis}${climb}; sunset is in ${minutesUntilSunset} min. Turn around or finish with a headlamp.`;
   }
   return null;
 }

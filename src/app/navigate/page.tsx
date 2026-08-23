@@ -92,7 +92,8 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
-import { formatNaismith, gpsAnomalyWarning, naismithMinutes, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import { formatNaismith, gpsAnomalyWarning, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import { estimateBasisLabel, observedPace, walkingEstimate } from "@/lib/safety/pace";
 import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-advanced";
 import { sereAssessment } from "@/lib/safety/sere";
 import { amsAssessment, avalancheTerrainWarning } from "@/lib/safety/wilderness";
@@ -618,6 +619,19 @@ function NavigateScreen({ navId }: { navId: string }) {
     return daylightStatus(new Date(nowMs), lat, lng);
   }, [navFix, loadState, nowMs]);
 
+  const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
+  /**
+   * The speed this party is actually walking at. The app has always measured it
+   * -- `estimateGuardianEta` sends it to whoever is waiting at home -- and never
+   * once used it to decide whether the hiker themselves had daylight left.
+   */
+  const pace = useMemo(
+    () =>
+      trusted && nowMs > 0
+        ? observedPace({ nowMs, startedAtMs: hikeStartedAt, traveledMeters: progress?.traveledMeters })
+        : null,
+    [trusted, nowMs, hikeStartedAt, progress],
+  );
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
@@ -625,8 +639,9 @@ function NavigateScreen({ navId }: { navId: string }) {
       progress.remainingElevationMeters,
       daylight.minutesUntilSunset,
       daylight.isDark,
+      pace,
     );
-  }, [trusted, progress, daylight]);
+  }, [trusted, progress, daylight, pace]);
 
   const stillMin = useMemo(
     () => (gpsTrusted ? stationaryMinutes(trackPoints) : 0),
@@ -644,7 +659,6 @@ function NavigateScreen({ navId }: { navId: string }) {
     stationaryMin: stillMin,
   });
   const fallWarning = gpsTrusted ? suddenStopWarning(trackPoints) : null;
-  const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
   const hydrateWarning = waterReminder(lastDrinkAt, hikeStartedAt);
   const moon = useMemo(() => { void zulu; return moonPhase(); }, [zulu]);
   const moonWarning = daylight?.isDark ? moon.nightNav : null;
@@ -1429,15 +1443,24 @@ function NavigateScreen({ navId }: { navId: string }) {
           />
           <Stat
             icon={Mountain}
-            label={backtrackOn ? "Est. time back" : "Est. time"}
+            // The tile says which estimator produced the number. It used to read
+            // "Est. time" over a flat-5-km/h figure while the app knew the party
+            // was walking at half that.
+            label={
+              backtrackOn
+                ? "Est. time back"
+                : trusted && progress && progress.remainingMeters > 0
+                  ? `Est. time (${estimateBasisLabel(walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace).basis)})`
+                  : "Est. time"
+            }
             value={
               backtrackOn
                 ? retrace && retrace.remainingMeters > 0
-                  ? `${formatNaismith(naismithMinutes(retrace.remainingMeters, 0)).replace("Naismith ", "")}+`
+                  ? `${formatNaismith(walkingEstimate(retrace.remainingMeters, 0, pace).minutes).replace("Naismith ", "")}+`
                   : "—"
                 : trusted && progress && progress.remainingMeters > 0
                   ? formatNaismith(
-                      naismithMinutes(progress.remainingMeters, progress.remainingElevationMeters),
+                      walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace).minutes,
                     ).replace("Naismith ", "")
                   : trusted && progress && progress.remainingMeters < 50
                     ? "Done"

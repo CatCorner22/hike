@@ -104,7 +104,8 @@ import {
   formatNaismith,
   heatHazard,
   lightningRule,
-  naismithMinutes,
+  observedPace,
+  walkingEstimate,
   windChillHazard,
 } from "@/lib/safety/field-ops";
 import {
@@ -622,6 +623,13 @@ export function SafetyPanel({
     startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
     traveledMeters,
     remainingMeters,
+  });
+  // The same measured pace the ETA above is built from, so the walking estimate
+  // on this panel cannot contradict the one on the navigate HUD.
+  const panelPace = observedPace({
+    nowMs: recordedAt ?? Number.NaN,
+    startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
+    traveledMeters,
   });
   const coldHazardNote =
     observedTempC != null && observedWindKph != null
@@ -1894,12 +1902,17 @@ export function SafetyPanel({
             {lat != null && lng != null && (
               <p className="text-xs text-muted-foreground">{sunCompassHint(new Date(), lat, lng)}</p>
             )}
-            {remainingMeters != null && remainingMeters > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {formatNaismith(naismithMinutes(remainingMeters, remainingGainM ?? 0))} remaining
-                (5 km/h + climb).
-              </p>
-            )}
+            {remainingMeters != null && remainingMeters > 0 && (() => {
+              const estimate = walkingEstimate(remainingMeters, remainingGainM ?? 0, panelPace);
+              return (
+                <p className="text-xs text-muted-foreground">
+                  {formatNaismith(estimate.minutes)} remaining
+                  {estimate.basis === "observed" && panelPace
+                    ? ` (your measured pace over ${(panelPace.traveledMeters / 1000).toFixed(1)} km + climb).`
+                    : " (5 km/h + climb)."}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-3 gap-2">
               <Input value={tsdDist} placeholder="m" onChange={(e) => setTsdDist(e.target.value)} />
               <Input value={tsdSpeed} placeholder="km/h" onChange={(e) => setTsdSpeed(e.target.value)} />

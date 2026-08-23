@@ -14,6 +14,9 @@ import {
 
 const HOUR = 60 * 60 * 1000;
 
+/** Every CoTCCC conversion precondition affirmed — the only context that opens the window. */
+const CLEARED_TO_CONVERT = { evacuationDelayed: true, inShock: false, amputation: false, alone: false } as const;
+
 describe("MARCH-PAWS", () => {
   it("returns all nine civilian wilderness assessment steps in order", () => {
     const steps = marchPawsSteps();
@@ -26,9 +29,11 @@ describe("MARCH-PAWS", () => {
 
 describe("tourniquet management", () => {
   it("keeps the conversion window open before the 2-hour boundary", () => {
-    const status = tourniquetStatus(0, 119 * 60 * 1000 + 30 * 1000);
+    // The conditions are asserted explicitly now: conversion turns on the
+    // CoTCCC criteria being met, and the clock only decides when it turns off.
+    const status = tourniquetStatus(0, 119 * 60 * 1000 + 30 * 1000, CLEARED_TO_CONVERT);
     expect(status).toMatchObject({ minutes: 119.5, severity: "warning", conversionWindow: true });
-    expect(status?.message).toMatch(/before 2 h/);
+    expect(status?.message).toMatch(/under 2 h/);
   });
 
   it("flags the exact 2-hour conversion boundary", () => {
@@ -192,10 +197,10 @@ describe("START triage — respiratory rate", () => {
 describe("threshold-consistent display", () => {
   it("never shows 120 min while the conversion window is still open", () => {
     const applied = 0;
-    const status = tourniquetStatus(applied, 119.96 * 60_000);
+    const status = tourniquetStatus(applied, 119.96 * 60_000, CLEARED_TO_CONVERT);
     expect(status?.conversionWindow).toBe(true);
     expect(status!.minutes).toBeLessThan(120);
-    const passed = tourniquetStatus(applied, 120.01 * 60_000);
+    const passed = tourniquetStatus(applied, 120.01 * 60_000, CLEARED_TO_CONVERT);
     expect(passed?.conversionWindow).toBe(false);
     expect(passed!.minutes).toBe(120);
   });

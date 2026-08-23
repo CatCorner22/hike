@@ -110,7 +110,16 @@ export function lightningRule(flashToBangSec: number): {
   return { km, miles, warning };
 }
 
-export { naismithMinutes, formatNaismith } from "@/lib/safety/pace";
+export {
+  naismithMinutes,
+  formatNaismith,
+  observedPace,
+  paceMinutes,
+  walkingEstimate,
+  estimateBasisLabel,
+  type ObservedPace,
+  type WalkingEstimate,
+} from "@/lib/safety/pace";
 
 export function slopePercent(riseM: number, runM: number): number | null {
   if (!(runM > 0) || !Number.isFinite(riseM)) return null;
