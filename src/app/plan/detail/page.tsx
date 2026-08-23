@@ -1,8 +1,8 @@
 "use client";
 import { apiFetch } from "@/lib/api/client";
 
-import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import { LocateFixed, Search, Trash2 } from "lucide-react";
 import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { plannedDateOnly, plannedDateToIso } from "@/lib/plans/date-only";
+import { navigateHref } from "@/lib/routes";
 import {
   acknowledgePendingEdit,
   accumulatePendingEdit,
@@ -158,9 +159,28 @@ const editablePlanKeys = [
 ] as const;
 
 export default function PlanDetailPage() {
-  const params = useParams();
+  // useSearchParams under Suspense: the detail screen lives at a fixed path with
+  // ?id= because the static build has no server to expand a dynamic segment.
+  return (
+    <Suspense fallback={null}>
+      <PlanDetailTarget />
+    </Suspense>
+  );
+}
+
+function PlanDetailTarget() {
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const planId = params.id as string;
+  const planId = searchParams.get("id");
+  useEffect(() => {
+    if (!planId) router.replace("/plan");
+  }, [planId, router]);
+  if (!planId) return null;
+  return <PlanDetail planId={planId} />;
+}
+
+function PlanDetail({ planId }: { planId: string }) {
+  const router = useRouter();
 
   const [plan, setPlan] = useState<Plan | null>(null);
   const planRef = useRef<Plan | null>(null);
@@ -425,7 +445,7 @@ export default function PlanDetailPage() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-2xl font-bold">Edit plan</h1>
         <div className="flex flex-wrap gap-2">
-          <NavigateLink href={`/navigate/plan-${plan.id}`} {...offlineReadiness} />
+          <NavigateLink href={navigateHref(`plan-${plan.id}`)} {...offlineReadiness} />
           <Button variant="outline" disabled={importing} onClick={importGpx}>
             {importing ? "Importing…" : "Import GPX"}
           </Button>

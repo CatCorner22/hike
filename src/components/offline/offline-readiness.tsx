@@ -137,7 +137,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
       const currentRefresh = ++refreshNumber;
       const [packResult, shellResult, persistentResult, estimateResult] = await Promise.allSettled([
         getRoutePackStatus(packId),
-        getNavigateOfflineStatus(packId),
+        getNavigateOfflineStatus(),
         isStoragePersistent(),
         storageEstimate(),
       ]);

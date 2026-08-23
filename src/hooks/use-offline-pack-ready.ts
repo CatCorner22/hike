@@ -38,9 +38,11 @@ export function useOfflinePackReady(packId: string | null) {
       for (const delay of delays) {
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
         try {
+          // Per-plan readiness is the route pack in IndexedDB; the navigate
+          // shell is app-level and shared by every plan.
           const [exists, navigation] = await Promise.all([
             hasRoutePack(packId),
-            getNavigateOfflineStatus(packId),
+            getNavigateOfflineStatus(),
           ]);
           if (cancelled || currentCheck !== checkNumber) return;
           setReadiness({

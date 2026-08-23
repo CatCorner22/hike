@@ -1,44 +1,64 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { format } from "date-fns";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { listRecentTrails } from "@/lib/trails/service";
-import { getDb, hasDatabase } from "@/lib/db";
-import { hikePlans, activities } from "@/lib/db/schema";
-import { isLocalStoreEnabled, listActivities, listPlans } from "@/lib/store/local";
-import { desc, eq } from "drizzle-orm";
-import { resolveOwnerIdFromCookies } from "@/lib/auth/owner-server";
+import { apiFetch } from "@/lib/api/client";
 import { formatDistance, formatDuration } from "@/lib/geo";
 import { APP_NAME, APP_SHORT_DESCRIPTION, APP_TAGLINE } from "@/lib/brand";
 import { trailPageHref } from "@/lib/ids";
+import { activityDetailHref, planDetailHref } from "@/lib/routes";
 import { KlandagiMascot } from "@/components/brand/klandagi-mascot";
 import { formatPlannedDate } from "@/lib/plans/date-only";
 import { HelpCircle, Map, ShieldCheck, Tent } from "lucide-react";
 
-type HomePlan = { id: string; name: string; plannedDate: Date | string | null };
-type HomeActivity = { id: string; name: string | null; startedAt: Date | string; stats: unknown };
+type HomePlan = { id: string; name: string; plannedDate: string | null };
+type HomeActivity = { id: string; name: string | null; startedAt: string; stats: unknown };
+type HomeTrail = { id: string; name: string; osmType?: string | null; osmId?: string | null };
 
-export default async function HomePage() {
-  let plans: HomePlan[] = [];
-  let recentActivities: HomeActivity[] = [];
-  let recentTrails: Awaited<ReturnType<typeof listRecentTrails>> = [];
-  const ownerId = await resolveOwnerIdFromCookies();
+/**
+ * Client component on apiFetch, not a server component on direct DB reads: the
+ * static (Capacitor) build has no server to render per-owner rows into HTML,
+ * and on the web the same client fetch carries the owner cookie. Failing any
+ * fetch renders the empty state — the home screen is a lobby, never a gate.
+ */
+export default function HomePage() {
+  const [plans, setPlans] = useState<HomePlan[]>([]);
+  const [recentActivities, setRecentActivities] = useState<HomeActivity[]>([]);
+  const [recentTrails, setRecentTrails] = useState<HomeTrail[]>([]);
 
-  if (hasDatabase()) {
-    const db = getDb();
-    [plans, recentActivities, recentTrails] = await Promise.all([
-      ownerId ? db.query.hikePlans.findMany({ where: eq(hikePlans.ownerId, ownerId), orderBy: [desc(hikePlans.plannedDate)], limit: 5 }) : Promise.resolve([]),
-      ownerId ? db.query.activities.findMany({ where: eq(activities.ownerId, ownerId), orderBy: [desc(activities.startedAt)], limit: 5 }) : Promise.resolve([]),
-      listRecentTrails(5),
-    ]);
-  } else if (ownerId && isLocalStoreEnabled()) {
-    const [localPlans, localActs] = await Promise.all([listPlans(ownerId), listActivities(ownerId)]);
-    plans = localPlans.slice(0, 5);
-    recentActivities = localActs.slice(0, 5);
-    recentTrails = await listRecentTrails(5);
-  } else {
-    recentTrails = await listRecentTrails(5);
-  }
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const [plansResult, activitiesResult, trailsResult] = await Promise.allSettled([
+        apiFetch("/api/plans").then((response) => (response.ok ? response.json() : null)),
+        apiFetch("/api/activities").then((response) => (response.ok ? response.json() : null)),
+        apiFetch("/api/trails/recent").then((response) => (response.ok ? response.json() : null)),
+      ]);
+      if (cancelled) return;
+      if (plansResult.status === "fulfilled" && Array.isArray(plansResult.value?.plans)) {
+        // The API orders by updatedAt; the home card promises "Upcoming plans",
+        // so order by the planned date with undated plans last.
+        const sorted = [...(plansResult.value.plans as HomePlan[])].sort((a, b) => {
+          const aTime = a.plannedDate ? Date.parse(a.plannedDate) : Number.NEGATIVE_INFINITY;
+          const bTime = b.plannedDate ? Date.parse(b.plannedDate) : Number.NEGATIVE_INFINITY;
+          return bTime - aTime;
+        });
+        setPlans(sorted.slice(0, 5));
+      }
+      if (activitiesResult.status === "fulfilled" && Array.isArray(activitiesResult.value?.activities)) {
+        setRecentActivities((activitiesResult.value.activities as HomeActivity[]).slice(0, 5));
+      }
+      if (trailsResult.status === "fulfilled" && Array.isArray(trailsResult.value?.trails)) {
+        setRecentTrails((trailsResult.value.trails as HomeTrail[]).slice(0, 5));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return <div className="space-y-8">
     <section className="rounded-2xl bg-gradient-to-br from-green-600 to-emerald-800 p-8 text-white">
@@ -65,8 +85,8 @@ export default async function HomePage() {
     </div>
 
     <div className="grid gap-6 md:grid-cols-2">
-      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Upcoming plans</CardTitle><Link href="/plan" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{plans.length === 0 ? <div className="space-y-2 text-sm text-muted-foreground"><p className="font-medium text-foreground">Three steps to your first prepared hike:</p><ol className="list-decimal space-y-1 pl-5"><li><Link href="/explore" className="text-primary hover:underline">Find a trail</Link> and create a plan.</li><li>Press <strong>Prepare offline</strong> while you have signal.</li><li>At the trailhead, verify readiness and open <strong>Go</strong>.</li></ol><Link href="/guide" className="text-primary hover:underline">Read the two-minute safety guide →</Link></div> : <ul className="space-y-3">{plans.map((plan) => <li key={plan.id}><Link href={`/plan/${plan.id}`} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{plan.name}</p>{plan.plannedDate && <p className="text-sm text-muted-foreground">{formatPlannedDate(plan.plannedDate)}</p>}</Link></li>)}</ul>}</CardContent></Card>
-      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Recent activities</CardTitle><Link href="/activities" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{recentActivities.length === 0 ? <p className="text-sm text-muted-foreground">No recorded hikes yet. Start tracking from a trail page.</p> : <ul className="space-y-3">{recentActivities.map((activity) => { const stats = (activity.stats ?? null) as { distanceMeters?: number; durationSeconds?: number } | null; return <li key={activity.id}><Link href={`/activities/${activity.id}`} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{activity.name || "Trail activity"}</p><p className="text-sm text-muted-foreground">{format(new Date(activity.startedAt), "MMM d, yyyy")}{stats?.distanceMeters ? ` · ${formatDistance(stats.distanceMeters)}` : ""}{stats?.durationSeconds ? ` · ${formatDuration(stats.durationSeconds)}` : ""}</p></Link></li>; })}</ul>}</CardContent></Card>
+      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Upcoming plans</CardTitle><Link href="/plan" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{plans.length === 0 ? <div className="space-y-2 text-sm text-muted-foreground"><p className="font-medium text-foreground">Three steps to your first prepared hike:</p><ol className="list-decimal space-y-1 pl-5"><li><Link href="/explore" className="text-primary hover:underline">Find a trail</Link> and create a plan.</li><li>Press <strong>Prepare offline</strong> while you have signal.</li><li>At the trailhead, verify readiness and open <strong>Go</strong>.</li></ol><Link href="/guide" className="text-primary hover:underline">Read the two-minute safety guide →</Link></div> : <ul className="space-y-3">{plans.map((plan) => <li key={plan.id}><Link href={planDetailHref(plan.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{plan.name}</p>{plan.plannedDate && <p className="text-sm text-muted-foreground">{formatPlannedDate(plan.plannedDate)}</p>}</Link></li>)}</ul>}</CardContent></Card>
+      <Card><CardHeader className="flex flex-row items-center justify-between"><CardTitle>Recent activities</CardTitle><Link href="/activities" className={buttonVariants({ variant: "ghost", size: "sm" })}>View all</Link></CardHeader><CardContent>{recentActivities.length === 0 ? <p className="text-sm text-muted-foreground">No recorded hikes yet. Start tracking from a trail page.</p> : <ul className="space-y-3">{recentActivities.map((activity) => { const stats = (activity.stats ?? null) as { distanceMeters?: number; durationSeconds?: number } | null; return <li key={activity.id}><Link href={activityDetailHref(activity.id)} className="block rounded-lg border p-3 transition-colors hover:bg-muted/50"><p className="font-medium">{activity.name || "Trail activity"}</p><p className="text-sm text-muted-foreground">{format(new Date(activity.startedAt), "MMM d, yyyy")}{stats?.distanceMeters ? ` · ${formatDistance(stats.distanceMeters)}` : ""}{stats?.durationSeconds ? ` · ${formatDuration(stats.durationSeconds)}` : ""}</p></Link></li>; })}</ul>}</CardContent></Card>
     </div>
 
     {recentTrails.length > 0 && <Card><CardHeader><CardTitle>Recently viewed trails</CardTitle></CardHeader><CardContent><ul className="grid gap-2 sm:grid-cols-2">{recentTrails.map((trail) => <li key={trail.id}><Link href={trailPageHref(trail.id, trail.osmType, trail.osmId)} className="block rounded-lg border p-3 text-sm hover:bg-muted/50">{trail.name}</Link></li>)}</ul></CardContent></Card>}

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CompletedNavigationTracks } from "@/components/activities/completed-navigation-tracks";
 import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
+import { activityDetailHref } from "@/lib/routes";
 
 interface Activity {
   id: string;
@@ -96,7 +97,7 @@ export default function ActivitiesPage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {activities.map((activity) => (
-              <Link key={activity.id} href={`/activities/${activity.id}`}>
+              <Link key={activity.id} href={activityDetailHref(activity.id)}>
                 <Card className="transition-colors hover:bg-muted/50">
                   <CardHeader>
                     <CardTitle className="text-base">

@@ -1,8 +1,8 @@
 "use client";
 import { apiFetch } from "@/lib/api/client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -19,6 +19,7 @@ import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pac
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import { httpsUrl } from "@/lib/urls";
 import { npsParkCodeFromTags } from "@/lib/nps/park-code";
+import { navigateHref, planDetailHref } from "@/lib/routes";
 import {
   Calendar,
   ExternalLink,
@@ -51,9 +52,28 @@ interface TrailData {
 }
 
 export default function TrailDetailPage() {
-  const params = useParams();
+  // useSearchParams under Suspense: the detail screen lives at a fixed path with
+  // ?id= because the static build has no server to expand a dynamic segment.
+  return (
+    <Suspense fallback={null}>
+      <TrailDetailTarget />
+    </Suspense>
+  );
+}
+
+function TrailDetailTarget() {
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const trailId = params.id as string;
+  const trailId = searchParams.get("id");
+  useEffect(() => {
+    if (!trailId) router.replace("/explore");
+  }, [trailId, router]);
+  if (!trailId) return null;
+  return <TrailDetail trailId={trailId} />;
+}
+
+function TrailDetail({ trailId }: { trailId: string }) {
+  const router = useRouter();
 
   const [trail, setTrail] = useState<TrailData | null>(null);
   const [brief, setBrief] = useState<TrailResearchBrief | null>(null);
@@ -139,7 +159,7 @@ export default function TrailDetailPage() {
         setPlanError(data.error || "Could not add this trail to a plan.");
         return;
       }
-      router.push(`/plan/${data.id}`);
+      router.push(planDetailHref(data.id));
     } catch {
       setPlanError("Could not add this trail to a plan.");
     } finally {
@@ -215,7 +235,7 @@ export default function TrailDetailPage() {
             Add to plan
           </Button>
           <NavigateLink
-            href={`/navigate/trail-${trailId}`}
+            href={navigateHref(`trail-${trailId}`)}
             {...offlineReadiness}
           />
           <PrepareOffline

@@ -112,7 +112,7 @@ export function PrepareOffline({
     try {
       const [exists, navigation] = await Promise.all([
         hasRoutePack(packId),
-        getNavigateOfflineStatus(packId),
+        getNavigateOfflineStatus(),
       ]);
       setTripReady(exists && navigation.ready);
       return { packReady: exists, tripReady: exists && navigation.ready };
@@ -132,7 +132,7 @@ export function PrepareOffline({
       try {
         const [exists, navigation] = await Promise.all([
           hasRoutePack(packId),
-          getNavigateOfflineStatus(packId),
+          getNavigateOfflineStatus(),
         ]);
         if (!cancelled && currentRefresh === refreshNumber) {
           setTripReady(exists && navigation.ready);
@@ -222,7 +222,7 @@ export function PrepareOffline({
       }
       const [persistent, shell] = await Promise.all([
         persistentStorageRequest,
-        warmNavigateShell(packId),
+        warmNavigateShell(),
       ]);
       await refreshReady();
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));

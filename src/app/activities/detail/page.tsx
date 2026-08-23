@@ -1,8 +1,8 @@
 "use client";
 import { apiFetch } from "@/lib/api/client";
 
-import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -58,8 +58,27 @@ function isActivityPoint(value: unknown): value is ActivityPoint {
 }
 
 export default function ActivityDetailPage() {
-  const params = useParams();
-  const activityId = params.id as string;
+  // useSearchParams under Suspense: the detail screen lives at a fixed path with
+  // ?id= because the static build has no server to expand a dynamic segment.
+  return (
+    <Suspense fallback={null}>
+      <ActivityDetailTarget />
+    </Suspense>
+  );
+}
+
+function ActivityDetailTarget() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const activityId = searchParams.get("id");
+  useEffect(() => {
+    if (!activityId) router.replace("/activities");
+  }, [activityId, router]);
+  if (!activityId) return null;
+  return <ActivityDetail activityId={activityId} />;
+}
+
+function ActivityDetail({ activityId }: { activityId: string }) {
 
   const [activity, setActivity] = useState<ActivityDetail | null>(null);
   const [points, setPoints] = useState<ActivityPoint[]>([]);

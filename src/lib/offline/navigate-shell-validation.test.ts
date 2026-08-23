@@ -60,14 +60,21 @@ describe("navigate shell validation", () => {
     expect(headers.get("content-security-policy")).toBe("default-src 'self'");
   });
 
-  it("handles route shell requests without stealing Next RSC data requests", () => {
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", null, null)).toBe(true);
+  it("handles shell requests without stealing Next RSC data requests", () => {
+    // The shell lives at the fixed /navigate path; the plan travels in ?target=
+    // (the query never reaches this pathname predicate). Tolerate the
+    // trailing-slash form the static build emits.
+    expect(isNavigateDocumentRequest("/navigate", "GET", null, null)).toBe(true);
+    expect(isNavigateDocumentRequest("/navigate/", "GET", null, null)).toBe(true);
     // Cache-warming fetches and Chromium navigations do not expose one stable
     // mode/destination pair. Next's RSC headers are the reliable exclusion.
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "0", null)).toBe(true);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", "1", null)).toBe(false);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", null, "1")).toBe(false);
-    expect(isNavigateDocumentRequest("/navigate/plan-123", "POST", null, null)).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate", "GET", "0", null)).toBe(true);
+    expect(isNavigateDocumentRequest("/navigate", "GET", "1", null)).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate", "GET", null, "1")).toBe(false);
+    expect(isNavigateDocumentRequest("/navigate", "POST", null, null)).toBe(false);
+    // Old-style per-plan paths no longer exist and must fall to the app's
+    // ordinary offline fallback, not the shell handler.
+    expect(isNavigateDocumentRequest("/navigate/plan-123", "GET", null, null)).toBe(false);
     expect(isNavigateDocumentRequest("/plan/plan-123", "GET", null, null)).toBe(false);
   });
 });

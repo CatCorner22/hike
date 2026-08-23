@@ -1,4 +1,12 @@
 export const NAVIGATE_SHELL_MARKER = "hike-navigate-shell-v2";
+/**
+ * The value of the layout's data-hike-navigate-shell attribute. One fixed shell
+ * document serves every route: the plan identity travels in the ?target= query
+ * and the route data lives in IndexedDB, so the document itself is plan-agnostic
+ * and the route marker proves only "this is the navigate app shell", not which
+ * plan it was fetched for.
+ */
+export const NAVIGATE_SHELL_ROUTE_ID = "shell";
 export const NAVIGATE_SHELL_CACHE = "hike-navigate-shell";
 /** Must match `cacheName` for /_next/static/ in src/sw.ts. */
 export const NAVIGATE_ASSETS_CACHE = "hike-navigate-assets";
@@ -36,7 +44,9 @@ export function isNavigateDocumentRequest(
 ): boolean {
   return (
     method === "GET" &&
-    pathname.startsWith("/navigate/") &&
+    // The shell lives at the fixed /navigate path (the plan travels in
+    // ?target=); tolerate the trailing-slash form the static build emits.
+    (pathname === "/navigate" || pathname === "/navigate/") &&
     rscHeader !== "1" &&
     routerPrefetchHeader !== "1"
   );

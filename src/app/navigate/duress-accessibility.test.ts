@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
-const page = readFileSync(resolve(root, "src/app/navigate/[planId]/page.tsx"), "utf8");
+const page = readFileSync(resolve(root, "src/app/navigate/page.tsx"), "utf8");
 const panel = readFileSync(resolve(root, "src/components/offline/safety-panel.tsx"), "utf8");
 const css = readFileSync(resolve(root, "src/app/globals.css"), "utf8");
 

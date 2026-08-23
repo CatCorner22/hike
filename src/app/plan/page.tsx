@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, FileUp, Loader2, Map, Plus } from "lucide-react";
+import { planDetailHref } from "@/lib/routes";
 
 interface Plan {
   id: string;
@@ -96,7 +97,7 @@ export default function PlansPage() {
       }
 
       setChooserOpen(false);
-      router.push(`/plan/${created.id}`);
+      router.push(planDetailHref(created.id));
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "That GPX file could not be imported.");
     } finally {
@@ -210,7 +211,7 @@ export default function PlansPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
           {plans.map((plan) => (
-            <Link key={plan.id} href={`/plan/${plan.id}`}>
+            <Link key={plan.id} href={planDetailHref(plan.id)}>
               <Card className="transition-colors hover:bg-muted/50">
                 <CardHeader>
                   <CardTitle className="text-base">{plan.name}</CardTitle>

@@ -12,6 +12,7 @@ import { nearbyCampingBbox } from "@/lib/camping/us-coverage";
 import type { BboxLngLat } from "@/lib/geo/bbox";
 import { Search, Loader2, LocateFixed, X } from "lucide-react";
 import type { TrailSearchResult } from "@/lib/osm/overpass";
+import { trailDetailHref } from "@/lib/routes";
 
 const MapView = dynamic(
   () => import("@/components/map/map-view").then((m) => m.MapView),
@@ -181,7 +182,7 @@ export default function ExplorePage() {
             const trail = trails.find((t) => osmTrailId(t.osmType, t.osmId) === id);
             if (!trail) return;
             setSelectedTrail(trail);
-            router.push(`/trails/${osmTrailId(trail.osmType, trail.osmId)}`);
+            router.push(trailDetailHref(osmTrailId(trail.osmType, trail.osmId)));
           }}
         />
       </div>
@@ -194,7 +195,7 @@ export default function ExplorePage() {
           >
             <TrailCard
               trail={trail}
-              href={`/trails/${osmTrailId(trail.osmType, trail.osmId)}`}
+              href={trailDetailHref(osmTrailId(trail.osmType, trail.osmId))}
             />
           </div>
         ))}
