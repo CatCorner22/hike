@@ -9,6 +9,7 @@ import {
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
+  NAVIGATE_ASSET_MAX_AGE_SECONDS,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
@@ -51,7 +52,9 @@ async function isValidNavigateDocument(response: Response): Promise<boolean> {
   const markerHeader = response.headers.get("x-hike-navigate-shell");
   try {
     const document = await response.clone().text();
-    return isValidNavigateShellDocument(document, contentType, markerHeader, NAVIGATE_SHELL_ROUTE_ID);
+    // requireMarker: this is the cached-trust path, so a document without the
+    // current marker version must not be served.
+    return isValidNavigateShellDocument(document, contentType, markerHeader, NAVIGATE_SHELL_ROUTE_ID, true);
   } catch {
     return false;
   }
@@ -311,6 +314,18 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
     });
     return response;
   };
+  // An explicit no-store/reload request is preparation asking for a FRESH
+  // shell, not a launch. Serving it from cache made the cached shell
+  // permanently unrepairable: every later deploy — including safety fixes —
+  // was invisible to a device that had already prepared once. Try the network
+  // first for those, and fall through to the cache when it fails.
+  const revalidating = request.cache === "no-store" || request.cache === "reload";
+  if (revalidating) {
+    const fresh = await fetchNavigateDocument(request);
+    if (fresh?.trusted) return done("shell-revalidated", fresh.response);
+    misses.push("revalidate-failed");
+  }
+
   // A prepared shell has already been validated and is the only launch path
   // that does not depend on the radio. Prefer it before touching the network:
   // a fetch can remain pending indefinitely under degraded connectivity
@@ -370,7 +385,9 @@ const serwist = new Serwist({
       matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
       handler: new CacheFirst({
         cacheName: NAVIGATE_ASSETS_CACHE,
-        plugins: [new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 })],
+        plugins: [
+          new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: NAVIGATE_ASSET_MAX_AGE_SECONDS }),
+        ],
       }),
     },
     {

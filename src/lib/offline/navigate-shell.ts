@@ -7,6 +7,7 @@ import {
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
+  NAVIGATE_ASSET_MAX_AGE_SECONDS,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
@@ -133,11 +134,13 @@ async function readCachedShell(): Promise<boolean> {
   if (response.headers.get("x-hike-navigate-shell") === NAVIGATE_SHELL_MARKER) return true;
   try {
     const html = await response.clone().text();
+    // requireMarker: deciding whether to TRUST what is already cached.
     return isValidNavigateShellDocument(
       html,
       response.headers.get("content-type") ?? "",
       response.headers.get("x-hike-navigate-shell"),
       NAVIGATE_SHELL_ROUTE_ID,
+      true,
     );
   } catch {
     return false;
@@ -278,9 +281,20 @@ export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus>
   const missingAssets: string[] = [];
   if (manifest) {
     const assetCache = await caches.open(NAVIGATE_ASSETS_CACHE);
+    const oldestUsable = Date.now() - NAVIGATE_ASSET_MAX_AGE_SECONDS * 1000;
     for (const assetUrl of manifest.assetUrls) {
       const hit = await assetCache.match(assetUrl, { ignoreVary: true });
-      if (!hit || !hit.ok) missingAssets.push(assetUrl);
+      if (!hit || !hit.ok) {
+        missingAssets.push(assetUrl);
+        continue;
+      }
+      // An asset the worker will refuse to serve is not cached in any sense
+      // that matters. Readiness applied no age rule at all, so a route
+      // prepared five weeks ago reported trip-ready right up until the moment
+      // it was needed offline — and never corrected itself.
+      const dateHeader = hit.headers.get("date");
+      const cachedAtMs = dateHeader ? Date.parse(dateHeader) : Number.NaN;
+      if (Number.isFinite(cachedAtMs) && cachedAtMs < oldestUsable) missingAssets.push(assetUrl);
     }
   }
   const expectedAssets = manifest?.assetUrls.length ?? 0;

@@ -8,6 +8,7 @@ import {
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
+  NAVIGATE_ASSET_MAX_AGE_SECONDS,
 } from "./navigate-shell-validation";
 
 const VALID_HTML = `<!doctype html><html><body><main data-hike-navigate-shell="plan-123"><!--${NAVIGATE_SHELL_MARKER}--><script src="/_next/static/chunks/main.js"></script></main></body></html>`.padEnd(
@@ -37,6 +38,36 @@ describe("navigate shell validation", () => {
   it("rejects a marker-only stub without Next assets", () => {
     const stub = `<!--${NAVIGATE_SHELL_MARKER}-->`.padEnd(600, "x");
     expect(isValidNavigateShellDocument(stub, "text/html", NAVIGATE_SHELL_MARKER)).toBe(false);
+  });
+
+  /**
+   * Regression: the final check was
+   * `isMarkedNavigateShell(...) || looksLikeNavigateHtml(...)`, and the second
+   * disjunct is already true by the time it runs — so the marker requirement
+   * was a tautology and the version kill-switch could never reject a shell
+   * cached by an older release.
+   */
+  it("actually enforces the marker when a cached document must be trusted", () => {
+    const unmarked = VALID_HTML.replace(`<!--${NAVIGATE_SHELL_MARKER}-->`, "");
+    // Writers validate an unmarked live document before stamping it.
+    expect(isValidNavigateShellDocument(unmarked, "text/html", null, "plan-123")).toBe(true);
+    // Cached-trust readers must refuse it.
+    expect(isValidNavigateShellDocument(unmarked, "text/html", null, "plan-123", true)).toBe(false);
+    // A marker in the body or the header both count.
+    expect(isValidNavigateShellDocument(VALID_HTML, "text/html", null, "plan-123", true)).toBe(true);
+    expect(
+      isValidNavigateShellDocument(unmarked, "text/html", NAVIGATE_SHELL_MARKER, "plan-123", true),
+    ).toBe(true);
+    // A shell stamped by a DIFFERENT marker version is rejected — the point of
+    // having a version at all.
+    const otherVersion = unmarked.replace("<body>", "<body><!--hike-navigate-shell-v1-->");
+    expect(isValidNavigateShellDocument(otherVersion, "text/html", null, "plan-123", true)).toBe(false);
+  });
+
+  it("keeps the worker's asset lifetime and readiness verification on one number", () => {
+    // Readiness used to apply no age rule at all, so it reported trip-ready for
+    // assets the worker's expiration plugin would already refuse to serve.
+    expect(NAVIGATE_ASSET_MAX_AGE_SECONDS).toBe(60 * 60 * 24 * 30);
   });
 
   it("exports cache names aligned with the service worker", () => {
