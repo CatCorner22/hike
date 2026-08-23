@@ -158,6 +158,81 @@ describe("overdue notification seam", () => {
     }
   });
 
+  /**
+   * Regression: the two callers are `void syncOverdueNotification(...)` inside
+   * the profile writer, driven by a datetime-local onChange — so a picker spin
+   * across a valid/invalid boundary emits set-then-clear pairs milliseconds
+   * apart, each on its own chain. A set is four bridge hops and a clear is one,
+   * so unserialized the clear finishes first and the set's schedule lands after
+   * it: the store holds no deadline while the phone stays armed on the one the
+   * hiker just cleared.
+   */
+  it("lets a later clear win over an earlier set, despite the set being slower", async () => {
+    const { syncOverdueNotification } = await import("./overdue-notification");
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    const calls: string[] = [];
+    setPlatformAdapters({
+      notifications: {
+        // Modelling the real asymmetry: LocalNotifications.schedule is preceded
+        // by a permission request and a cancel, so it is several round trips
+        // where a bare cancel is one.
+        scheduleAt: async (id: number, atMs: number) => {
+          await sleep(15);
+          calls.push(`schedule:${id}@${atMs}`);
+          return true;
+        },
+        cancel: async (id: number) => {
+          await sleep(1);
+          calls.push(`cancel:${id}`);
+        },
+      },
+    });
+
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    const set = syncOverdueNotification("2026-08-23T18:00:00Z", now);
+    const clear = syncOverdueNotification(null, now);
+    const [setResult, clearResult] = await Promise.all([set, clear]);
+
+    expect(setResult.status).toBe("scheduled");
+    expect(clearResult.status).toBe("cleared");
+    // The hiker's last action was to clear the deadline, so the phone must end
+    // up disarmed — whatever the relative speed of the two native paths.
+    expect(calls.at(-1)).toMatch(/^cancel:/);
+  });
+
+  /**
+   * Regression: the sync's outcome was voided at both call sites, so a hiker who
+   * tapped "Don't Allow" on the notification prompt got no locked-phone alarm
+   * and no word of it — while docs/app-store.md promises exactly that alarm as
+   * a headline feature. "unsupported" is the honest web steady state and must
+   * stay silent; an outright refusal must not.
+   */
+  it("publishes a refused schedule so the panel can say so, but stays quiet on the web", async () => {
+    const {
+      syncOverdueNotification,
+      subscribeOverdueNotification,
+      lastOverdueNotificationSync,
+    } = await import("./overdue-notification");
+    const seen: string[] = [];
+    const stop = subscribeOverdueNotification((sync) => seen.push(sync.status));
+    const now = Date.parse("2026-08-23T10:00:00Z");
+
+    // Permission denied: the plugin resolves false rather than throwing.
+    setPlatformAdapters({
+      notifications: { scheduleAt: async () => false, cancel: async () => undefined },
+    });
+    await syncOverdueNotification("2026-08-23T18:00:00Z", now);
+    expect(lastOverdueNotificationSync().status).toBe("failed");
+
+    // Web: no adapter at all. Nothing was refused, so nothing is reported.
+    __resetPlatformAdaptersForTests();
+    await syncOverdueNotification("2026-08-23T18:00:00Z", now);
+    expect(lastOverdueNotificationSync().status).toBe("unsupported");
+
+    stop();
+    expect(seen).toEqual(["failed", "unsupported"]);
+  });
+
   it("degrades an adapter failure to failed, never a false scheduled", async () => {
     const { syncOverdueNotification } = await import("./overdue-notification");
     setPlatformAdapters({

@@ -71,10 +71,10 @@ describe("plain-text printing", () => {
     expect(html).toContain("&lt;img onerror=&#39;x&#39;&gt;");
   });
 
-  it("downloads the exact text when the browser blocks the popup", () => {
-    const download = vi.fn();
+  it("downloads the exact text when the browser blocks the popup", async () => {
+    const download = vi.fn(async () => true);
 
-    expect(printOrDownloadPlain(
+    expect(await printOrDownloadPlain(
       { title: "Trail leave-behind", body: "trusted trip facts", filename: "trail.txt" },
       { openPopup: () => null, download },
     )).toBe("downloaded");
@@ -82,9 +82,9 @@ describe("plain-text printing", () => {
     expect(download).toHaveBeenCalledWith("trail.txt", "trusted trip facts", "text/plain");
   });
 
-  it("closes an unsafe popup and downloads when opener isolation fails", () => {
+  it("closes an unsafe popup and downloads when opener isolation fails", async () => {
     const events: string[] = [];
-    const download = vi.fn();
+    const download = vi.fn(async () => true);
     const fixture = popupFixture(events);
     Object.defineProperty(fixture.popup, "opener", {
       configurable: true,
@@ -92,7 +92,7 @@ describe("plain-text printing", () => {
       set: () => events.push("refused opener clear"),
     });
 
-    expect(printOrDownloadPlain(
+    expect(await printOrDownloadPlain(
       { title: "Trail leave-behind", body: "trip facts", filename: "trail.txt" },
       { openPopup: () => fixture.popup, download },
     )).toBe("downloaded");

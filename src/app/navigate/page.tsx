@@ -51,6 +51,7 @@ import {
   type RouteProgressCache,
 } from "@/lib/offline/progress-cache";
 import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/wake-lock";
+import { subscribePlatformAdapters } from "@/lib/platform/adapters";
 import { bailoutRouteCandidates } from "@/lib/offline/bailout-routes";
 import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
 import { hikeReadiness } from "@/lib/safety/readiness";
@@ -480,8 +481,18 @@ function NavigateScreen({ navId }: { navId: string }) {
     void requestWakeLock();
     const id = window.setInterval(() => setWakeHeld(isWakeLockHeld()), 4000);
     queueMicrotask(() => setWakeHeld(isWakeLockHeld()));
+    // The native adapters register after this effect has already run, and the
+    // web fallback returns a no-op handle that never retries — so on a direct
+    // load of this screen (what Capacitor does after a WKWebView content-process
+    // kill) the wake lock would stay dead for the rest of the hike while the
+    // self-check reported it held or not-held from stale state. Ask again the
+    // moment a real adapter exists.
+    const stopWatchingAdapters = subscribePlatformAdapters(() => {
+      void requestWakeLock().then(() => setWakeHeld(isWakeLockHeld()));
+    });
     return () => {
       window.clearInterval(id);
+      stopWatchingAdapters();
       void releaseWakeLock();
     };
   }, []);

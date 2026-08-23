@@ -43,7 +43,9 @@ moment you need help is the moment you have no bars.
 - Navigate with a live USNG grid reference you can read to a rescuer,
   off-route alerts, daylight margin, and turnaround warnings.
 - Record your track with the screen locked; breadcrumbs stay on the phone.
-- A return-time alarm fires on the phone itself, even with the app closed.
+- A return-time alarm fires on the phone itself, even with the app closed —
+  if you allow notifications. Decline, and the app says so and falls back to the
+  in-app overdue warning.
 - The SOS screen is honest: a strobe and tone to be seen and heard, plus a
   pre-filled message for your emergency contact. It does not contact 911,
   search and rescue, or transmit anything by itself.

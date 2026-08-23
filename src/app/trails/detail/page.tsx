@@ -12,7 +12,8 @@ import { ResearchBrief } from "@/components/trails/research-brief";
 import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
@@ -271,7 +272,12 @@ function TrailDetail({ trailId }: { trailId: string }) {
                 );
                 if (!response.ok) throw new Error(`Export failed (${response.status}).`);
                 const gpx = await response.text();
-                downloadTextFile(`${safeFilename(trail.name)}.gpx`, gpx, "application/gpx+xml");
+                const saved = await saveTextFile(
+                  `${safeFilename(trail.name)}.gpx`,
+                  gpx,
+                  "application/gpx+xml",
+                );
+                if (!saved) throw new Error("The phone would not save the GPX file.");
               } catch (error) {
                 setGpxError(
                   error instanceof Error ? error.message : "The GPX export could not be produced.",

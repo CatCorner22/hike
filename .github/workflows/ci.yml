@@ -41,8 +41,14 @@ jobs:
       - run: npm ci
       - name: Static export build
         run: npm run build:cap
-      - name: Export contains the prerendered navigate shell
-        run: test -f out/navigate/index.html && grep -q 'data-hike-navigate-shell="shell"' out/navigate/index.html
+      - name: The iOS shell can actually serve the export
+        # Capacitor's stock router answers every extensionless path with the
+        # ROOT index.html, which would make fifteen of the sixteen exported
+        # documents unreachable — including on the reload it performs after a
+        # WKWebView content-process kill. ios/App/App/MainViewController.swift
+        # replaces it; this checks the replacement's rule and the export shape
+        # the rule depends on.
+        run: node adversarial/probe-capacitor-routing.mjs
       - name: Working tree unchanged after the build
         # The build script moves src/proxy.ts (and its test) aside and must
         # always restore them — a dirty tree here means the restore broke.

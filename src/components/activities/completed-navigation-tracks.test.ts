@@ -124,16 +124,18 @@ describe("completed navigation track management", () => {
         },
       ],
     }));
-    const download = vi.fn();
+    const save = vi.fn<(filename: string, text: string, mime?: string) => Promise<boolean>>(
+      async () => true,
+    );
 
-    const result = await exportFinishedNavigationTrackGpx(finished, { read, download });
+    const result = await exportFinishedNavigationTrackGpx(finished, { read, save });
 
     expect(result.pointCount).toBe(2);
     expect(result.filename).toMatch(/navigation-track\.gpx$/);
-    const gpx = download.mock.calls[0][1] as string;
+    const gpx = save.mock.calls[0][1] as string;
     expect(gpx).toContain("<ele>1000</ele>");
     expect(gpx).toContain("<time>2026-08-22T12:00:05.000Z</time>");
-    expect(download.mock.calls[0][2]).toBe("application/gpx+xml");
+    expect(save.mock.calls[0][2]).toBe("application/gpx+xml");
   });
 
   it("rejects active and empty navigation GPX exports", async () => {
@@ -156,12 +158,14 @@ describe("completed navigation track management", () => {
 
   it("exports only finished tracks through the expected JSON download contract", async () => {
     const serialize = vi.fn(async () => "{\"track\":true}");
-    const download = vi.fn();
+    const save = vi.fn<(filename: string, text: string, mime?: string) => Promise<boolean>>(
+      async () => true,
+    );
 
-    const result = await exportFinishedNavigationTrack(finished, { serialize, download });
+    const result = await exportFinishedNavigationTrack(finished, { serialize, save });
 
     expect(serialize).toHaveBeenCalledWith(finished.id);
-    expect(download).toHaveBeenCalledWith(
+    expect(save).toHaveBeenCalledWith(
       result.filename,
       "{\"track\":true}",
       "application/json",
@@ -169,10 +173,10 @@ describe("completed navigation track management", () => {
     expect(result.filename).toMatch(/^River-Loop-.*-navigation-track\.json$/);
     expect(result.filename).not.toContain(finished.id);
     await expect(
-      exportFinishedNavigationTrack(active, { serialize, download }),
+      exportFinishedNavigationTrack(active, { serialize, save }),
     ).rejects.toMatchObject({ code: "invalid-input" });
     expect(serialize).toHaveBeenCalledTimes(1);
-    expect(download).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledTimes(1);
   });
 
   it("deletes the chosen finished session, refreshes, and still filters active sessions", async () => {

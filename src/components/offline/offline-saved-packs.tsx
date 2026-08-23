@@ -12,7 +12,8 @@ import {
   warmNavigateShell,
   type NavigateOfflineStatus,
 } from "@/lib/offline/navigate-shell";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 import { savedPackLaunchCopy, savedPackLaunchState } from "@/lib/offline/saved-pack-readiness";
 import { navigateHref } from "@/lib/routes";
 import { isOnline, subscribeNetworkStatus } from "@/lib/platform/network";
@@ -79,17 +80,19 @@ export function OfflineSavedPacks() {
     }
   }
 
-  function exportPack(pack: RoutePack) {
-    try {
-      downloadTextFile(
-        `${safeFilename(pack.name)}-klandagi-pack.json`,
-        serializeRoutePackBackup(pack),
-        "application/json",
-      );
-      setMessage("Backup downloaded. This is a device file, not cloud sync.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Could not export this saved route.");
-    }
+  async function exportPack(pack: RoutePack) {
+    // A phone full of offline map packs is precisely where a Filesystem write
+    // runs out of room, so the failure branch here is not theoretical.
+    const saved = await saveTextFile(
+      `${safeFilename(pack.name)}-klandagi-pack.json`,
+      serializeRoutePackBackup(pack),
+      "application/json",
+    );
+    setMessage(
+      saved
+        ? "Backup downloaded. This is a device file, not cloud sync."
+        : "Could not export this saved route — the phone refused to write the file.",
+    );
   }
 
   async function importFile(file: File) {
@@ -206,7 +209,7 @@ export function OfflineSavedPacks() {
                     size="sm"
                     variant="ghost"
                     disabled={!ready}
-                    onClick={() => exportPack(pack)}
+                    onClick={() => void exportPack(pack)}
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Export

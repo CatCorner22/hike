@@ -4,7 +4,8 @@ import { apiFetch } from "@/lib/api/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { copyEmergencyInfo } from "@/lib/safety/emergency";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 import type { IceProfile } from "@/lib/safety/profile";
 import {
   formatLeaveBehindCard,
@@ -126,8 +127,11 @@ export function GuardianShare({
       }
     }
     const ok = await copyEmergencyInfo(text);
-    if (!ok) downloadTextFile(filename, text, "text/plain");
-    flash(ok ? "Copied" : "Downloaded");
+    if (ok) {
+      flash("Copied");
+      return;
+    }
+    flash((await saveTextFile(filename, text, "text/plain")) ? "Downloaded" : "Could not save");
   }
 
   function message(kind: GuardianMessageKind) {
@@ -286,8 +290,22 @@ export function GuardianShare({
     }
     const privateUrl = `${window.location.origin}/guardian#${control.token}`;
     const copied = await copyEmergencyInfo(privateUrl);
-    if (!copied) downloadTextFile(`${safeFilename(trailName)}-guardian-link.txt`, privateUrl, "text/plain");
-    setLinkNotice(copied ? "Private link copied." : "Private link downloaded.");
+    if (copied) {
+      setLinkNotice("Private link copied.");
+      return;
+    }
+    // The token lives only in this tab; if it reaches neither the clipboard nor
+    // a file, saying it was saved would lose it silently.
+    const saved = await saveTextFile(
+      `${safeFilename(trailName)}-guardian-link.txt`,
+      privateUrl,
+      "text/plain",
+    );
+    setLinkNotice(
+      saved
+        ? "Private link downloaded."
+        : "Could not copy or save the private link — revoke it and create a new one.",
+    );
   }
 
   async function createPrivateLink() {
@@ -378,7 +396,7 @@ export function GuardianShare({
           type="button"
           variant="outline"
           className={compact ? "min-h-11" : undefined}
-          onClick={() => {
+          onClick={async () => {
             const text = formatLeaveBehindCard({
               trailName,
               profile,
@@ -392,15 +410,21 @@ export function GuardianShare({
               bailouts,
               routeFacts,
             });
-            const outcome = printOrDownloadPlain(
+            const outcome = await printOrDownloadPlain(
               {
                 title: `${trailName} leave-behind`,
                 body: text,
                 filename: `${safeFilename(trailName)}-leave-behind.txt`,
               },
-              { download: downloadTextFile },
+              { download: saveTextFile },
             );
-            flash(outcome === "printed" ? "Print dialog opened" : "Popup blocked; downloaded text");
+            flash(
+              outcome === "printed"
+                ? "Print dialog opened"
+                : outcome === "downloaded"
+                  ? "Popup blocked; downloaded text"
+                  : "Could not print or save the leave-behind",
+            );
           }}
         >
           Print leave-behind

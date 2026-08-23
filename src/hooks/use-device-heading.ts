@@ -6,6 +6,7 @@ import {
   unavailableDeviceHeadingState,
 } from "@/lib/safety/device-heading";
 import { isHeadingSupported, subscribeHeading } from "@/lib/platform/heading";
+import { subscribePlatformAdapters } from "@/lib/platform/adapters";
 
 export type DeviceHeadingPermission = "unsupported" | "prompt" | "granted" | "denied";
 
@@ -68,6 +69,19 @@ export function useDeviceHeading({
       );
     });
   }, [declinationDeg, permission]);
+
+  /**
+   * The native adapters register after React has flushed the first mount
+   * effects, so the one-shot `isHeadingSupported()` sample below would pin the
+   * web deviceorientation path for the whole session — no true-north heading at
+   * rest, on the platform where the seam exists precisely to provide it. Bump a
+   * generation when registration lands so the effect re-evaluates.
+   */
+  const [adapterGeneration, setAdapterGeneration] = useState(0);
+  useEffect(
+    () => subscribePlatformAdapters(() => setAdapterGeneration((generation) => generation + 1)),
+    [],
+  );
 
   const detach = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -198,7 +212,7 @@ export function useDeviceHeading({
     queueMicrotask(() => setPermission("granted"));
     attach();
     return detach;
-  }, [enabled, attach, detach]);
+  }, [enabled, attach, detach, adapterGeneration]);
 
   return { ...reading, permission, requestPermission };
 }

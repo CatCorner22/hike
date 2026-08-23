@@ -62,7 +62,17 @@ Run this with the phone in hand — not the simulator — before trusting the bu
 real hike. Nothing advances to TestFlight or App Store staging without every box.
 
 - [ ] **Deep page reload**: open a plan, force-quit, relaunch — lands on the right
-      screen, not a 404 shell.
+      screen, not the home screen or a 404 shell. Capacitor's stock router
+      answers every extensionless path with the ROOT index.html, which would
+      make every screen but home unreachable by URL;
+      `StaticExportRouter` in MainViewController.swift replaces it, and this box
+      is what proves the replacement works on a real device.
+- [ ] **Survives a web-content-process kill**: start navigating, then force a
+      memory-pressure reload (Xcode ▸ Debug ▸ Simulate Memory Warning on a
+      device run, or leave the map open under other heavy apps). Capacitor
+      reloads the current URL on that kill — the navigate screen must come back,
+      not the home screen. This is the field failure the router fix is for: it
+      happens mid-hike, silently, with no error to see.
 - [ ] **Single GPS prompt**: exactly one native location permission dialog, with the
       usage description text, on first use of navigation.
 - [ ] **Screen-locked recording**: start recording a track, lock the phone, walk 5
