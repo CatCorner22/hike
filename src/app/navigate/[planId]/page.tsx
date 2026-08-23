@@ -94,7 +94,7 @@ import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-ad
 import { sereAssessment } from "@/lib/safety/sere";
 import { amsAssessment, avalancheTerrainWarning } from "@/lib/safety/wilderness";
 import type { PositionSource } from "@/lib/safety/emergency";
-import { deadReckon, deadReckonUncertaintyM, distanceFromPaces, formatZulu, parseTypedHeading } from "@/lib/safety/landnav";
+import { deadReckon, deadReckonUncertaintyM, distanceFromPaces, formatZulu, parseTypedHeading, type PaceTerrain } from "@/lib/safety/landnav";
 import { formatUsng } from "@/lib/safety/usng";
 import * as turf from "@turf/turf";
 
@@ -146,6 +146,10 @@ export default function NavigatePage() {
   } | null>(null);
   const [deniedPaces, setDeniedPaces] = useState(0);
   const [deniedPaceLen, setDeniedPaceLen] = useState(65);
+  // The terrain pace factor the panel collects must reach the DR fix: without it
+  // the panel narrated "Dead-reckon 160 m" (snow) while the plotted/SOS position
+  // advanced 200 m for the same pace count — up to 25% of distance walked.
+  const [deniedTerrain, setDeniedTerrain] = useState<PaceTerrain>("flat");
   const [deniedHeadingText, setDeniedHeadingText] = useState("");
   const [deniedNeedHeading, setDeniedNeedHeading] = useState(false);
   const [navUnlocked, setNavUnlocked] = useState(false);
@@ -153,7 +157,6 @@ export default function NavigatePage() {
   // can keep showing them. Skipping must not silently drop the safety net.
   const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
-  const snapHintRef = useRef<{ traveledMeters: number } | null>(null);
   const [deniedError, setDeniedError] = useState<string | null>(null);
   const [refreshingPack, setRefreshingPack] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -291,11 +294,11 @@ export default function NavigatePage() {
   const drFix = useMemo(() => {
     if (!gpsDenied || !deniedAnchor) return null;
     const meters =
-      deniedPaces > 0 ? distanceFromPaces(deniedPaces, deniedPaceLen) : 0;
+      deniedPaces > 0 ? distanceFromPaces(deniedPaces, deniedPaceLen, deniedTerrain) : 0;
     const point = deadReckon(deniedAnchor, deniedAnchor.heading, meters);
     if (!point) return null;
     return { ...point, heading: deniedAnchor.heading, meters };
-  }, [gpsDenied, deniedAnchor, deniedPaces, deniedPaceLen]);
+  }, [gpsDenied, deniedAnchor, deniedPaces, deniedPaceLen, deniedTerrain]);
 
   const trusted = gpsDenied ? Boolean(drFix) : gpsTrusted;
   const corridorDecisions = useMemo(() => {
@@ -504,9 +507,6 @@ export default function NavigatePage() {
       { lat: navFix.lat, lng: navFix.lng },
       travelDirection,
     );
-    if (Number.isFinite(p.traveledMeters)) {
-      snapHintRef.current = { traveledMeters: p.traveledMeters };
-    }
     queueMicrotask(() => setProgress(p));
   }, [navFix, loadState, trusted, travelDirection]);
 
@@ -601,8 +601,18 @@ export default function NavigatePage() {
   const moon = useMemo(() => { void zulu; return moonPhase(); }, [zulu]);
   const moonWarning = daylight?.isDark ? moon.nightNav : null;
   // A dead-reckoned position drifts with every metre walked. Quote an error radius so
-  // the grid below is not read as a surveyed fix.
-  const drErrorM = drFix ? Math.max(25, Math.round(drFix.meters * 0.1)) : null;
+  // the grid below is not read as a surveyed fix — and quote the SAME radius the map
+  // ring, SOS message, and rescue card are built from. A private 10%-with-25m-floor
+  // formula here under-quoted the model by ~4x after a kilometre; under-quoting
+  // position error is how searchers end up on the wrong side of a drainage.
+  const drUncertainty =
+    gpsDenied && drFix
+      ? deadReckonUncertaintyM({
+          lastAccuracyM: gps.fix?.accuracy,
+          distanceM: drFix.meters,
+        })
+      : undefined;
+  const drErrorM = drUncertainty != null ? Math.round(drUncertainty) : null;
   const deniedWarning = gpsDenied
     ? `GPS DENIED — dead reckon ${drFix ? `${Math.round(drFix.meters)} m` : "0 m"} on ${deniedAnchor ? `${Math.round(deniedAnchor.heading)}°` : "—"}${drErrorM != null ? `, estimated ±${drErrorM} m and growing` : ""}. SOS / SMS use this DR position.`
     : deniedNeedHeading
@@ -911,13 +921,6 @@ export default function NavigatePage() {
   );
   const navHeading = navHeadingFusion.headingTrue ?? undefined;
   const navHeadingSource = navHeadingFusion.source;
-  const drUncertainty =
-    gpsDenied && drFix
-      ? deadReckonUncertaintyM({
-          lastAccuracyM: gps.fix?.accuracy,
-          distanceM: drFix.meters,
-        })
-      : undefined;
   const user =
     navFix && trusted
       ? {
@@ -1027,6 +1030,8 @@ export default function NavigatePage() {
                 onToggleGpsDenied={() => (gpsDenied ? exitGpsDenied() : enterGpsDenied())}
                 onDeniedPaces={setDeniedPaces}
                 onDeniedPaceLen={setDeniedPaceLen}
+                onDeniedTerrain={setDeniedTerrain}
+                headingSource={navHeadingSource}
                 packWeather={pack.weather}
                 batteryPct={battery.available && battery.level != null ? battery.level * 100 : null}
                 onDrank={() => {
@@ -1148,7 +1153,12 @@ export default function NavigatePage() {
                   </p>
                 )}
                 {gm && (
-                  <p className="navigate-grid-support text-xs text-muted-foreground">{gm.gridToMagnetic}</p>
+                  <p className="navigate-grid-support text-xs text-muted-foreground">
+                    {gm.gridToMagnetic}
+                    {/* The declination module warns about its own 2030 model expiry;
+                        dropping the field made the warning unreachable everywhere. */}
+                    {gm.staleness ? ` ${gm.staleness}` : ""}
+                  </p>
                 )}
               </div>
             </div>
@@ -1312,11 +1322,21 @@ export default function NavigatePage() {
                   : "—"
             }
           />
+          {/* When the Remaining stat switches referent (Backtrack), Climb left and
+              Est. time must follow it or go blank: a route-forward ETA beside a
+              backtrack distance reads as the time needed to get back — the
+              retreat-before-dark number, wrong. No backtrack elevation profile
+              exists, so Climb left goes blank and the ETA is flat-ground Naismith
+              over the crumb line — a floor, not a promise. */}
           <Stat
             icon={Mountain}
             label="Climb left"
             value={
-              trusted && progress ? formatElevation(progress.remainingElevationMeters) : "—"
+              backtrackOn
+                ? "—"
+                : trusted && progress
+                  ? formatElevation(progress.remainingElevationMeters)
+                  : "—"
             }
           />
           <Stat
@@ -1327,15 +1347,19 @@ export default function NavigatePage() {
           />
           <Stat
             icon={Mountain}
-            label="Est. time"
+            label={backtrackOn ? "Est. time back" : "Est. time"}
             value={
-              trusted && progress && progress.remainingMeters > 0
-                ? formatNaismith(
-                    naismithMinutes(progress.remainingMeters, progress.remainingElevationMeters),
-                  ).replace("Naismith ", "")
-                : trusted && progress && progress.remainingMeters < 50
-                  ? "Done"
+              backtrackOn
+                ? retrace && retrace.remainingMeters > 0
+                  ? `${formatNaismith(naismithMinutes(retrace.remainingMeters, 0)).replace("Naismith ", "")}+`
                   : "—"
+                : trusted && progress && progress.remainingMeters > 0
+                  ? formatNaismith(
+                      naismithMinutes(progress.remainingMeters, progress.remainingElevationMeters),
+                    ).replace("Naismith ", "")
+                  : trusted && progress && progress.remainingMeters < 50
+                    ? "Done"
+                    : "—"
             }
           />
         </div>

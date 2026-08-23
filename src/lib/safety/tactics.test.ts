@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   casevacDecision,
+  formatGmtCard,
   lostPersonQuery,
   paceBeads,
   polarisHint,
@@ -113,6 +114,19 @@ describe("tactics", () => {
     const q = lostPersonQuery({ name: "Alex", clothing: "red jacket", lat: 37.1, lng: -119.2 });
     expect(q).toContain("Alex");
     expect(q).toContain("Your grid now");
+  });
+
+  /**
+   * Regression: Math.round turned 359.7° into "360° true" — a dial position that
+   * exists on no compass card — while the adjacent compass readout showed 0°.
+   * All three bearings on the card round through roundBearing.
+   */
+  it("formatGmtCard never renders 360°", () => {
+    const card = formatGmtCard(359.7, 359.6, 37.7, -119.5);
+    expect(card).not.toBeNull();
+    expect(card!).toMatch(/^0° true/);
+    expect(card!).toContain("0° mag");
+    expect(card!).not.toContain("360°");
   });
 });
 

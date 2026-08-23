@@ -8,7 +8,14 @@ export function windChillC(tempC: number, windKph: number): number | null {
   return Math.round((13.12 + 0.6215 * tempC - 11.37 * v + 0.3965 * tempC * v) * 10) / 10;
 }
 
-export function windChillWarning(tempC: number, windKph: number): string | null {
+/**
+ * The renderer styles by this value, never by sniffing the warning text — keying
+ * emphasis on substrings is how "frostbite risk in minutes" ended up typeset in
+ * placeholder gray.
+ */
+export type ThermalSeverity = "info" | "advisory" | "danger";
+
+export function windChillHazard(tempC: number, windKph: number): { text: string; severity: ThermalSeverity } | null {
   if (!Number.isFinite(tempC) || !Number.isFinite(windKph) || windKph < 0) return null;
   // Below the formula's 5 km/h floor the chill value IS the air temperature (ECCC
   // applies its frostbite bands to that value in calm air). Returning null here made
@@ -18,9 +25,13 @@ export function windChillWarning(tempC: number, windKph: number): string | null 
   const wc = calm ? Math.round(tempC * 10) / 10 : windChillC(tempC, windKph);
   if (wc == null) return null;
   const label = calm ? `Air temperature ${wc}°C (calm)` : `Wind chill ${wc}°C`;
-  if (wc <= -28) return `${label} — frostbite risk in minutes. Cover skin, stop the wind.`;
-  if (wc <= -10) return `${label} — add a wind layer before you cool.`;
-  return `${label}.`;
+  if (wc <= -28) return { text: `${label} — frostbite risk in minutes. Cover skin, stop the wind.`, severity: "danger" };
+  if (wc <= -10) return { text: `${label} — add a wind layer before you cool.`, severity: "advisory" };
+  return { text: `${label}.`, severity: "info" };
+}
+
+export function windChillWarning(tempC: number, windKph: number): string | null {
+  return windChillHazard(tempC, windKph)?.text ?? null;
 }
 
 /**
@@ -67,12 +78,16 @@ export function heatIndexC(tempC: number, rhPct: number): number | null {
   return hiC;
 }
 
-export function heatWarning(tempC: number, rhPct: number): string | null {
+export function heatHazard(tempC: number, rhPct: number): { text: string; severity: ThermalSeverity } | null {
   const hi = heatIndexC(tempC, rhPct);
   if (hi == null) return null;
-  if (hi >= 41) return `Heat index ${hi}°C — rest in shade, sip water, watch for heat stroke.`;
-  if (hi >= 32) return `Heat index ${hi}°C — slow the pace and drink on a schedule.`;
+  if (hi >= 41) return { text: `Heat index ${hi}°C — rest in shade, sip water, watch for heat stroke.`, severity: "danger" };
+  if (hi >= 32) return { text: `Heat index ${hi}°C — slow the pace and drink on a schedule.`, severity: "advisory" };
   return null;
+}
+
+export function heatWarning(tempC: number, rhPct: number): string | null {
+  return heatHazard(tempC, rhPct)?.text ?? null;
 }
 
 /** Flash-to-bang: seconds / 5 ≈ miles, / 3 ≈ km. 30–30 rule. */

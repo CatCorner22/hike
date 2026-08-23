@@ -1497,6 +1497,70 @@ Fixed:
   unconditioned on a card of standalone one-liners; CPR is now explicitly conditioned
   on unresponsive + not breathing normally, with the contraindication stated.
 
+## Twentieth pass — the render surface, by adversarial swarm
+
+Five finder agents over `safety-panel.tsx` (2,144 lines, first end-to-end read) and
+`navigate/[planId]/page.tsx` by section, each finding then attacked by two
+independent refuters instructed to default to REFUTED; 26 findings, 20 confirmed by
+both refuters, 6 refuted. The theme is the named N3 class throughout: correct,
+pass-18-hardened safety math defeated at the render boundary — severity re-derived
+by substring instead of the lib's boolean, computed warning fields dropped, tested
+reconciliation layers unreachable from any JSX path.
+
+Confirmed and fixed (S1): a corrupt stored `returnAt` was reconstructed into an
+`Invalid Date` whose `.toISOString()` threw during render and in the 30-second
+monitor effect, taking the whole navigate screen down offline until storage was
+wiped — reconstruction is now guarded and the lib's fail-closed label surfaces
+instead. The CASEVAC card rendered "Non-walker — stay put" beside severe-AMS
+"descend immediately. This is an emergency." — the tested `medicalOverride` /
+`reconcileTriagePriority` layer built for exactly this conflict was dead code; the
+panel now wires severe `amsResult` into `casevacDecision`, producing one governing
+order.
+
+Confirmed and fixed (S2): the check-in monitor's fail-closed alarm states (corrupt
+interval, unreadable timestamp) rendered in the amber info tier because styling was
+keyed on `label.includes("OVERDUE")` — now keyed on the lib's `overdue` boolean.
+Both "I'm OK" buttons were disabled without a GPS fix while the overdue banner
+instructed tapping them — a check-in is proof of life, not a position report, and
+is no longer fix-gated. A storage-refused monitor arm silently reverted the
+checkbox — the refused write now states itself, and the arm-time is stamped in the
+optimistic state so a stale check-in cannot flash a false OVERDUE during the write.
+Frostbite/heat-stroke warnings rendered in the muted placeholder gray — the lib now
+grades the band (`windChillHazard`/`heatHazard`) and the render styles by that
+severity, never by sniffing text. The GPS-denied dead-reckon fix ignored the
+terrain pace factor the panel collects (25% overshoot in snow, on the position SOS
+transmits) — terrain now reaches the page's `drFix`. The GPS-DENIED banner and
+grid line quoted a private ±10% radius while the map ring, SOS message and rescue
+card carried `deadReckonUncertaintyM` (~4× wider after a kilometre) — one model
+everywhere now. The copied compass card labeled magnetometer headings "Source:
+GPS" and advised against GPS-freeze for a live compass — the fused source and a
+matching failure-mode caveat now flow from the page.
+
+Confirmed and fixed (S3): HACE-emergency and mild-caution AMS output shared one
+amber style (severe now uses the destructive tier); the "Check-in NOT SAVED"
+warning was erased by the next 30-second tick (now sticky state cleared only by a
+successful check-in); `gmAngleCard.staleness` — the 2030 declination-model expiry
+warning — was computed and dropped by every consumer (now rendered in the panel,
+the navigate grid line, and the compass card); the panel and `formatGmtCard`
+rounded 359.7° to a nonexistent "360° true" (now `roundBearing`); Est. time /
+Climb left kept route-forward figures beside a Backtrack-referent Remaining stat
+(they now follow the referent, flat-Naismith floor marked "+"); `snapHintRef` was
+maintained on every fix and read by nothing (deleted); `useBatteryStatus` carried
+an unrendered duplicate battery warning re-encoding the W3 silent 16–20% band
+(deleted — `useBatteryWarning` is the single source).
+
+Also mounted this pass: the `PositionQr` SAR handoff (QR of `buildSarHandoff`,
+scannable by any stock camera with zero connectivity) behind a toggle in the
+Advanced SAR tools.
+
+Refuted, no action: avalanche descent silencing (tree already applies `Math.abs`
+before the band gate, with descent tests); the NaN water banner (`waterReminder`
+fails closed on corrupt baselines). Four navigate-lifecycle findings (queue busy
+loop, double-tap double-start, refresh-timeout route destruction, premature
+offline-banner clear) were confirmed as real against the merged history and
+verified already fixed at HEAD — the refuters re-executed each repro green against
+current code.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

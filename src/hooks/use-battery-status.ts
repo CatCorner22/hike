@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { batterySafetyAdvice } from "@/lib/safety/field-ops";
 
+// Raw battery facts only — no warning field. This hook once carried a duplicate
+// warning gated at 15% while the rendered one (useBatteryWarning) fires at the
+// advice module's 20% tier; the first component to wire the ready-made field
+// would have re-shipped the silent 16–20% band. One source of truth.
 export function useBatteryStatus() {
   const [state, setState] = useState<{
     available: boolean;
     level: number | null;
     charging: boolean | null;
-    warning: string | null;
   }>({
     available: false,
     level: null,
     charging: null,
-    warning: null,
   });
 
   useEffect(() => {
@@ -37,10 +38,6 @@ export function useBatteryStatus() {
         available: true,
         level: battery.level,
         charging: battery.charging,
-        warning:
-          !battery.charging && battery.level <= 0.15
-            ? batterySafetyAdvice(battery.level, battery.charging)
-            : null,
       });
     };
 
