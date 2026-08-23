@@ -632,6 +632,19 @@ function NavigateScreen({ navId }: { navId: string }) {
         : null,
     [trusted, nowMs, hikeStartedAt, progress],
   );
+  /**
+   * One walking estimate for the tile, computed once. The label names the
+   * estimator and the value prints its minutes, and this screen re-renders on
+   * every GPS fix — two independent calls would eventually be two different
+   * answers on one tile.
+   */
+  const remainingEstimate = useMemo(
+    () =>
+      trusted && progress && progress.remainingMeters > 0
+        ? walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace)
+        : null,
+    [trusted, progress, pace],
+  );
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
@@ -1449,8 +1462,8 @@ function NavigateScreen({ navId }: { navId: string }) {
             label={
               backtrackOn
                 ? "Est. time back"
-                : trusted && progress && progress.remainingMeters > 0
-                  ? `Est. time (${estimateBasisLabel(walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace).basis)})`
+                : remainingEstimate
+                  ? `Est. time (${estimateBasisLabel(remainingEstimate.basis)})`
                   : "Est. time"
             }
             value={
@@ -1458,10 +1471,8 @@ function NavigateScreen({ navId }: { navId: string }) {
                 ? retrace && retrace.remainingMeters > 0
                   ? `${formatNaismith(walkingEstimate(retrace.remainingMeters, 0, pace).minutes).replace("Naismith ", "")}+`
                   : "—"
-                : trusted && progress && progress.remainingMeters > 0
-                  ? formatNaismith(
-                      walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace).minutes,
-                    ).replace("Naismith ", "")
+                : remainingEstimate
+                  ? formatNaismith(remainingEstimate.minutes).replace("Naismith ", "")
                   : trusted && progress && progress.remainingMeters < 50
                     ? "Done"
                     : "—"
