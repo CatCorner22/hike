@@ -71,9 +71,36 @@ and tell someone where you are going.
 **Keywords** (100 chars):
 `hiking,offline,trail,navigation,GPS,USNG,backcountry,safety,SAR,topo,camping,SOS`
 
-**Age rating**: 4+ (the safety/medical reference content is factual and
-preventive; answer "None" to all objectionable-content questions,
-"Unrestricted Web Access: No").
+**Age rating**: answer the questionnaire against what the app actually contains,
+which is not "None" to everything.
+
+A previous version of this file told you to file "None" to every
+objectionable-content question and rate the app 4+. That is wrong, and wrong in
+the direction that gets an app pulled: an inaccurate rating is a guideline 2.3.6
+metadata violation, and it is trivially checkable by anyone who opens the
+Medical tab. What is in here:
+
+- **Medical and treatment information.** Tourniquet application and conversion
+  timing, chest seals, START triage, hypothermia rewarming, altitude illness.
+  It is factual and preventive, and it is unambiguously medical/treatment
+  information — answer that question honestly.
+- **Realistic violence, mild and infrequent.** `survival-harvest.ts` carries
+  hunting ethics ("one clean shot beats wounding and tracking"), snare and
+  figure-4 deadfall construction, and game field dressing. Instructional, not
+  depicted, but it is there.
+- **Unrestricted web access**: No.
+
+Rate it where those answers land you — expect 12+ rather than 4+ — and say so in
+the review notes rather than hoping the reviewer misses the tab. A survival app
+rated for the content it has is not a worse listing; a survival app caught
+under-rating its trauma section is.
+
+**Background location and battery** (guideline 2.5.4): the app declares
+`UIBackgroundModes: [location]` for track recording. The recorder states, before
+the hiker taps Start, that recording keeps GPS running with the screen off and
+uses the battery noticeably faster
+(`src/components/activities/activity-recorder.tsx`). Point the reviewer at that
+string; it is the notice 2.5.4 asks for.
 
 **Category**: Navigation (secondary: Health & Fitness).
 
