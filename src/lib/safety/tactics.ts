@@ -100,8 +100,10 @@ export function formatGmtCard(trueDeg: number, magneticDeg: number | null, lat: 
   const conv = gridConvergence(lat, lng);
   if (conv == null || !Number.isFinite(trueDeg) || trueDeg < 0 || trueDeg >= 360 || (magneticDeg != null && (!Number.isFinite(magneticDeg) || magneticDeg < 0 || magneticDeg >= 360))) return null;
   const grid = ((trueDeg - conv) % 360 + 360) % 360;
-  const mag = magneticDeg != null ? ` · ${Math.round(magneticDeg)}° mag` : "";
-  return `${Math.round(trueDeg)}° true · ${Math.round(grid)}° grid (conv ${conv >= 0 ? "+" : ""}${conv.toFixed(1)}°)${mag}`;
+  // roundBearing, not Math.round: 359.6° must display as 0°, never "360° true" —
+  // a dial position that exists on no compass card.
+  const mag = magneticDeg != null ? ` · ${roundBearing(magneticDeg)}° mag` : "";
+  return `${roundBearing(trueDeg)}° true · ${roundBearing(grid)}° grid (conv ${conv >= 0 ? "+" : ""}${conv.toFixed(1)}°)${mag}`;
 }
 
 export type CasevacChoice = "stay" | "short-carry" | "walk-out";

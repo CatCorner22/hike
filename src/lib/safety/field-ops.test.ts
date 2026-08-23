@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   gpsAnomalyWarning,
+  heatHazard,
   heatIndexC,
   heatWarning,
   lightningRule,
@@ -8,6 +9,7 @@ import {
   slopePercent,
   slopeWarning,
   windChillC,
+  windChillHazard,
   windChillWarning,
 } from "./field-ops";
 
@@ -137,6 +139,32 @@ describe("windChillWarning in calm air", () => {
     expect(windChillWarning(-20, 30)).toMatch(/Wind chill/);
     expect(windChillWarning(15, 0)).toBeNull();
     expect(windChillWarning(Number.NaN, 10)).toBeNull();
+  });
+});
+
+/**
+ * Regression: the renderer styled the cold/heat warnings by sniffing the text and
+ * got it wrong — "frostbite risk in minutes" was typeset in the muted placeholder
+ * gray. The module grades the band itself so no renderer re-derives severity from
+ * substrings.
+ */
+describe("thermal hazard severity accompanies the text", () => {
+  it("grades wind chill bands", () => {
+    expect(windChillHazard(-35, 0)).toMatchObject({ severity: "danger" });
+    expect(windChillHazard(-15, 2)).toMatchObject({ severity: "advisory" });
+    expect(windChillHazard(0, 2)).toMatchObject({ severity: "info" });
+    expect(windChillHazard(15, 0)).toBeNull();
+  });
+
+  it("grades heat index bands", () => {
+    expect(heatHazard(43, 30)).toMatchObject({ severity: "danger" });
+    expect(heatHazard(27, 100)).toMatchObject({ severity: "advisory" });
+    expect(heatHazard(20, 50)).toBeNull();
+  });
+
+  it("keeps the string API as a pure view of the graded result", () => {
+    expect(windChillWarning(-35, 0)).toBe(windChillHazard(-35, 0)!.text);
+    expect(heatWarning(43, 30)).toBe(heatHazard(43, 30)!.text);
   });
 });
 
