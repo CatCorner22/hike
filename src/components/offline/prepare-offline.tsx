@@ -22,7 +22,9 @@ import {
 } from "@/lib/offline/official-alerts";
 import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
 import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { bboxFromGeometry } from "@/lib/geo";
 import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
+import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
 import { getNavigateOfflineStatus, warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
@@ -47,6 +49,36 @@ async function requestCorridorFeatures(
     if (!response.ok) return null;
     const data = await response.json() as { features?: unknown };
     return validCorridorFeatures(data.features, routeId, bboxes) ? data.features : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The elevation grid the offline map shades its relief from.
+ *
+ * Best-effort like every other extra: a route with no terrain still navigates,
+ * on the blank ground every pack had before this existed. Fifteen seconds
+ * because the server makes up to three sequential calls to a free public
+ * elevation service.
+ */
+async function requestTerrainGrid(
+  routeId: string,
+  bbox: [number, number, number, number],
+): Promise<TerrainGrid | null> {
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => apiFetch("/api/terrain/grid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, bbox }),
+        signal,
+      }),
+      15_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { grid?: unknown };
+    return isUsableTerrainGrid(data.grid) ? data.grid : null;
   } catch {
     return null;
   }
@@ -178,10 +210,16 @@ export function PrepareOffline({
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
       const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
-      const [corridorFeatures, hazardBrief, officialAlerts] = await Promise.all([
+      // The pack derives its own bbox from the geometry when the caller does not
+      // supply one, and the plan screen does not. Deriving it the same way here
+      // means the terrain grid always covers exactly what the pack stores, which
+      // is what the pack's own validation requires of it.
+      const packBbox = bbox ?? bboxFromGeometry(geometry, 0.004) ?? undefined;
+      const [corridorFeatures, hazardBrief, officialAlerts, terrain] = await Promise.all([
         requestCorridorFeatures(packId, corridor.bboxes),
         fetchRouteHazardBrief({ routeId: packId, geometry }),
         requestOfficialAlerts(packId, geometry, parkCode),
+        packBbox ? requestTerrainGrid(packId, packBbox) : Promise.resolve(null),
       ]);
       const weather = hazardBrief
         ? packWeatherFromHazardBrief(hazardBrief)
@@ -211,6 +249,7 @@ export function PrepareOffline({
             ? existing.officialAlerts
             : undefined
         ),
+        terrain: terrain ?? (isUsableTerrainGrid(existing?.terrain) ? existing.terrain : undefined),
         bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
           ? existing.bailoutRoutes
           : undefined,

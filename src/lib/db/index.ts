@@ -83,9 +83,48 @@ export function getDb(): Database {
     if (driver === "neon-http") {
       db = drizzleNeonHttp(neon(url), { schema }) as unknown as Database;
     } else {
-      // Modest ceiling: on an autoscaling host every container holds its own
-      // pool, and Postgres connection slots are the shared resource.
-      pool = new Pool({ connectionString: url, max: 5 });
+      pool = new Pool({
+        connectionString: url,
+        // Modest ceiling: on an autoscaling host every container holds its own
+        // pool, and Postgres connection slots are the shared resource.
+        max: 5,
+        /*
+          Every one of these defaults to "wait forever", which is the wrong
+          answer for a request a person is standing still for.
+
+          A cold autoscale container whose database is asleep, a database that
+          has gone away mid-hike, a network that black-holes: with no
+          connection timeout the checkout never returns, the request never
+          answers, and the hiker watches a spinner until the platform's own
+          gateway gives up with a blank error. Failing in eight seconds with a
+          message the app can render is strictly better — this is an app whose
+          answer to "the server is not reachable" is already a good one.
+        */
+        connectionTimeoutMillis: 8_000,
+        // Autoscale containers idle out. Holding a socket open past this only
+        // guarantees the next query discovers a dead one.
+        idleTimeoutMillis: 30_000,
+        /*
+          A query that cannot finish in fifteen seconds is not going to help
+          anybody; it is holding one of five connections while a hiker waits.
+          Postgres enforces this itself, so it applies even to a query this
+          process has stopped waiting for.
+        */
+        statement_timeout: 15_000,
+        // The same ceiling for time spent waiting on a lock rather than working.
+        query_timeout: 20_000,
+      });
+      /*
+        A pool error with no listener is an unhandled 'error' event, and on an
+        EventEmitter that means the process exits. `pg` emits one when an idle
+        client's connection drops — which is what a database restart, a failover
+        or an idle timeout looks like from here. Killing the server over it would
+        take down the navigate shell too, which is the part that still works
+        without a database at all.
+      */
+      pool.on("error", (error) => {
+        console.error("[db] idle client error (the pool will replace it):", error.message);
+      });
       db = drizzlePostgres(pool, { schema });
     }
   }

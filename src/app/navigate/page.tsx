@@ -17,7 +17,15 @@ import { SafetyPanel } from "@/components/offline/safety-panel";
 import { ReadinessGate } from "@/components/offline/readiness-gate";
 import { formatOfflineRouteStorageError } from "@/components/offline/offline-readiness";
 import { SosBeacon } from "@/components/offline/sos-beacon";
+import { terrainLegend } from "@/lib/offline/terrain-grid";
 import { useBatteryStatus } from "@/hooks/use-battery-status";
+import {
+  powerReserveBanner,
+  powerReserveSuggestion,
+  powerReserveTradeoffs,
+  shouldHoldScreenAwake,
+  type PowerMode,
+} from "@/lib/safety/power-reserve";
 import { useBatteryWarning } from "@/hooks/use-battery-warning";
 import { useDeviceHeading } from "@/hooks/use-device-heading";
 import { fuseNavHeading, headingDisagreement, headingSourceLabel } from "@/lib/safety/device-heading";
@@ -190,6 +198,12 @@ function NavigateScreen({ navId }: { navId: string }) {
    * screen is a preference rather than a requirement.
    */
   const [wakeWanted, setWakeWanted] = useState(true);
+  /**
+   * Never automatic. An app that quietly made its own position worse to save
+   * battery would be doing the one thing the rest of this screen refuses to do;
+   * it offers, the hiker decides, and the banner says so for as long as it is on.
+   */
+  const [powerMode, setPowerMode] = useState<PowerMode>("full");
   const [deniedError, setDeniedError] = useState<string | null>(null);
   const [refreshingPack, setRefreshingPack] = useState(false);
   const headerRef = useRef<HTMLDivElement | null>(null);
@@ -203,7 +217,7 @@ function NavigateScreen({ navId }: { navId: string }) {
   const announcedSafetyStatesRef = useRef<Set<string>>(new Set());
   const progressCacheRef = useRef<RouteProgressCache | null>(null);
 
-  const gps = useGps();
+  const gps = useGps(powerMode);
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
   const deviceHeading = useDeviceHeading({
     declinationDeg:
@@ -487,8 +501,9 @@ function NavigateScreen({ navId }: { navId: string }) {
     if (isOnline()) void warmNavigateShell();
   }, []);
 
+  const holdScreen = wakeWanted && shouldHoldScreenAwake(powerMode);
   useEffect(() => {
-    if (!wakeWanted) {
+    if (!holdScreen) {
       void releaseWakeLock();
       // The repo's ticking-clock pattern: publish after the flush, never during it.
       queueMicrotask(() => setWakeHeld(false));
@@ -511,7 +526,7 @@ function NavigateScreen({ navId }: { navId: string }) {
       stopWatchingAdapters();
       void releaseWakeLock();
     };
-  }, [wakeWanted]);
+  }, [holdScreen]);
 
   const unlockIfReady = useCallback(() => {
     void (async () => {
@@ -810,6 +825,21 @@ function NavigateScreen({ navId }: { navId: string }) {
   if (overdueBanner && !beaconOn) {
     hudBanners.push({ key: "overdue", tone: "critical", text: overdueBanner });
   }
+  const powerSuggestion = powerReserveSuggestion({
+    mode: powerMode,
+    batteryPercent: battery.available && battery.level != null ? battery.level * 100 : null,
+    charging: battery.charging,
+    hoursRemaining: remainingEstimate ? remainingEstimate.minutes / 60 : null,
+  });
+  const reserveBanner = powerReserveBanner(powerMode);
+  // A degraded position must never look like a good one, so this stands for as
+  // long as reserve is on rather than appearing once at the moment of the tap.
+  if (reserveBanner) {
+    hudBanners.push({ key: "power-reserve", tone: "warn", text: reserveBanner });
+  }
+  if (powerSuggestion.suggest && powerSuggestion.message) {
+    hudBanners.push({ key: "power-offer", tone: "warn", text: powerSuggestion.message });
+  }
   if (checkinOverdue && !beaconOn) {
     hudBanners.push({ key: "checkin", tone: "critical", text: checkinOverdue });
   }
@@ -1049,6 +1079,7 @@ function NavigateScreen({ navId }: { navId: string }) {
           geometry={pack.geometry}
           corridorFeatures={pack.corridorFeatures ?? null}
           bailoutRoutes={pack.bailoutRoutes ?? null}
+          terrain={pack.terrain ?? null}
           user={user}
           nearest={
             backtrackOn
@@ -1479,6 +1510,15 @@ function NavigateScreen({ navId }: { navId: string }) {
             }
           />
         </div>
+        {/*
+          Never shaded without saying what the shading is. A relief sketch drawn
+          from samples hundreds of metres apart, presented silently, is a map
+          claiming to be a topo — and the ground it cannot see is exactly the
+          ground that hurts people.
+        */}
+        {pack.terrain && (
+          <p className="mt-2 text-[10px] text-muted-foreground">{terrainLegend(pack.terrain)}</p>
+        )}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-muted-foreground">
           <p>
             {positionSource === "deadReckon"
@@ -1503,12 +1543,34 @@ function NavigateScreen({ navId }: { navId: string }) {
             size="sm"
             variant={wakeWanted ? "default" : "outline"}
             className="mt-1"
+            disabled={powerMode === "reserve"}
             onClick={() => setWakeWanted((on) => !on)}
           >
-            {wakeWanted
-              ? `Keep screen on${wakeHeld ? "" : " (not held)"}`
-              : "Let screen sleep"}
+            {powerMode === "reserve"
+              ? "Screen sleeps (power reserve)"
+              : wakeWanted
+                ? `Keep screen on${wakeHeld ? "" : " (not held)"}`
+                : "Let screen sleep"}
           </Button>
+          <details className="mt-1 text-[11px] text-muted-foreground">
+            <summary className="cursor-pointer font-medium text-foreground">
+              {powerMode === "reserve" ? "Power reserve is on" : "Power reserve"}
+            </summary>
+            <div className="mt-1 space-y-2">
+              <ul className="list-disc space-y-1 pl-4">
+                {powerReserveTradeoffs().map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+              <Button
+                size="sm"
+                variant={powerMode === "reserve" ? "default" : "outline"}
+                onClick={() => setPowerMode((mode) => (mode === "reserve" ? "full" : "reserve"))}
+              >
+                {powerMode === "reserve" ? "Back to full accuracy" : "Turn on power reserve"}
+              </Button>
+            </div>
+          </details>
           {checkinOverdue && (
             <Button
               size="sm"

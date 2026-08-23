@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
+import { AccountBackup } from "@/components/offline/account-backup";
 import { OfflineSavedPacks } from "@/components/offline/offline-saved-packs";
 import { buttonVariants } from "@/components/ui/button";
 
@@ -16,6 +17,14 @@ export default function SavedPage() {
 
       <section className="rounded-xl border bg-card p-5 shadow-sm" aria-label="Saved offline routes">
         <OfflineSavedPacks />
+      </section>
+
+      <section className="rounded-xl border bg-card p-5 shadow-sm" aria-label="Server backup">
+        <p className="text-sm font-medium text-muted-foreground">Stored on the server</p>
+        <h2 className="mt-1 text-lg font-semibold">Back up your trips and hikes</h2>
+        <div className="mt-3">
+          <AccountBackup />
+        </div>
       </section>
 
       <Link href="/explore" className={buttonVariants({ variant: "outline" })}>

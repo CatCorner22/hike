@@ -1743,6 +1743,93 @@ and did drop claims that did not survive — the route-card copy preview that
 shows four lines and says "… copied" is honest, because the clipboard gets the
 whole card. A panel that cannot reject its own members is a panel that inflates.
 
+## Twenty-fourth pass — the omnibus production review
+
+Everything the previous twenty-three passes looked at was the app's own logic.
+This one asked a different question: does this thing work as a live deployment
+that people depend on. It found six defects, four of them in code written the
+same day, and it found them by running against a real Postgres 16 instead of the
+JSON fallback every CI job had used until the twenty-second.
+
+**A deployment could not say whether it worked.** With no health endpoint, a
+typo in `DATABASE_URL` produced a server that booted, served the landing page,
+and answered 503 on everything that mattered — discovered by a hiker at a
+trailhead. `GET /api/health` answers it in one unauthenticated request, and the
+same report prints in the first lines of the log, failures first. Verified
+against four broken deployments; each names itself (`ECONNREFUSED`, `ENOTFOUND`,
+`3D000 database "x" does not exist`) with the password nowhere in the response.
+
+**The upload of a finished hike was a thousand round trips.** Saving points
+issued a lookup and an insert per point and read the whole track on every batch.
+Measured: a 500-point batch took 886 ms co-located, which is twenty seconds and
+a gateway timeout against a database one internet hop away. One statement now,
+with the activity's open state still inside the INSERT: **53 ms**, flat past
+twelve thousand points.
+
+**Every wait on the database was unbounded.** `pg` defaults
+`connectionTimeoutMillis` to zero and nothing set a statement timeout, so a
+hung database meant a request that never answered. Measured against a listener
+that accepts the socket and never speaks: 503 in 3.0 s, 500 in 8.0 s, where
+before both hung. The pool also had no `error` listener, and an unhandled
+`error` event on an EventEmitter exits the process — a dropped idle socket would
+have taken down the navigate shell, which is the part that works with no
+database at all.
+
+**Guardian links were promised short-lived and kept forever.** Correctly hidden
+after expiry, never deleted. They are purged a week after they finish.
+
+**And the connection could be stripped.** No HSTS: the first request to a bare
+hostname can be plain http, and a trailhead's open wifi is exactly where a
+network answers it.
+
+### The four found by turning the same pass on the same day's work
+
+**Every GPS timestamp was wrong by the server's UTC offset.** The batched writer
+passed a JS `Date` into raw SQL; `pg` serializes it in the process's local zone
+with an offset, and `::timestamp` throws the offset away. At
+`TZ=America/Los_Angeles` a fix recorded at 12:00Z was stored and read back as
+04:00Z — the number a search team reads off a last known position. Invisible on
+a UTC runner, which is every runner this repo has, so the database CI job now
+runs at `TZ=America/Los_Angeles`.
+
+**The terrain sample budget could be exceeded on a long thin corridor.** An
+out-and-back ridge walk is that shape: 70 km by 200 m produced 1,234 samples
+against a budget of 1,200 — a fourth request to a free public service, for a
+grid that would then have failed its own validator.
+
+**A six-minute walk was described as "about an hour"**, and the hillshade was
+recomputed inside the canvas draw on every GPS fix.
+
+### What was added, and what it is honest about
+
+Power reserve, because a dead phone is the failure that ends a hike badly and
+the app's whole contribution had been to warn about it. Never automatic; offered
+below 25% and not while charging; the trade stated before the tap and a banner
+for as long as it is on, because a degraded position must never look like a good
+one.
+
+Relief shading on the offline map, from an elevation grid sampled over the
+corridor at prepare time — about six kilobytes and two extra requests to a
+service the app already used. North-west lighting, holes drawn as holes, a grid
+under 80% coverage refused outright. The honesty had to move in both directions:
+three surfaces had said "no shaded relief", and a relief sketch presented as a
+topo map is the more dangerous lie, so the guide, the readiness list, the store
+listing and a legend on the navigate screen all state the sample spacing and
+that no cliff narrower than it exists as far as the grid is concerned.
+
+A whole-account export, because everything on the server lived in one database
+with no way to take a copy — on a personal deployment that is one replaced
+container away from every plan and every finished hike.
+
+Every one of these is checked where it lives: `adversarial/database-probe.mjs`
+now covers 34 assertions that only a real database can decide — replayed
+batches, duplicates inside one batch, a finalized track, six concurrent
+overlapping uploads, timestamps either side of a DST boundary, retention, and
+export scoping.
+
+1,380 tests. API 19/19, database 34/34, CSP pass, e2e 8/8,
+offline-adversarial 25/25, routing 17/17, both builds, `npm audit` clean.
+
 ## Twenty-third pass — the panel's fast-follows, and the backlog it flagged
 
 Every item the twenty-second pass ranked below a ship-blocker, worked through in

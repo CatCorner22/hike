@@ -94,6 +94,10 @@ jobs:
       - name: Build
         run: npm run build
       - name: Start the server against the database
+        # Not UTC: see the timezone note on the database probe below. The server
+        # is the process whose local clock the defect depended on.
+        env:
+          TZ: America/Los_Angeles
         run: |
           npx next start --port 3111 &
           for i in $(seq 1 30); do
@@ -106,6 +110,19 @@ jobs:
         env:
           BASE: http://127.0.0.1:3111
         run: node adversarial/api-probe.mjs
+      - name: The parts only a database can check
+        # TZ is deliberately not UTC. A GPS timestamp written through raw SQL was
+        # stored in the server's LOCAL wall time, so on any host outside UTC every
+        # point of every uploaded track was off by the host's offset — invisible
+        # on a UTC runner, and an eight-hour error in a last-known position.
+        # The GPS-point write path (replay, intra-batch duplicates, a finalized
+        # track, ownership) and guardian-link retention. Every one is arbitrated
+        # by a unique index, an INSERT predicate or a DELETE, so none of them can
+        # be reached without a database.
+        env:
+          BASE: http://127.0.0.1:3111
+          TZ: America/Los_Angeles
+        run: node adversarial/database-probe.mjs
       - name: Points really landed in the table
         # The probe asserts the API's answers; this asserts the database agrees,
         # which is the half that was silently false before.

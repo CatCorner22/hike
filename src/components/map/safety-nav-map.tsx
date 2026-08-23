@@ -8,6 +8,7 @@ import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
 import { gridSquareBounds, gridSquareCorners } from "@/lib/safety/mgrs-grid";
 import type { CorridorFeatureSet } from "@/lib/offline/corridor-features";
 import type { PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
+import { hillshade, type TerrainGrid } from "@/lib/offline/terrain-grid";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -22,6 +23,11 @@ interface SafetyNavMapProps {
   ghost?: LatLng | null;
   search?: GeoJSON.LineString | null;
   showGrid?: boolean;
+  /**
+   * Coarse elevation samples from the route pack. Drawn as relief shading under
+   * everything else, or not at all — never as an assumption of flat ground.
+   */
+  terrain?: TerrainGrid | null;
   nightMode?: "off" | "red" | "nvg";
   gpsDenied?: boolean;
   uncertaintyM?: number;
@@ -73,9 +79,17 @@ export function SafetyNavMap({
   topInsetPx = 0,
   corridorFeatures = null,
   bailoutRoutes = null,
+  terrain = null,
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
+  /**
+   * The shading depends only on the grid, and the grid is fixed for a whole
+   * hike. Recomputing it inside the draw would repeat about a thousand
+   * trigonometric cells on every GPS fix, on the screen a hiker is trying to
+   * keep alive.
+   */
+  const terrainShade = useMemo(() => (terrain ? hillshade(terrain) : null), [terrain]);
   const endpoints = useMemo(() => {
     const first = lines.find((line) => line.length >= 2)?.[0];
     const lastLine = [...lines].reverse().find((line) => line.length >= 2);
@@ -137,6 +151,54 @@ export function SafetyNavMap({
         ctx.translate(userPx.x, userPx.y);
         ctx.rotate(-rotation);
         ctx.translate(-userPx.x, -userPx.y);
+      }
+
+      /*
+        Relief shading, under everything.
+
+        One filled quad per grid cell rather than an image: the cells are
+        hundreds of metres across and the canvas may be rotated, so four
+        projected corners are both cheaper and more honest than scaling a bitmap
+        — the shading lands exactly where the ground it describes is. Cells with
+        no elevation are skipped, so missing data stays visibly missing instead
+        of reading as flat.
+      */
+      if (terrain && terrainShade) {
+        const shade = terrainShade;
+        const [tMinLng, tMinLat, tMaxLng, tMaxLat] = terrain.bbox;
+        const lngStep = (tMaxLng - tMinLng) / (terrain.cols - 1);
+        const latStep = (tMaxLat - tMinLat) / (terrain.rows - 1);
+        // Night modes are red- and green-only by design; shading follows them so
+        // it cannot destroy dark adaptation.
+        const tint =
+          nightMode === "red" ? [120, 20, 20] : nightMode === "nvg" ? [20, 110, 45] : [130, 148, 175];
+        ctx.save();
+        for (let row = 0; row < terrain.rows - 1; row += 1) {
+          for (let col = 0; col < terrain.cols - 1; col += 1) {
+            const value = shade[row * terrain.cols + col];
+            if (value == null) continue;
+            const north = tMaxLat - row * latStep;
+            const south = north - latStep;
+            const west = tMinLng + col * lngStep;
+            const east = west + lngStep;
+            const a = toPx(west, north);
+            const b = toPx(east, north);
+            const c = toPx(east, south);
+            const d = toPx(west, south);
+            // 0.18..0.62 keeps the route, the track and the waypoints legible on
+            // top; relief is context, never the subject.
+            const level = 0.18 + value * 0.44;
+            ctx.fillStyle = `rgba(${Math.round(tint[0] * level)}, ${Math.round(tint[1] * level)}, ${Math.round(tint[2] * level)}, 0.85)`;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.lineTo(c.x, c.y);
+            ctx.lineTo(d.x, d.y);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        ctx.restore();
       }
 
       ctx.strokeStyle =
@@ -501,7 +563,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
+  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, terrain, terrainShade, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

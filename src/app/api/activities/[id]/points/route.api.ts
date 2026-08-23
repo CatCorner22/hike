@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, eq, gt, isNull, or } from "drizzle-orm";
+import { and, count as sqlCount, eq, gt, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import { getDb, hasDatabase } from "@/lib/db";
-import { openActivityPointSelection, withActivityMutation } from "@/lib/db/activity-mutation";
+import { insertActivityPointBatch, withActivityMutation } from "@/lib/db/activity-mutation";
 import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, latLngPointSchema, parseJsonBody } from "@/lib/api/validation";
@@ -36,6 +36,43 @@ async function ownsActivity(id: string, ownerId: string): Promise<boolean> {
   return Boolean(await getActivity(id, ownerId));
 }
 
+/**
+ * The stored rows that could collide with this batch, and only those.
+ *
+ * Two unique indexes arbitrate a point's identity -- the device's own key, and
+ * the (time, lat, lng) tuple older clients fall back to -- so both are looked up,
+ * scoped to the keys actually present in this request.
+ */
+async function findExistingPoints(
+  db: ReturnType<typeof getDb>,
+  activityId: string,
+  points: ReadonlyArray<PointInput>,
+) {
+  const clientIds = [...new Set(points.map((point) => point.clientPointId).filter(Boolean))] as string[];
+  const times = [...new Set(points.map((point) => new Date(point.recordedAt).getTime()))].map(
+    (ms) => new Date(ms),
+  );
+  const matchers = [];
+  if (clientIds.length > 0) matchers.push(inArray(activityPoints.clientPointId, clientIds));
+  if (times.length > 0) matchers.push(inArray(activityPoints.recordedAt, times));
+  if (matchers.length === 0) return [];
+  return db.query.activityPoints.findMany({
+    where: and(
+      eq(activityPoints.activityId, activityId),
+      matchers.length === 1 ? matchers[0] : or(...matchers),
+    ),
+    columns: {
+      id: true,
+      activityId: true,
+      clientPointId: true,
+      lat: true,
+      lng: true,
+      elevation: true,
+      recordedAt: true,
+    },
+  });
+}
+
 function sameFallbackPoint(
   candidate: {
     lat: number;
@@ -51,7 +88,7 @@ function sameFallbackPoint(
     && new Date(candidate.recordedAt).getTime() === new Date(point.recordedAt).getTime();
 }
 
-function pointTupleKey(point: PointInput): string {
+function pointTupleKey(point: { recordedAt: Date | string; lat: number; lng: number }): string {
   return `${new Date(point.recordedAt).getTime()}\u0000${point.lat}\u0000${point.lng}`;
 }
 
@@ -103,115 +140,78 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
         });
         if (!activity) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
+        // Only the rows this batch could collide with, not the whole track. The
+        // previous version read every point of the activity on every batch --
+        // twenty thousand rows down the wire to decide whether five hundred are
+        // new.
+        const stored = await findExistingPoints(db, id, points);
+        const isStored = (point: PointInput) =>
+          stored.some((candidate) => sameFallbackPoint(candidate, point));
+
         // Capacity is a batch invariant. Checking it inside the insert loop allowed a
         // request at cap - 1 to persist its first point and then return 413 for the
         // whole batch. The offline client correctly treats 413 as permanent, so that
         // mixed result lost the rejected suffix. Count only genuinely novel points and
         // reject before the first mutation.
-        const existingBefore = await db.query.activityPoints.findMany({
-          where: eq(activityPoints.activityId, id),
-          columns: {
-            id: true,
-            clientPointId: true,
-            lat: true,
-            lng: true,
-            recordedAt: true,
-          },
-        });
-        const novelPointCount = countNovelPoints(
-          points,
-          (point) => existingBefore.some((candidate) => sameFallbackPoint(candidate, point)),
-        );
+        const novelPointCount = countNovelPoints(points, isStored);
         if (activity.endedAt && novelPointCount > 0) {
           return NextResponse.json(
             { error: "Activity is finalized; no further GPS points can be added" },
             { status: 409 },
           );
         }
-        if (
-          novelPointCount > 0
-          && existingBefore.length + novelPointCount > MAX_ACTIVITY_POINTS
-        ) {
-          return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+        if (novelPointCount > 0) {
+          const [{ count: existingCount }] = await db
+            .select({ count: sqlCount() })
+            .from(activityPoints)
+            .where(eq(activityPoints.activityId, id));
+          if (Number(existingCount) + novelPointCount > MAX_ACTIVITY_POINTS) {
+            return NextResponse.json({ error: "Activity point cap reached" }, { status: 413 });
+          }
         }
 
-        const saved = [];
-        for (const point of points) {
-          const existing = await db.query.activityPoints.findFirst({
-            where: point.clientPointId
-              ? and(
-                  eq(activityPoints.activityId, id),
-                  or(
-                    eq(activityPoints.clientPointId, point.clientPointId),
-                    and(
-                      eq(activityPoints.recordedAt, new Date(point.recordedAt)),
-                      eq(activityPoints.lat, point.lat),
-                      eq(activityPoints.lng, point.lng),
-                    ),
-                  ),
-                )
-              : and(
-                  eq(activityPoints.activityId, id),
-                  eq(activityPoints.recordedAt, new Date(point.recordedAt)),
-                  eq(activityPoints.lat, point.lat),
-                  eq(activityPoints.lng, point.lng),
-                ),
-          });
-          if (existing) {
-            saved.push(existing);
-            continue;
-          }
-          // The activity's open state is part of the INSERT predicate. A separate
-          // read followed by INSERT would let another server finalize between them and
-          // still return 200 for a fix that belongs to no completed track.
-          const insertFromOpenActivity = db
-            .select(openActivityPointSelection(point))
-            .from(activities)
-            .where(and(
-              eq(activities.id, id),
-              eq(activities.ownerId, owner.ownerId),
-              isNull(activities.endedAt),
-            ));
-          const inserted = await db.insert(activityPoints)
-            .select(insertFromOpenActivity)
-            .onConflictDoNothing()
-            .returning();
-          if (inserted[0]) {
-            saved.push(inserted[0]);
-            continue;
-          }
+        const inserted = novelPointCount > 0
+          ? await insertActivityPointBatch(db, id, owner.ownerId, points)
+          : [];
 
+        const byKey = new Map<string, (typeof stored)[number] | (typeof inserted)[number]>();
+        for (const row of [...stored, ...inserted]) {
+          byKey.set(pointTupleKey(row), row);
+          if (row.clientPointId) byKey.set(`client\u0000${row.clientPointId}`, row);
+        }
+
+        let unresolved = points.filter(
+          (point) =>
+            !byKey.has(pointTupleKey(point))
+            && !(point.clientPointId && byKey.has(`client\u0000${point.clientPointId}`)),
+        );
+        if (unresolved.length > 0) {
           // The unique indexes arbitrate retries across server instances. Re-read the
-          // winner rather than turning a harmless replay into an error.
-          const winner = await db.query.activityPoints.findFirst({
-            where: point.clientPointId
-              ? and(
-                  eq(activityPoints.activityId, id),
-                  or(
-                    eq(activityPoints.clientPointId, point.clientPointId),
-                    and(
-                      eq(activityPoints.recordedAt, new Date(point.recordedAt)),
-                      eq(activityPoints.lat, point.lat),
-                      eq(activityPoints.lng, point.lng),
-                    ),
-                  ),
-                )
-              : and(
-                  eq(activityPoints.activityId, id),
-                  eq(activityPoints.recordedAt, new Date(point.recordedAt)),
-                  eq(activityPoints.lat, point.lat),
-                  eq(activityPoints.lng, point.lng),
-                ),
-          });
-          if (winner) {
-            saved.push(winner);
-            continue;
+          // winners rather than turning a harmless replay into an error.
+          for (const row of await findExistingPoints(db, id, unresolved)) {
+            byKey.set(pointTupleKey(row), row);
+            if (row.clientPointId) byKey.set(`client\u0000${row.clientPointId}`, row);
           }
+          unresolved = unresolved.filter(
+            (point) =>
+              !byKey.has(pointTupleKey(point))
+              && !(point.clientPointId && byKey.has(`client\u0000${point.clientPointId}`)),
+          );
+        }
+        if (unresolved.length > 0) {
+          // Nothing wrote and nothing was already there: the activity closed
+          // under us, which is exactly what the INSERT predicate is for.
           return NextResponse.json(
             { error: "Activity is finalized; no further GPS points can be added" },
             { status: 409 },
           );
         }
+
+        const saved = points.map(
+          (point) =>
+            byKey.get(pointTupleKey(point))
+            ?? byKey.get(`client\u0000${point.clientPointId}`)!,
+        );
         return NextResponse.json("points" in body ? { points: saved } : saved[0]);
       }
 

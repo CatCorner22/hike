@@ -100,23 +100,33 @@ describe("the store metadata describes the app that exists", () => {
 });
 
 /**
- * The roadmap conceded that no terrain tiles are downloaded; the app did not,
- * except in the failure branch of one readiness row. "Nearby context saved"
- * reads as "the map is on the phone", and the thing that is not on the phone is
- * the shape of the ground.
+ * The map now shades relief from a coarse elevation grid, which changes what
+ * honesty requires: not "there is no terrain" any more, but exactly what the
+ * shading is and what it cannot see. A relief sketch presented as a topo map is
+ * the more dangerous of the two lies, because the ground it cannot resolve is
+ * precisely the ground that hurts people.
  */
-describe("the app concedes its two biggest limits where a user will read them", () => {
-  it("says there is no terrain in the guide, the readiness list, and the listing", () => {
+describe("every surface says what the relief shading is and is not", () => {
+  it("names the sample spacing and refuses the word topo, everywhere a user reads", () => {
     for (const [name, path] of [
       ["guide", "src/app/guide/page.tsx"],
       ["readiness", "src/components/offline/offline-readiness.tsx"],
       ["listing", "docs/app-store.md"],
     ] as const) {
       const source = readFileSync(resolve(process.cwd(), path), "utf8");
-      expect(source, `${name} does not mention the missing terrain`).toMatch(
-        /contours|shaded relief/i,
+      expect(source, `${name} does not qualify the relief`).toMatch(/not a topo map|elevation samples/i);
+      expect(source, `${name} does not say what it cannot resolve`).toMatch(
+        /no contour|cliff narrower|no contours/i,
       );
     }
+  });
+
+  it("keeps the caveat attached to the shading on the navigate screen itself", () => {
+    const legend = readFileSync(resolve(process.cwd(), "src/lib/offline/terrain-grid.ts"), "utf8");
+    expect(legend).toMatch(/not a topo map/);
+    const page = readFileSync(resolve(process.cwd(), "src/app/navigate/page.tsx"), "utf8");
+    // Shading without its legend would be the app claiming to be a topo.
+    expect(page).toMatch(/terrainLegend\(pack\.terrain\)/);
   });
 
   it("says it follows one phone, not a party, in the guide and the listing", () => {

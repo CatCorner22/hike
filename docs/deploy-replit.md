@@ -47,7 +47,8 @@ moment the deployment does.
    | Secret | Value | Why |
    |---|---|---|
    | `SESSION_SECRET` | 32+ random bytes — run `openssl rand -base64 32` in the shell | **Required.** The server fails closed without it. Rotating it logs every device out: each mints a fresh identity and old rows become unreachable. |
-   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | All optional. Every one degrades gracefully when absent — which also means a dead key is invisible, so re-check trail search after rotating one. |
+   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | All optional. Every one degrades gracefully when absent — which also means a dead key is invisible, so re-check trail search after rotating one. `/api/health` lists which of them are unset and what each one costs. |
+   | `ELEVATION_API_URL` | a self-hosted open-elevation instance | Optional. The offline map shades its relief from an elevation grid sampled when a route is prepared, and the default is the free public open-elevation instance — which goes down, rate-limits, and is unreachable from some networks. Point this at your own copy if you have one. Must be https. |
 
    **Do not set `ALLOW_LOCAL_STORE_IN_PRODUCTION`.** It exists as a
    single-node development escape hatch and it will appear to work: the app
@@ -66,7 +67,28 @@ moment the deployment does.
    Autoscale, the build command and the run command. Note the URL it gives you —
    something like `https://klandagi.replit.app`.
 
-6. **Prove it actually works for the phone**, which is the part that matters:
+6. **Ask the deployment about itself.** Open
+   `https://<your-deployment>.replit.app/api/health` in a browser.
+
+   ```json
+   { "status": "ok", "canStoreUserData": true, "checks": [ … ] }
+   ```
+
+   `200` means a hiker can save a plan and upload a track. `503` means they
+   cannot, and the body names the exact check that failed and what to set —
+   `"No DATABASE_URL and no explicit local-store opt-in…"`, or
+   `"ECONNREFUSED — connect ECONNREFUSED …"`. Nothing in it is a secret: the
+   database is named by hostname only, and the session secret is reported as
+   present or absent, never printed.
+
+   The same report is the first thing in the deployment's own log, failures
+   first. If the app started at all, that log tells you what it can and cannot
+   do before anybody tries.
+
+   A `warn` is not a failure. `TRUST_PROXY_HEADERS` unset and missing optional
+   API keys both warn, and both are fine for a personal deployment.
+
+7. **Prove it actually works for the phone**, which is the part that matters:
 
    GitHub → Actions → **Deploy smoke** → Run workflow → paste the deployment
    URL. It mints its own session, so it needs no secrets. If it is red, the
@@ -83,7 +105,7 @@ moment the deployment does.
    (On Vercel this fires automatically on every deploy. Replit does not report
    deployments to GitHub, so here it is the manual trigger.)
 
-7. **Point the iOS build at it.** GitHub → repo Settings → Secrets and variables
+8. **Point the iOS build at it.** GitHub → repo Settings → Secrets and variables
    → Actions → Variables → New repository **variable**:
 
    ```
@@ -95,7 +117,7 @@ moment the deployment does.
    would generate a `capacitor://localhost` link nobody else can open — the app
    now refuses to create one at all rather than hand you a dead link.
 
-8. **Paste the privacy policy URL** into App Store Connect:
+9. **Paste the privacy policy URL** into App Store Connect:
    `https://<your-deployment>.replit.app/privacy`. The honest-limits page at
    `/terms` is worth using as the support URL.
 
@@ -111,12 +133,23 @@ this app, not inferred:
 | session mint passes, then `bearer-authed plans returned 503` | `DATABASE_URL` is not set or the schema was never pushed. Identity works; there is nowhere to put data. |
 | `CORS preflight did not echo capacitor://localhost` | The proxy is not running — usually the build did not produce it. The iOS shell cannot talk to this API at all in that state, however valid its token. |
 | `unauthed research returned 200` | The paid OpenAI/Tavily route is open to anonymous callers. Stop and fix before leaving it up. |
+| `health check returned 503` | The deployment cannot store user data. The failing check is printed above the failure with the setting it wants — this one names the problem outright rather than making you infer it from a later assertion. |
 
 Both 503s answer `{"error":"Server is not configured for user data"}` rather
 than pretending to work, which is the behaviour you want: a deployment that
 looks healthy and quietly loses hikes is worse than one that refuses.
 
 ## Things worth knowing before you rely on it
+
+- **Nothing waits forever.** Every path a person stands still for is bounded: a
+  database connection gives up at eight seconds, a query at fifteen, the health
+  check's own ping at three. A hung database answers `500` with a request id
+  rather than a spinner that never resolves, which matters because the platform
+  gateway's own timeout produces a blank page with nothing to act on. Verified
+  against a listener that accepts the socket and never speaks.
+- **The health endpoint is public and cheap.** Its database ping is cached for
+  five seconds and it is rate-limited to thirty requests a minute, so probing it
+  hard cannot take connections away from requests that carry a hiker's data.
 
 - **Autoscale sleeps.** After idle, the first request pays a cold start of a few
   seconds. That is fine for this app — the moment that matters is downloading a

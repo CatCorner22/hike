@@ -94,10 +94,12 @@ export default function GuidePage() {
           </p>
           <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
             <strong>What the offline map is, and is not.</strong> Klandagi draws your route,
-            your track, and nearby trails, roads, water and landmarks. It does not download
-            terrain tiles — no contours, no shaded relief, no satellite imagery — so it
-            cannot show you the slope of the ground between you and where you are going.
-            Carry a paper topo map for that. This app is not one.
+            your track, nearby trails, roads, water and landmarks, and shades the relief from
+            elevation samples taken when you prepared the route — usually a hundred to a few
+            hundred metres apart. That is enough to see where the ridges and the drainages
+            are. It is not a topo map: there are no contour lines, no imagery, and a cliff
+            narrower than the sample spacing does not exist as far as the shading is
+            concerned. Carry a paper topo. This app is not one.
           </p>
           <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
             <strong>Klandagi follows one phone, not a party.</strong> The party size you

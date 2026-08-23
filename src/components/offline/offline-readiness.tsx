@@ -16,6 +16,7 @@ import { describeCorridorFeatures, type CorridorFeatureSet } from "@/lib/offline
 import { describeHazardBrief, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
 import { describeOfficialAlertSnapshot, type RouteOfficialAlertSnapshot } from "@/lib/offline/official-alerts";
 import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
+import type { TerrainGrid } from "@/lib/offline/terrain-grid";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InstallOfflineHint } from "@/components/offline/install-offline-hint";
@@ -29,6 +30,7 @@ interface ReadinessState {
   quota?: number;
   corridor?: TerrainCorridorSpec | null;
   corridorFeatures?: CorridorFeatureSet | null;
+  terrain?: TerrainGrid | null;
   hazardBrief?: RouteHazardBrief | null;
   officialAlerts?: RouteOfficialAlertSnapshot | null;
 }
@@ -48,6 +50,7 @@ const EMPTY_READINESS: ReadinessState = {
   persistent: false,
   corridor: null,
   corridorFeatures: null,
+  terrain: null,
   hazardBrief: null,
   officialAlerts: null,
 };
@@ -155,6 +158,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
           quota: estimateResult.status === "fulfilled" ? estimateResult.value?.quota : undefined,
           corridor: pack.pack?.corridor ?? null,
           corridorFeatures: pack.pack?.corridorFeatures ?? null,
+          terrain: pack.pack?.terrain ?? null,
           hazardBrief: pack.pack?.hazardBrief ?? null,
           officialAlerts: pack.pack?.officialAlerts ?? null,
         });
@@ -249,11 +253,15 @@ export function OfflineReadiness({ packId }: { packId: string }) {
                   // "Nearby context saved" reads as "the map is on the phone",
                   // and the thing that is not on the phone -- the shape of the
                   // ground -- is the thing a hiker would most want on it.
-                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date, and no terrain tiles are downloaded: there are no contours, shaded relief, or imagery on this map."
+                  ? `Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date. ${
+                      state.terrain
+                        ? `Relief is shaded from ${state.terrain.spacingMeters} m elevation samples — enough to see ridges and drainages, not a topo map, and no contours or imagery are downloaded.`
+                        : "No terrain was saved, so the map draws this route on blank ground: no relief, no contours, no imagery."
+                    }`
                   : "The nearby coverage target is recorded, but nearby details were not saved. Update while online if you want that context."
                 : packReady
                   ? "This saved route has no nearby coverage record. Update it while online."
-                  : "Save the route to record its nearby coverage target. Shaded terrain and contour tiles are not downloaded yet."
+                  : "Save the route to record its nearby coverage target and sample the terrain. Contour and imagery tiles are not downloaded."
             }
           />
           <CheckRow
