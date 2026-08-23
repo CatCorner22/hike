@@ -1,7 +1,13 @@
-# Deploying Hike (Vercel + Neon)
+# Deploying Klandagi (Vercel + Neon)
 
 The app has one server deployment (web PWA + API) and, later, an iOS shell that
 talks to the same API over HTTPS with a bearer token.
+
+> **Launching on Replit instead?** See `docs/deploy-replit.md`. It needs one
+> signup rather than two (Replit provides the database), and the app itself is
+> not host-specific — moving between the two is a matter of changing one URL.
+> The one thing that genuinely differs: Replit does not report deployments to
+> GitHub, so the smoke workflow has to be triggered manually with the URL.
 
 ## One-time setup (yours — ~15 minutes of dashboards)
 

@@ -1,0 +1,36 @@
+# How Replit builds, runs and deploys this app.
+#
+# `next start` already binds 0.0.0.0 and reads PORT from the environment (see
+# `npx next start --help`), so no custom server or port flag is needed — Replit
+# sets PORT and the app picks it up.
+#
+# The deployment target is `autoscale`: this is a personal-scale safety app whose
+# critical moment is a hiker downloading a route pack at the trailhead, and a
+# cold start of a few seconds there is acceptable because everything after it
+# works offline. Switch to `reserved-vm` if you want no cold starts, or if you
+# ever put this in front of more than a handful of people — see the note about
+# the rate limiter in docs/deploy-replit.md.
+
+modules = ["nodejs-20", "postgresql-16"]
+run = ["npm", "run", "dev"]
+entrypoint = "src/app/page.tsx"
+
+hidden = [".next", ".next-cap", "out", "node_modules", ".cap-build-aside"]
+
+[nix]
+channel = "stable-24_05"
+
+[deployment]
+deploymentTarget = "autoscale"
+build = ["npm", "run", "build"]
+run = ["npm", "run", "start"]
+
+[[ports]]
+localPort = 3000
+externalPort = 80
+
+[env]
+# Belt and braces: `next build` on a small container can run out of heap on a
+# project this size, and the failure reads as an unexplained kill rather than an
+# out-of-memory error.
+NODE_OPTIONS = "--max-old-space-size=4096"
