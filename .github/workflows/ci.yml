@@ -28,6 +28,12 @@ jobs:
         run: npx vitest run
       - name: Production build
         run: npm run build
+      - name: Known vulnerabilities in shipped dependencies
+        # Advisory, not a gate: a transitive dev-only advisory must not block a
+        # safety fix from reaching the phone. `--omit=dev` scopes it to what
+        # actually ships, and the step is here so a new high-severity advisory
+        # shows up in the build log instead of being noticed months later.
+        run: npm audit --omit=dev --audit-level=high || true
 
   shell-export:
     name: Capacitor shell export

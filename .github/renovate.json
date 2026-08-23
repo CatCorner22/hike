@@ -1,0 +1,34 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "timezone": "America/Los_Angeles",
+  "schedule": ["before 6am on monday"],
+  "prConcurrentLimit": 3,
+  "labels": ["dependencies"],
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on the first day of the month"] },
+  "packageRules": [
+    {
+      "description": "Patch and minor updates arrive as one PR a week. CI is the gate; a green suite here means the whole offline and safety surface still passes.",
+      "matchUpdateTypes": ["minor", "patch"],
+      "groupName": "weekly non-major updates"
+    },
+    {
+      "description": "Capacitor and Next majors change how the shell boots and how the export is laid out. Each one needs the on-device checklist in docs/ios-runbook.md re-run before it merges, so they never group and never automerge.",
+      "matchPackagePatterns": ["^@capacitor/", "^@capacitor-community/", "^next$", "^@serwist/"],
+      "matchUpdateTypes": ["major"],
+      "schedule": ["before 6am on the first day of january,april,july,october"],
+      "groupName": null,
+      "addLabels": ["needs-device-checklist"]
+    },
+    {
+      "description": "The background-geolocation plugin is pinned exactly on purpose: it is the only reason track recording survives a locked screen, and it has no upstream test suite we can lean on.",
+      "matchPackageNames": ["@capacitor-community/background-geolocation"],
+      "rangeStrategy": "pin",
+      "addLabels": ["needs-device-checklist"]
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "labels": ["security"],
+    "schedule": ["at any time"]
+  }
+}
