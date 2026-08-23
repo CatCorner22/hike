@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
 import { startGeoWatch } from "@/lib/platform/geolocation";
+import { geoWatchTuning, type PowerMode } from "@/lib/safety/power-reserve";
 import { getPlatformAdapters } from "@/lib/platform/adapters";
 import {
   isClockSuspectFix,
@@ -35,7 +36,12 @@ const SAVE_FIX_EVERY_MS = 10_000;
 /** Location permission can be granted mid-hike, so a denial must not be permanent. */
 const DENIED_RETRY_MS = 30_000;
 
-export function useGps() {
+/**
+ * `mode` is the hiker's own power choice. Passing it here rather than reading a
+ * global keeps the watch a pure function of what they asked for, and makes the
+ * re-subscribe on change fall out of the effect's dependency list.
+ */
+export function useGps(mode: PowerMode = "full") {
   const [state, setState] = useState<GpsState>({
     fix: null,
     status: "acquiring",
@@ -186,9 +192,7 @@ export function useGps() {
       // A hiker pocketing their phone is the normal case, not an edge case.
       stopWatchRef.current = startGeoWatch(applyFix, onError, {
         background: true,
-        enableHighAccuracy: true,
-        maximumAge: 3000,
-        timeout: 20000,
+        ...geoWatchTuning(mode),
       });
     };
 
@@ -255,7 +259,10 @@ export function useGps() {
       window.clearInterval(staleTimer);
       window.clearInterval(watchdog);
     };
-  }, []);
+    // Changing power mode re-subscribes the watch, which is the only way the
+    // platform learns the new accuracy request. Everything the effect owns is
+    // torn down and rebuilt, so a mode change cannot leave two watchers running.
+  }, [mode]);
 
   return state;
 }

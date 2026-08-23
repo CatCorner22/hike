@@ -156,6 +156,7 @@ const OPTIONAL_KEYS: Array<{ key: string; loses: string }> = [
   { key: "OPENAI_API_KEY", loses: "the trail research brief" },
   { key: "TAVILY_API_KEY", loses: "web evidence behind the research brief" },
   { key: "NEXT_PUBLIC_MAPTILER_KEY", loses: "the online basemap" },
+  { key: "ELEVATION_API_URL", loses: "a self-hosted elevation service (the public open-elevation instance is used instead)" },
 ];
 
 function optionalKeysCheck(env: Environment): ConfigCheck {

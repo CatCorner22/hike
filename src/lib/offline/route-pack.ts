@@ -1,6 +1,7 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
 import type { PackWeather } from "@/lib/offline/pack-weather";
+import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
 import {
   validCorridorFeatures,
   type CorridorFeatureSet,
@@ -81,6 +82,12 @@ export interface RoutePack {
    * visiting the plan page must not invent connectors or drop a navigable pack.
    */
   bailoutRoutes?: PreparedBailoutRoute[];
+  /**
+   * Coarse elevation samples over the corridor, for relief shading on the
+   * offline map. Optional: a pack without it is navigable, it just draws the
+   * route on blank ground the way every pack did before this existed.
+   */
+  terrain?: TerrainGrid;
 }
 
 interface RoutePackAlias {
@@ -113,6 +120,7 @@ export type RoutePackExtraField =
   | "hazardBrief"
   | "officialAlerts"
   | "bailoutRoutes"
+  | "terrain"
   | "bbox";
 export interface RoutePackLookup {
   pack: RoutePack | null;
@@ -275,6 +283,9 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.bailoutRoutes !== undefined && !validBailoutRoutes(pack.bailoutRoutes, pack.id, pack.geometry)) {
     return "Saved route bailout tracks are invalid.";
   }
+  if (pack.terrain !== undefined && !validPackTerrain(pack.terrain, pack.bbox)) {
+    return "Saved route terrain grid is invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -285,6 +296,32 @@ function validationError(pack: RoutePack | null | undefined): string | null {
     return "Saved route pack cannot be read.";
   }
   return null;
+}
+
+/**
+ * A terrain grid belongs to the route it was stored with.
+ *
+ * Structural validity is `isUsableTerrainGrid`'s job; this adds the one thing
+ * that module cannot know — that the grid actually covers this pack's own
+ * corridor. A grid from a different route would shade the wrong hillside under
+ * the right line, which is worse than shading nothing.
+ */
+function validPackTerrain(
+  terrain: unknown,
+  packBbox: [number, number, number, number] | undefined,
+): terrain is TerrainGrid {
+  if (!isUsableTerrainGrid(terrain)) return false;
+  if (!packBbox || !validStoredRouteBbox(packBbox)) return false;
+  const [minLng, minLat, maxLng, maxLat] = packBbox;
+  const [gMinLng, gMinLat, gMaxLng, gMaxLat] = terrain.bbox;
+  // A little slack for the rounding either side did on the way in and out.
+  const slack = 0.01;
+  return (
+    gMinLng <= minLng + slack
+    && gMinLat <= minLat + slack
+    && gMaxLng >= maxLng - slack
+    && gMaxLat >= maxLat - slack
+  );
 }
 
 /** Exported for direct persistence-boundary tests. */
@@ -342,6 +379,11 @@ export function sanitizeRoutePackForUse(pack: RoutePack): {
   if (next.officialAlerts !== undefined && !validOfficialAlertSnapshot(next.officialAlerts, next.id)) {
     delete next.officialAlerts;
     stripped.push("officialAlerts");
+  }
+
+  if (next.terrain !== undefined && !validPackTerrain(next.terrain, next.bbox)) {
+    delete next.terrain;
+    stripped.push("terrain");
   }
 
   if (next.bailoutRoutes !== undefined && !validBailoutRoutes(next.bailoutRoutes, next.id, next.geometry)) {
@@ -427,6 +469,7 @@ export function buildRoutePack(input: {
   hazardBrief?: RouteHazardBrief;
   officialAlerts?: RouteOfficialAlertSnapshot;
   bailoutRoutes?: PreparedBailoutRoute[];
+  terrain?: TerrainGrid;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -455,6 +498,7 @@ export function buildRoutePack(input: {
     hazardBrief: input.hazardBrief,
     officialAlerts: input.officialAlerts,
     bailoutRoutes: input.bailoutRoutes,
+    terrain: input.terrain,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
   const error = validationError(pack);
