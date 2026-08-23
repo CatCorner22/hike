@@ -28,6 +28,26 @@ jobs:
         run: npx vitest run
       - name: Production build
         run: npm run build
+      - name: Replit deployment config still matches package.json
+        # Nothing else reads this file until an import is attempted, so a broken
+        # TOML or a renamed npm script would stay invisible until the moment
+        # someone is trying to get the app live.
+        run: |
+          python3 - <<'EOF'
+          import json, tomllib, sys
+          with open(".replit", "rb") as f:
+              cfg = tomllib.load(f)
+          scripts = json.load(open("package.json"))["scripts"]
+          deployment = cfg["deployment"]
+          for field in ("build", "run"):
+              command = deployment[field]
+              if command[:2] != ["npm", "run"] or command[2] not in scripts:
+                  sys.exit(f".replit deployment.{field} = {command} is not an npm script in package.json")
+          if deployment["deploymentTarget"] not in {"autoscale", "reserved-vm", "static", "gce"}:
+              sys.exit(f"unknown deploymentTarget {deployment['deploymentTarget']!r}")
+          print("`.replit` parses, and its build/run commands exist:", deployment["build"], deployment["run"])
+          EOF
+
       - name: Known vulnerabilities in shipped dependencies
         # Advisory, not a gate: a transitive dev-only advisory must not block a
         # safety fix from reaching the phone. `--omit=dev` scopes it to what
