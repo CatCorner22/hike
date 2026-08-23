@@ -54,7 +54,7 @@ import { requestWakeLock, releaseWakeLock, isWakeLockHeld } from "@/lib/offline/
 import { subscribePlatformAdapters } from "@/lib/platform/adapters";
 import { bailoutRouteCandidates } from "@/lib/offline/bailout-routes";
 import { deriveCorridorBailouts } from "@/lib/offline/corridor-decisions";
-import { hikeReadiness } from "@/lib/safety/readiness";
+import { hikeReadiness, summarizeGaps, type ReadinessGap } from "@/lib/safety/readiness";
 import { nextDecisionPoint } from "@/lib/safety/decision-support";
 import { bailoutDecisionPoints } from "@/lib/safety/bailout";
 import { wayfindingAssessment } from "@/lib/safety/wayfinding";
@@ -92,7 +92,8 @@ import {
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
-import { formatNaismith, gpsAnomalyWarning, naismithMinutes, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import { formatNaismith, gpsAnomalyWarning, slopeFromProfile, slopeWarning } from "@/lib/safety/field-ops";
+import { estimateBasisLabel, observedPace, walkingEstimate } from "@/lib/safety/pace";
 import { commsWindowReminder, buddySeparationWarning } from "@/lib/safety/sar-advanced";
 import { sereAssessment } from "@/lib/safety/sere";
 import { amsAssessment, avalancheTerrainWarning } from "@/lib/safety/wilderness";
@@ -178,7 +179,7 @@ function NavigateScreen({ navId }: { navId: string }) {
   const [navUnlocked, setNavUnlocked] = useState(false);
   // Items the hiker chose to skip on the pre-hike checklist, kept so navigation
   // can keep showing them. Skipping must not silently drop the safety net.
-  const [readinessSkipped, setReadinessSkipped] = useState<string[]>([]);
+  const [readinessSkipped, setReadinessSkipped] = useState<ReadinessGap[]>([]);
   const [wakeHeld, setWakeHeld] = useState(false);
   /**
    * Whether the hiker WANTS the screen held awake, which is a different thing
@@ -618,6 +619,32 @@ function NavigateScreen({ navId }: { navId: string }) {
     return daylightStatus(new Date(nowMs), lat, lng);
   }, [navFix, loadState, nowMs]);
 
+  const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
+  /**
+   * The speed this party is actually walking at. The app has always measured it
+   * -- `estimateGuardianEta` sends it to whoever is waiting at home -- and never
+   * once used it to decide whether the hiker themselves had daylight left.
+   */
+  const pace = useMemo(
+    () =>
+      trusted && nowMs > 0
+        ? observedPace({ nowMs, startedAtMs: hikeStartedAt, traveledMeters: progress?.traveledMeters })
+        : null,
+    [trusted, nowMs, hikeStartedAt, progress],
+  );
+  /**
+   * One walking estimate for the tile, computed once. The label names the
+   * estimator and the value prints its minutes, and this screen re-renders on
+   * every GPS fix — two independent calls would eventually be two different
+   * answers on one tile.
+   */
+  const remainingEstimate = useMemo(
+    () =>
+      trusted && progress && progress.remainingMeters > 0
+        ? walkingEstimate(progress.remainingMeters, progress.remainingElevationMeters, pace)
+        : null,
+    [trusted, progress, pace],
+  );
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
@@ -625,8 +652,9 @@ function NavigateScreen({ navId }: { navId: string }) {
       progress.remainingElevationMeters,
       daylight.minutesUntilSunset,
       daylight.isDark,
+      pace,
     );
-  }, [trusted, progress, daylight]);
+  }, [trusted, progress, daylight, pace]);
 
   const stillMin = useMemo(
     () => (gpsTrusted ? stationaryMinutes(trackPoints) : 0),
@@ -644,7 +672,6 @@ function NavigateScreen({ navId }: { navId: string }) {
     stationaryMin: stillMin,
   });
   const fallWarning = gpsTrusted ? suddenStopWarning(trackPoints) : null;
-  const hikeStartedAt = trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null;
   const hydrateWarning = waterReminder(lastDrinkAt, hikeStartedAt);
   const moon = useMemo(() => { void zulu; return moonPhase(); }, [zulu]);
   const moonWarning = daylight?.isDark ? moon.nightNav : null;
@@ -793,7 +820,7 @@ function NavigateScreen({ navId }: { navId: string }) {
     hudBanners.push({
       key: "readiness",
       tone: "warn",
-      text: `Not set up: ${readinessSkipped.join(", ")}. Nobody is expecting you back at a known time.`,
+      text: `Still not set up: ${summarizeGaps(readinessSkipped)}. Nobody is expecting you back at a known time.`,
     });
   }
   if (trackPersistence.status === "error") {
@@ -1429,16 +1456,23 @@ function NavigateScreen({ navId }: { navId: string }) {
           />
           <Stat
             icon={Mountain}
-            label={backtrackOn ? "Est. time back" : "Est. time"}
+            // The tile says which estimator produced the number. It used to read
+            // "Est. time" over a flat-5-km/h figure while the app knew the party
+            // was walking at half that.
+            label={
+              backtrackOn
+                ? "Est. time back"
+                : remainingEstimate
+                  ? `Est. time (${estimateBasisLabel(remainingEstimate.basis)})`
+                  : "Est. time"
+            }
             value={
               backtrackOn
                 ? retrace && retrace.remainingMeters > 0
-                  ? `${formatNaismith(naismithMinutes(retrace.remainingMeters, 0)).replace("Naismith ", "")}+`
+                  ? `${formatNaismith(walkingEstimate(retrace.remainingMeters, 0, pace).minutes).replace("Naismith ", "")}+`
                   : "—"
-                : trusted && progress && progress.remainingMeters > 0
-                  ? formatNaismith(
-                      naismithMinutes(progress.remainingMeters, progress.remainingElevationMeters),
-                    ).replace("Naismith ", "")
+                : remainingEstimate
+                  ? formatNaismith(remainingEstimate.minutes).replace("Naismith ", "")
                   : trusted && progress && progress.remainingMeters < 50
                     ? "Done"
                     : "—"

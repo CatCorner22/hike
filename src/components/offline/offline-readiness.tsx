@@ -228,6 +228,7 @@ export function OfflineReadiness({ packId }: { packId: string }) {
             }
           />
           <CheckRow
+            checkId="corridor-context"
             icon={<Mountain className="mt-0.5 h-4 w-4" />}
             title={
               packReady && state.corridor
@@ -236,11 +237,19 @@ export function OfflineReadiness({ packId }: { packId: string }) {
                   : "Nearby coverage recorded; context not saved"
                 : "Nearby context missing — prepare again while online"
             }
-            ok={Boolean(packReady && state.corridor)}
+            // The pass mark has to mean what the title says. This row printed a
+            // green check beside "context not saved" -- a screen reader read it
+            // out as "Nearby coverage recorded; context not saved. Pass." -- the
+            // one row in this list where the two disagreed.
+            ok={Boolean(packReady && state.corridor && state.corridorFeatures)}
             detail={
               packReady && state.corridor
                 ? state.corridorFeatures
-                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date."
+                  // Said on the success branch too, not only on the failure one.
+                  // "Nearby context saved" reads as "the map is on the phone",
+                  // and the thing that is not on the phone -- the shape of the
+                  // ground -- is the thing a hiker would most want on it.
+                  ? "Nearby trails, roads, water, shelters, campsites, and landmarks are stored. They may be incomplete or out of date, and no terrain tiles are downloaded: there are no contours, shaded relief, or imagery on this map."
                   : "The nearby coverage target is recorded, but nearby details were not saved. Update while online if you want that context."
                 : packReady
                   ? "This saved route has no nearby coverage record. Update it while online."

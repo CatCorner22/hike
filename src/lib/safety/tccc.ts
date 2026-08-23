@@ -15,6 +15,33 @@ export interface TourniquetStatus {
   severity: Severity;
   message: string;
   conversionWindow: boolean;
+  /**
+   * Why conversion is not on the table, in the order a rescuer should read them.
+   * Empty exactly when `conversionWindow` is true. A bare `false` told the rescuer
+   * nothing; the reason is the part they can act on.
+   */
+  conversionBlockers: string[];
+  /** Zulu wall-clock time of the 2 h decision point, so it can be written down rather than recomputed. */
+  twoHourMark: string;
+  /** Zulu wall-clock time of the 6 h no-conversion boundary. */
+  sixHourMark: string;
+}
+
+/**
+ * What CoTCCC requires to be true before anyone considers converting a
+ * tourniquet to a pressure dressing. Every field is optional and every unknown
+ * counts against conversion: not knowing whether the casualty is in shock is
+ * not the same as knowing they are not.
+ */
+export interface TourniquetContext {
+  /** Definitive care is more than 2 h away. Conversion is only ever considered when evacuation is delayed. */
+  evacuationDelayed?: boolean;
+  /** Signs of shock are present. CoTCCC does not convert a tourniquet on a casualty in shock. */
+  inShock?: boolean;
+  /** The tourniquet is controlling an amputation, which is not converted. */
+  amputation?: boolean;
+  /** The casualty is the only person here, so nobody can watch the wound or re-tighten after a conversion. */
+  alone?: boolean;
 }
 
 export interface HemorrhageAction {
@@ -136,8 +163,82 @@ export function marchPawsSteps(): MarchPawsStep[] {
   ];
 }
 
-/** CoTCCC tourniquet conversion guidance: consider conversion before 2 h only when not in shock and evacuation is delayed; do not convert after 6 h. */
-export function tourniquetStatus(appliedAtMs: number, now = Date.now()): TourniquetStatus | null {
+/** Zulu HHMM, the form a tourniquet mark and a casualty card are written in. */
+export function formatZulu(ms: number): string {
+  if (!Number.isFinite(ms)) return "UNKNOWN";
+  const at = new Date(ms);
+  if (!Number.isFinite(at.getTime())) return "UNKNOWN";
+  return `${String(at.getUTCHours()).padStart(2, "0")}${String(at.getUTCMinutes()).padStart(2, "0")}Z`;
+}
+
+/**
+ * Everything CoTCCC says must be true before a conversion is even considered,
+ * checked in the order a rescuer should hear it: the absolute contraindications
+ * first, then the reason to be doing it at all, then who is here to watch it.
+ *
+ * An unknown is a blocker. The previous version offered conversion to anyone
+ * whose tourniquet was under two hours old, which meant a solo hiker who had
+ * just stopped a femoral bleed was invited to undo it two minutes later.
+ */
+function andList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+function conversionBlockersFor(context: TourniquetContext): string[] {
+  const blockers: string[] = [];
+  const unconfirmed: string[] = [];
+
+  // Asserted contraindications get their own line, because each is a complete
+  // reason on its own. Everything merely unconfirmed collects into one line at
+  // the end: four separate "nobody has confirmed" sentences is a wall of text
+  // in front of somebody kneeling next to a bleeding leg.
+  if (context.amputation === true) {
+    blockers.push("This tourniquet is controlling an amputation. It is not converted — leave it on.");
+  } else if (context.amputation !== false) {
+    unconfirmed.push("that this is not an amputation");
+  }
+
+  if (context.inShock === true) {
+    blockers.push("The casualty is showing signs of shock. Do not convert a tourniquet on a casualty in shock.");
+  } else if (context.inShock !== false) {
+    unconfirmed.push("that the casualty is out of shock");
+  }
+
+  if (context.alone === true) {
+    blockers.push(
+      "You are the only person here. A converted wound has to be watched continuously and re-tightened the moment it bleeds again, and you cannot do that if you lose consciousness.",
+    );
+  } else if (context.alone !== false) {
+    unconfirmed.push("that someone can watch the wound");
+  }
+
+  if (context.evacuationDelayed === false) {
+    blockers.push(
+      "Help is on the way. Conversion is only considered when evacuation is delayed — leave the tourniquet alone and move.",
+    );
+  } else if (context.evacuationDelayed !== true) {
+    unconfirmed.push("that evacuation is delayed");
+  }
+
+  if (unconfirmed.length > 0) {
+    blockers.push(`Not confirmed yet: ${andList(unconfirmed)}.`);
+  }
+  return blockers;
+}
+
+/**
+ * CoTCCC tourniquet guidance: convert before 2 h where bleeding can be controlled
+ * by other means and the conversion criteria are met; never convert after 6 h.
+ *
+ * `context` defaults to empty, which is the safe reading — with nothing confirmed,
+ * conversion stays closed and the message says which fact is missing.
+ */
+export function tourniquetStatus(
+  appliedAtMs: number,
+  now = Date.now(),
+  context: TourniquetContext = {},
+): TourniquetStatus | null {
   if (!Number.isFinite(appliedAtMs) || !Number.isFinite(now) || appliedAtMs < 0 || now < appliedAtMs) {
     return null;
   }
@@ -147,13 +248,32 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
   // exact moment the 2 h decision is being made. Flooring keeps the displayed elapsed
   // time on the same side of the threshold as the branch that produced the message.
   const minutes = Math.floor(rawMinutes * 10) / 10;
+  const marks = {
+    twoHourMark: formatZulu(appliedAtMs + 2 * 60 * 60_000),
+    sixHourMark: formatZulu(appliedAtMs + 6 * 60 * 60_000),
+  };
+
   if (rawMinutes < 120) {
+    const blockers = conversionBlockersFor(context);
+    if (blockers.length > 0) {
+      return {
+        minutes,
+        severity: "warning",
+        message:
+          "Tourniquet time is under 2 h. Leave it in place, do not loosen it to look at the wound, and write the time on the casualty.",
+        conversionWindow: false,
+        conversionBlockers: blockers,
+        ...marks,
+      };
+    }
     return {
       minutes,
       severity: "warning",
       message:
-        "Tourniquet time is under 2 h. If evacuation is delayed and the casualty is not in shock, a trained rescuer may consider conversion to a pressure dressing before 2 h while watching the wound.",
+        "Tourniquet time is under 2 h and the conversion criteria are met. A trained rescuer may convert to a pressure dressing now, watching the wound the whole time — if it bleeds again, re-tighten the tourniquet immediately and leave it on.",
       conversionWindow: true,
+      conversionBlockers: [],
+      ...marks,
     };
   }
   if (rawMinutes < 360) {
@@ -163,6 +283,8 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
       message:
         "The 2 h preferred conversion window has passed. Prioritize rapid evacuation, do not loosen or remove the tourniquet just to check the wound, and clearly mark its time.",
       conversionWindow: false,
+      conversionBlockers: ["Past 2 h, conversion is no longer the preferred course — evacuation is."],
+      ...marks,
     };
   }
   return {
@@ -171,7 +293,28 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
     message:
       "Tourniquet has been in place 6 h or more. Do not convert it; leave it in place, mark the time, and relay it to rescuers immediately.",
     conversionWindow: false,
+    conversionBlockers: ["Past 6 h a tourniquet is not removed outside a hospital. Leave it on and say how long it has been on."],
+    ...marks,
   };
+}
+
+/** A tourniquet record older than this is certainly left over from a previous trip, not this casualty. */
+export const MAX_TOURNIQUET_BACKDATE_MS = 24 * 60 * 60_000;
+
+/**
+ * Move a recorded application time by `deltaMinutes`, clamped to the only range
+ * that can describe a tourniquet on a casualty in front of you: never in the
+ * future, and never more than a day back.
+ *
+ * A tourniquet goes on before a phone comes out, so a clock that can only start
+ * at "now" runs late by however long the casualty was being treated first — and
+ * the boundary that runs late with it is the 6 h one, which is the boundary that
+ * decides whether the limb is salvageable.
+ */
+export function shiftTourniquetApplied(currentMs: number, deltaMinutes: number, now = Date.now()): number | null {
+  if (!Number.isFinite(currentMs) || !Number.isFinite(deltaMinutes) || !Number.isFinite(now)) return null;
+  const moved = currentMs + deltaMinutes * 60_000;
+  return Math.min(now, Math.max(now - MAX_TOURNIQUET_BACKDATE_MS, moved));
 }
 
 /** CoTCCC documentation practice: mark a tourniquet with the limb and application time in Zulu time. */

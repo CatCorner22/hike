@@ -48,7 +48,11 @@ import { breadcrumbGpx, isIceFilled, nearestWaypoint, safeFilename, safetySelfCh
 import { saveTextFile } from "@/lib/platform/save-file";
 import {
   lastOverdueNotificationSync,
+  openOverdueNotificationSettings,
+  requestOverduePermission,
   subscribeOverdueNotification,
+  syncOverdueNotification,
+  type OverdueNotificationSync,
 } from "@/lib/platform/overdue-notification";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { buildSafetyDossier } from "@/lib/safety/dossier";
@@ -104,7 +108,8 @@ import {
   formatNaismith,
   heatHazard,
   lightningRule,
-  naismithMinutes,
+  observedPace,
+  walkingEstimate,
   windChillHazard,
 } from "@/lib/safety/field-ops";
 import {
@@ -214,6 +219,8 @@ import {
   formatUsng,
   formatUtm,
   parseUsng,
+  GRID_DATUM,
+  gridDigitsForAccuracy,
 } from "@/lib/safety/usng";
 
 interface SafetyPanelProps {
@@ -621,6 +628,13 @@ export function SafetyPanel({
     traveledMeters,
     remainingMeters,
   });
+  // The same measured pace the ETA above is built from, so the walking estimate
+  // on this panel cannot contradict the one on the navigate HUD.
+  const panelPace = observedPace({
+    nowMs: recordedAt ?? Number.NaN,
+    startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
+    traveledMeters,
+  });
   const coldHazardNote =
     observedTempC != null && observedWindKph != null
       ? windChillHazard(observedTempC, observedWindKph)
@@ -707,13 +721,17 @@ export function SafetyPanel({
    * steady state on the web, where the in-app banner has always been the whole
    * mechanism.
    */
-  const [alarmRefused, setAlarmRefused] = useState(
-    () => lastOverdueNotificationSync().status === "failed",
+  const [alarmState, setAlarmState] = useState<OverdueNotificationSync["status"]>(
+    () => lastOverdueNotificationSync().status,
   );
-  useEffect(
-    () => subscribeOverdueNotification((sync) => setAlarmRefused(sync.status === "failed")),
-    [],
-  );
+  useEffect(() => subscribeOverdueNotification((sync) => setAlarmState(sync.status)), []);
+  // "unsupported" is the honest steady state on the web, where the in-app banner
+  // has always been the whole mechanism; the other three each have a different
+  // thing the hiker can do about them.
+  const alarmProblem =
+    alarmState === "failed" || alarmState === "denied" || alarmState === "needs-permission"
+      ? alarmState
+      : null;
 
   // The deadline message used to be written before the store was awaited, so a phone
   // that refused the write left an alarm that read as armed and did nothing.
@@ -855,7 +873,7 @@ export function SafetyPanel({
         <div className="mt-4 space-y-4 px-4 pb-6">
           {daylightWarning && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              <Sun className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <Sun className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
               <p>{daylightWarning}</p>
             </div>
           )}
@@ -950,8 +968,16 @@ export function SafetyPanel({
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
                 {formatUsng(lat, lng) ? (
                   <>
-                    <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
-                    <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    {/* Digits are a precision claim, so they follow the reported
+                        accuracy; and a grid without a datum is not a position —
+                        WGS 84 and NAD 27 differ by about 200 m across CONUS. */}
+                    <p className="mt-1 font-mono text-xs">
+                      USNG {formatUsng(lat, lng, gridDigitsForAccuracy(accuracyM))}
+                    </p>
+                    {gridDigitsForAccuracy(accuracyM) === 5 && (
+                      <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">Datum {GRID_DATUM}</p>
                   </>
                 ) : (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
@@ -960,7 +986,11 @@ export function SafetyPanel({
                 )}
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
-                {formatUtm(lat, lng) && <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>}
+                {formatUtm(lat, lng) && (
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {formatUtm(lat, lng, 10 ** (5 - gridDigitsForAccuracy(accuracyM)))}
+                  </p>
+                )}
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
@@ -990,6 +1020,20 @@ export function SafetyPanel({
               </p>
             )}
           </div>
+
+          {/*
+            Directly in the panel, not behind a disclosure triangle labelled
+            "Advanced tools and field guides".
+
+            This is where the tourniquet clock, the triage card, the hypothermia
+            and heat guidance, the avalanche and wildlife references live. None
+            of them is an advanced tool — they are the reason somebody opened
+            this panel at the worst moment of their day, and reaching them took
+            a tap on a summary whose own words did not mention medicine. The tab
+            contents render only when their tab is selected, so the cost of
+            surfacing them is a tab bar.
+          */}
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
 
           <FieldCapture
             packId={packId}
@@ -1193,6 +1237,7 @@ export function SafetyPanel({
                     trailName,
                     lat,
                     lng,
+                    accuracyM,
                     recordedAt,
                     positionSource,
                     stale,
@@ -1879,12 +1924,17 @@ export function SafetyPanel({
             {lat != null && lng != null && (
               <p className="text-xs text-muted-foreground">{sunCompassHint(new Date(), lat, lng)}</p>
             )}
-            {remainingMeters != null && remainingMeters > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {formatNaismith(naismithMinutes(remainingMeters, remainingGainM ?? 0))} remaining
-                (5 km/h + climb).
-              </p>
-            )}
+            {remainingMeters != null && remainingMeters > 0 && (() => {
+              const estimate = walkingEstimate(remainingMeters, remainingGainM ?? 0, panelPace);
+              return (
+                <p className="text-xs text-muted-foreground">
+                  {formatNaismith(estimate.minutes)} remaining
+                  {estimate.basis === "observed" && panelPace
+                    ? ` (your measured pace over ${(panelPace.traveledMeters / 1000).toFixed(1)} km + climb).`
+                    : " (5 km/h + climb)."}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-3 gap-2">
               <Input value={tsdDist} placeholder="m" onChange={(e) => setTsdDist(e.target.value)} />
               <Input value={tsdSpeed} placeholder="km/h" onChange={(e) => setTsdSpeed(e.target.value)} />
@@ -2494,7 +2544,6 @@ export function SafetyPanel({
             </Button>
           </div>
 
-          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
             </div>
           </details>
 
@@ -2538,13 +2587,42 @@ export function SafetyPanel({
             <p className="text-xs text-muted-foreground">
               {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
-            {alarmRefused && (
-              <p className="text-xs font-medium text-destructive">
-                This phone refused the return-time alarm, so nothing will wake you
-                with the screen locked. Turn on Notifications for Klandagi in
-                Settings. The in-app OVERDUE warning still works whenever the app
-                is open.
-              </p>
+            {alarmProblem && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-destructive">
+                  {alarmProblem === "needs-permission"
+                    ? "This phone has not been asked to raise the return-time alarm yet, so nothing will wake you with the screen locked."
+                    : alarmProblem === "denied"
+                      ? "Notifications are turned off for Klandagi, so the return-time alarm cannot wake you with the screen locked."
+                      : "This phone refused the return-time alarm, so nothing will wake you with the screen locked."}{" "}
+                  The in-app OVERDUE warning still works whenever the app is open.
+                </p>
+                {alarmProblem === "needs-permission" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void (async () => {
+                        await requestOverduePermission();
+                        // Re-arm against the deadline already stored, so a granted
+                        // permission takes effect without re-entering the time.
+                        const alarm = await getOverdueAlarm();
+                        await syncOverdueNotification(alarm?.returnAt ?? null);
+                      })();
+                    }}
+                  >
+                    Allow the return-time alarm
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void openOverdueNotificationSettings()}
+                  >
+                    Open notification settings
+                  </Button>
+                )}
+              </div>
             )}
           </div>
 
@@ -2577,6 +2655,28 @@ export function SafetyPanel({
               value={profile.icePhone}
               onChange={(e) => void persistProfile({ ...profile, icePhone: e.target.value })}
             />
+            {/* The card had a field for the license plate and none for the
+                agency that would actually run a search. This is the one fact a
+                contact cannot look up quickly at 3am. */}
+            <Label htmlFor="responder-agency">Who covers this route (sheriff / park dispatch)</Label>
+            <Input
+              id="responder-agency"
+              value={profile.responderAgency ?? ""}
+              placeholder="e.g. Mariposa County Sheriff"
+              onChange={(e) => void persistProfile({ ...profile, responderAgency: e.target.value })}
+            />
+            <Label htmlFor="responder-phone">Their non-emergency number</Label>
+            <Input
+              id="responder-phone"
+              type="tel"
+              value={profile.responderPhone ?? ""}
+              onChange={(e) => void persistProfile({ ...profile, responderPhone: e.target.value })}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Printed first under &ldquo;if they are overdue&rdquo; on the leave-behind card. Look it
+              up now, while you have signal — it is the hour your contact would otherwise spend
+              finding it.
+            </p>
             <Label htmlFor="party">Party size</Label>
             <Input
               id="party"
@@ -2587,6 +2687,7 @@ export function SafetyPanel({
                 void persistProfile({
                   ...profile,
                   partySize: Math.max(1, Number(e.target.value) || 1),
+                  partySizeConfirmed: true,
                 })
               }
             />

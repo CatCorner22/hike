@@ -86,7 +86,12 @@ describe("emergencyMessage refuses to invent a position", () => {
     // and harmless -- it is visibly part of the name field.
     expect(text.match(/^DDM:/gm) ?? []).toHaveLength(1);
     expect(text.match(/^Fix time:/gm) ?? []).toHaveLength(0);
-    expect(text.match(/^USNG 8-digit:/gm) ?? []).toHaveLength(1);
+    // Label-agnostic on purpose: the grid line now carries its resolution and
+    // datum ("USNG 8-digit (10 m, WGS 84):"), and the property being defended is
+    // that hiker-supplied text cannot start a SECOND grid line — not the exact
+    // wording of the first.
+    expect(text.match(/^USNG /gm) ?? []).toHaveLength(1);
+    expect(text.match(/^UTM /gm) ?? []).toHaveLength(1);
     // And no field may span multiple lines.
     for (const line of text.split("\n")) {
       expect(line).not.toMatch(/\r/);

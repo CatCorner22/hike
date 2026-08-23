@@ -95,7 +95,7 @@ export function AppNav() {
                   "flex min-h-11 min-w-12 flex-col items-center justify-center gap-0.5 px-2 py-1 text-xs",
                   primary && "-mt-4 rounded-full border bg-primary px-4 py-2 text-primary-foreground shadow-lg",
                   active
-                    ? primary ? "ring-2 ring-primary/40 ring-offset-2" : "text-green-600"
+                    ? primary ? "ring-2 ring-primary/40 ring-offset-2" : "text-green-700 dark:text-green-400"
                     : primary ? "" : "text-muted-foreground",
                 )}
               >

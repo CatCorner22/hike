@@ -130,7 +130,7 @@ export function CompassHud({
             <p>{readout.cardinal}</p>
             {sourceLabel && <p className="text-[9px] opacity-80">{sourceLabel}</p>}
             {headingWarning && (
-              <p className="mt-0.5 font-medium text-amber-600 dark:text-amber-400">{headingWarning}</p>
+              <p className="mt-0.5 font-medium text-amber-700 dark:text-amber-400">{headingWarning}</p>
             )}
           </>
         ) : (

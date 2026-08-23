@@ -21,7 +21,7 @@ describe("hikeReadiness", () => {
       }).ok,
     ).toBe(false);
     expect(
-      hikeReadiness({ packReady: true, profile: ice, returnAt: null }).missing,
+      hikeReadiness({ packReady: true, profile: ice, returnAt: null }).missing.map((gap) => gap.detail),
     ).toContain("Planned return time");
   });
 
@@ -180,11 +180,11 @@ describe("readiness is advisory, not a lock", () => {
     expect(result.missing.length).toBeGreaterThan(0);
     // The pack is present, so "no offline route pack" must NOT be among them:
     // that is the only item that genuinely makes navigation impossible.
-    expect(result.missing.join(" ")).not.toMatch(/route pack/i);
+    expect(result.missing.map((gap) => gap.detail).join(" ")).not.toMatch(/route pack/i);
   });
 
   it("flags the one condition that really does prevent navigating", () => {
     const result = hikeReadiness({ packReady: false, profile: emptyProfile, returnAt: null });
-    expect(result.missing.join(" ")).toMatch(/route pack/i);
+    expect(result.missing.map((gap) => gap.detail).join(" ")).toMatch(/route pack/i);
   });
 });

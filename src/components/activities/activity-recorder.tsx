@@ -509,6 +509,22 @@ export function ActivityRecorder({
           </p>
         )}
 
+        {status === "idle" && (
+          /*
+           * Said before the tap, not after. Recording keeps the GNSS receiver
+           * working with the screen off, which is the most expensive thing an
+           * app can ask an iPhone to do -- and on this app the battery is not a
+           * convenience, it is the thing that still has to be alive at the end
+           * of the walk out. App Review guideline 2.5.4 asks for this notice at
+           * the point of consent; the hiker needs it for better reasons.
+           */
+          <p className="text-sm text-muted-foreground">
+            Recording keeps GPS running with the screen off, which uses the battery
+            noticeably faster. Start with a charge you can spare, and carry a power
+            bank on a long day.
+          </p>
+        )}
+
         <div className="flex gap-2">
           {status === "idle" && recoveryUi.state === "none" && (
             <Button onClick={() => void startRecording()} className="flex-1">

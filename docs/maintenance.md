@@ -11,6 +11,14 @@ probe, the offline-navigation end-to-end run, and the API, GPS, storage,
 concurrency and CSP probes. The iOS lane builds the shell and boots it in a
 simulator on every pull request.
 
+The `database` job runs the schema push and the API probe against a real
+Postgres 16 service, then checks the rows actually landed. It exists because
+every other job runs on the JSON file fallback, so for a long time the entire
+Drizzle layer was exercised only by a live deployment — and it was broken there:
+the insert-select that saves a GPS point omitted the `id` column, so every
+uploaded track point answered 500. A data layer that only production tests is a
+data layer nobody tests.
+
 A red suite is never "flaky until proven otherwise". The probes were written
 because each of them caught something real.
 

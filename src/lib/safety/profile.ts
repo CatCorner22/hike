@@ -1,6 +1,7 @@
 import { syncOverdueNotification } from "@/lib/platform/overdue-notification";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { PositionSource } from "@/lib/safety/emergency";
+export { partySizeLine } from "@/lib/safety/party";
 
 export interface IceProfile {
   name: string;
@@ -8,10 +9,30 @@ export interface IceProfile {
   icePhone: string;
   medical: string;
   partySize: number;
+  /**
+   * Whether a person actually stated the party size, as opposed to inheriting
+   * the default of 1. A leave-behind card that says "Party size: 1" for a group
+   * of nine sends one searcher to look for one person, and nothing on the card
+   * warns that the number was never confirmed.
+   */
+  partySizeConfirmed?: boolean;
   bloodType?: string;
   challenge?: string;
   password?: string;
+  /**
+   * Who has jurisdiction where this trip is, and the number to reach them.
+   *
+   * The leave-behind card had a field for the vehicle's license plate and none
+   * for the agency that would run the search. "Call the responsible county
+   * sheriff, park dispatch, or 911" is a sentence a hiker can answer in advance
+   * and a frightened contact at 3am cannot — and the hour they spend finding
+   * out is the first hour of the search.
+   */
+  responderAgency?: string;
+  responderPhone?: string;
 }
+
+
 
 export interface SafetyWaypoint {
   id: string;

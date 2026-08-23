@@ -1,4 +1,5 @@
-import { formatDdm, formatMgrs10, formatUsng, formatUtm, phonetic } from "@/lib/safety/usng";
+import { formatDdm, formatMgrs10, formatUsng, formatUtm, GRID_DATUM, gridDigitsForAccuracy, phonetic } from "@/lib/safety/usng";
+import { partySizeLine } from "@/lib/safety/party";
 import { formatZulu } from "@/lib/safety/landnav";
 import type { IceProfile } from "@/lib/safety/profile";
 import { APP_SENT_FROM } from "@/lib/brand";
@@ -58,17 +59,26 @@ export function emergencyMessage(input: {
       lines.push("LAST KNOWN POSITION — GPS not live");
     }
     lines.push(formatCoords(fix.lat, fix.lng, input.accuracyM));
-    lines.push(`DDM: ${formatDdm(fix.lat, fix.lng)}`);
-    const usng = formatUsng(fix.lat, fix.lng);
-    const mgrs = formatMgrs10(fix.lat, fix.lng);
-    const utm = formatUtm(fix.lat, fix.lng);
-    if (!usng || !mgrs || !utm) {
+    lines.push(`DDM: ${formatDdm(fix.lat, fix.lng)} (${GRID_DATUM})`);
+    // A dead-reckoned position is a pace-and-heading estimate; it does not earn
+    // metre digits however good the last GPS fix was. Everything else scales to
+    // the reported accuracy, so the digit count IS the uncertainty statement —
+    // a rescuer reads the digits, not the caveat above them.
+    const digits =
+      source === "deadReckon"
+        ? Math.min(3, gridDigitsForAccuracy(input.accuracyM))
+        : gridDigitsForAccuracy(input.accuracyM);
+    const metresPerDigit = 10 ** (5 - digits);
+    const usng = formatUsng(fix.lat, fix.lng, digits);
+    const utm = formatUtm(fix.lat, fix.lng, metresPerDigit);
+    if (!usng || !utm) {
       lines.push("UTM/USNG unavailable at this latitude — use latitude/longitude or a polar grid.");
     } else {
-      lines.push(`USNG 8-digit: ${usng}`);
-      lines.push(`MGRS 10-digit: ${mgrs}`);
-      lines.push(`PHONETIC: ${phonetic(formatUsng(fix.lat, fix.lng, 5)!)}`);
-      lines.push(`UTM: ${utm}`);
+      lines.push(`USNG ${digits * 2}-digit (${metresPerDigit} m, ${GRID_DATUM}): ${usng}`);
+      // Ten-digit MGRS only when the fix can support one metre.
+      if (digits === 5) lines.push(`MGRS 10-digit (${GRID_DATUM}): ${formatMgrs10(fix.lat, fix.lng)}`);
+      lines.push(`PHONETIC: ${phonetic(usng)}`);
+      lines.push(`UTM (${GRID_DATUM}): ${utm}`);
     }
     lines.push(`https://maps.google.com/?q=${fix.lat},${fix.lng}`);
     // A non-finite or out-of-range timestamp made Date#toISOString throw, so the
@@ -96,7 +106,7 @@ export function emergencyMessage(input: {
   const profile = input.profile;
   if (profile) {
     if (profile.name) lines.push(`Hiker: ${reportField(profile.name)}`);
-    if (profile.partySize) lines.push(`Party size: ${reportField(profile.partySize)}`);
+    lines.push(`Party size: ${reportField(partySizeLine(profile))}`);
     if (profile.medical) lines.push(`Medical: ${reportField(profile.medical)}`);
     if (profile.bloodType) lines.push(`Blood type: ${reportField(profile.bloodType)}`);
     if (profile.iceName || profile.icePhone) {

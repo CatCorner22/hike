@@ -1,6 +1,7 @@
 "use client";
 
 import { APP_NAME } from "@/lib/brand";
+import { requestOverduePermission, syncOverdueNotification } from "@/lib/platform/overdue-notification";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import {
   type IceProfile,
 } from "@/lib/safety/profile";
 import { CHECKIN_INTERVALS, getCheckinSettings } from "@/lib/safety/checkin";
-import { hikeReadiness } from "@/lib/safety/readiness";
+import { hikeReadiness, type ReadinessGap } from "@/lib/safety/readiness";
 import { persistAndVerifyReadiness } from "@/lib/safety/readiness-persistence";
 
 type ReturnOccurrence = "earlier" | "later" | null;
@@ -55,7 +56,7 @@ export function ReadinessGate({
   const [returnAt, setReturnAt] = useState("");
   const [checkinOn, setCheckinOn] = useState(false);
   const [checkinMin, setCheckinMin] = useState(60);
-  const [missing, setMissing] = useState<string[]>([]);
+  const [missing, setMissing] = useState<ReadinessGap[]>([]);
   const [overdueNote, setOverdueNote] = useState<string | null>(null);
   const [returnOccurrence, setReturnOccurrence] = useState<ReturnOccurrence>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -98,7 +99,12 @@ export function ReadinessGate({
     setSaveError(null);
     const resolved = returnResolution;
     if (returnAt && resolved?.kind !== "resolved") {
-      setMissing([resolved?.message ?? "Planned return time"]);
+      setMissing([
+        {
+          label: "a planned return time",
+          detail: resolved?.message ?? "Planned return time",
+        },
+      ]);
       // Do not erase a previously armed deadline just because a replacement
       // wall time is ambiguous; that would silently remove the only overdue alarm.
       return;
@@ -113,11 +119,27 @@ export function ReadinessGate({
 
     setSaving(true);
     const stored = await persistAndVerifyReadiness({
-      profile,
+      // Reaching this button means the party-size field was on screen and its
+      // value was accepted, which is the difference between a stated 1 and a
+      // default nobody was ever shown.
+      profile: { ...profile, partySizeConfirmed: true },
       returnTime: resolved?.kind === "resolved" ? resolved.value : null,
       checkin: { enabled: checkinOn, intervalMin: checkinMin },
     });
     setSaving(false);
+    /**
+     * Ask for the notification permission here, not at the moment the alarm is
+     * scheduled.
+     *
+     * The prompt used to appear inside the scheduling call, which fires from a
+     * datetime picker's onChange — a system dialog arriving mid-interaction,
+     * where a reflexive "Don't Allow" costs the whole trip's alarm and nothing
+     * ever says so. Here the hiker has just entered the time they want to be
+     * warned about, which is the one moment the question makes sense.
+     */
+    void requestOverduePermission()
+      .then(() => syncOverdueNotification(resolved?.kind === "resolved" ? resolved.value.instant : null))
+      .catch(() => undefined);
     if (!stored.ok) {
       setSaveError(stored.message);
       return;
@@ -150,8 +172,8 @@ export function ReadinessGate({
           )}
           {missing.length > 0 && (
             <ul className="list-disc pl-5 text-sm text-destructive">
-              {missing.map((m) => (
-                <li key={m}>{m}</li>
+              {missing.map((gap) => (
+                <li key={gap.detail}>{gap.detail}</li>
               ))}
             </ul>
           )}
@@ -184,6 +206,27 @@ export function ReadinessGate({
               value={profile.icePhone}
               onChange={(e) => setProfile({ ...profile, icePhone: e.target.value })}
             />
+          </div>
+          <div>
+            <Label htmlFor="party-size">How many people, including you</Label>
+            <Input
+              id="party-size"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={profile.partySize}
+              onChange={(e) =>
+                setProfile({
+                  ...profile,
+                  partySize: Math.max(1, Number(e.target.value) || 1),
+                  partySizeConfirmed: true,
+                })
+              }
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Printed on the leave-behind card and the SOS text. Klandagi tracks this phone, not
+              each person — it cannot tell anyone if the party splits up.
+            </p>
           </div>
           <div>
             <Label htmlFor="return">Return by</Label>

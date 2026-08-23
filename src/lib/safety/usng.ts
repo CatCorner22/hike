@@ -91,11 +91,16 @@ export function latLngToUtm(lat: number, lng: number): UtmCoord | null {
   };
 }
 
-export function formatUtm(lat: number, lng: number): string | null {
+export function formatUtm(lat: number, lng: number, resolutionM = 1): string | null {
   const u = latLngToUtm(lat, lng);
   if (!u) return null;
   // UTM reports here use the MGRS latitude band, never an ambiguous hemisphere suffix.
-  return `${u.zone}${u.band} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
+  // Metres are conventional for UTM, but the VALUE is still a precision claim:
+  // rounding to the same resolution the grid digits carry keeps one line from
+  // quietly contradicting the other on a dead-reckoned fix.
+  const step = Number.isFinite(resolutionM) && resolutionM > 1 ? resolutionM : 1;
+  const round = (value: number) => Math.round(value / step) * step;
+  return `${u.zone}${u.band} ${round(u.easting)} ${round(u.northing)}`;
 }
 
 export function formatUsng(lat: number, lng: number, digits = 4): string | null {
@@ -113,6 +118,33 @@ export function formatUsng(lat: number, lng: number, digits = 4): string | null 
 
 export function formatMgrs10(lat: number, lng: number): string | null {
   return formatUsng(lat, lng, 5);
+}
+
+/**
+ * The datum every grid in this app is expressed in.
+ *
+ * A grid reference without a datum is not a position. WGS 84 and NAD 27 differ
+ * by roughly 200 m across the continental US, so a rescuer plotting a WGS 84
+ * grid on an older NAD 27 quad searches the wrong side of a ridge. GPS is WGS 84
+ * natively and nothing here reprojects, so every grid line says so.
+ */
+export const GRID_DATUM = "WGS 84";
+
+/**
+ * How many digits per axis a position of this accuracy can honestly carry.
+ *
+ * USNG digits are a precision claim: 5 digits is one metre, 4 is ten, 3 is a
+ * hundred, 2 is a kilometre. Printing ten-digit MGRS off a dead-reckoned fix
+ * with hundreds of metres of uncertainty states a position a thousand times
+ * more precisely than it is known — and a rescuer reads the digits, not the
+ * caveat above them. Round the claim down to the uncertainty.
+ */
+export function gridDigitsForAccuracy(accuracyM: number | null | undefined): number {
+  if (accuracyM == null || !Number.isFinite(accuracyM) || accuracyM <= 0) return 4;
+  if (accuracyM <= 10) return 5;
+  if (accuracyM <= 100) return 4;
+  if (accuracyM <= 1_000) return 3;
+  return 2;
 }
 
 function squareLetters(u: UtmCoord) {

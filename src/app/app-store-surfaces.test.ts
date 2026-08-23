@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -64,5 +65,65 @@ describe("what App Review will look at", () => {
     const plugin = readFileSync("ios/App/App/HeadingPlugin.swift", "utf8");
     expect(plugin).toContain("headingOrientation");
     expect(plugin).toContain("orientationDidChangeNotification");
+  });
+});
+
+/**
+ * The listing used to instruct "answer None to all objectionable-content
+ * questions" against a tab containing tourniquet conversion timing and snare
+ * construction. An inaccurate age rating is a 2.3.6 metadata violation and is
+ * checkable by anyone who opens the app.
+ */
+describe("the store metadata describes the app that exists", () => {
+  const storeDoc = readFileSync(resolve(process.cwd(), "docs/app-store.md"), "utf8");
+
+  it("no longer tells anyone to file None to everything", () => {
+    expect(storeDoc).not.toMatch(/answer "None" to all objectionable-content questions/);
+  });
+
+  it("names the content the questionnaire is actually asking about", () => {
+    expect(storeDoc).toMatch(/Medical and treatment information/i);
+    expect(storeDoc).toMatch(/Realistic violence/i);
+    expect(storeDoc).toMatch(/2\.3\.6/);
+  });
+
+  it("gives the 2.5.4 battery notice a real string to point at", () => {
+    expect(storeDoc).toMatch(/2\.5\.4/);
+    const recorder = readFileSync(
+      resolve(process.cwd(), "src/components/activities/activity-recorder.tsx"),
+      "utf8",
+    );
+    expect(recorder).toMatch(/uses the battery\s*\n?\s*noticeably faster/);
+    // Before the tap, not after it.
+    expect(recorder.indexOf("noticeably faster")).toBeLessThan(recorder.indexOf("Start recording"));
+  });
+});
+
+/**
+ * The roadmap conceded that no terrain tiles are downloaded; the app did not,
+ * except in the failure branch of one readiness row. "Nearby context saved"
+ * reads as "the map is on the phone", and the thing that is not on the phone is
+ * the shape of the ground.
+ */
+describe("the app concedes its two biggest limits where a user will read them", () => {
+  it("says there is no terrain in the guide, the readiness list, and the listing", () => {
+    for (const [name, path] of [
+      ["guide", "src/app/guide/page.tsx"],
+      ["readiness", "src/components/offline/offline-readiness.tsx"],
+      ["listing", "docs/app-store.md"],
+    ] as const) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      expect(source, `${name} does not mention the missing terrain`).toMatch(
+        /contours|shaded relief/i,
+      );
+    }
+  });
+
+  it("says it follows one phone, not a party, in the guide and the listing", () => {
+    for (const path of ["src/app/guide/page.tsx", "docs/app-store.md"]) {
+      expect(readFileSync(resolve(process.cwd(), path), "utf8")).toMatch(
+        /one phone, not a party/i,
+      );
+    }
   });
 });

@@ -125,7 +125,9 @@ describe("hard hydration and load safety invariants", () => {
 
 describe("boundary exactness and severity monotonicity", () => {
   it("honors exact TCCC 120 and 360 minute tourniquet boundaries", () => {
-    expect(tccc.tourniquetStatus(0, 119.999 * 60_000)?.conversionWindow).toBe(true);
+    // The conversion window now also turns on the CoTCCC criteria, asserted here
+    // so this test keeps defending what it was written to defend: the boundary.
+    expect(tccc.tourniquetStatus(0, 119.999 * 60_000, { evacuationDelayed: true, inShock: false, amputation: false, alone: false })?.conversionWindow).toBe(true);
     expect(tccc.tourniquetStatus(0, 120 * 60_000)).toMatchObject({ severity: "critical", conversionWindow: false });
     expect(tccc.tourniquetStatus(0, 360 * 60_000)?.message).toMatch(/Do not convert/);
   });
