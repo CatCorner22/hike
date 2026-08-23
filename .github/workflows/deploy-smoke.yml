@@ -1,4 +1,10 @@
-# Verifies a Vercel production deployment end to end the moment it goes live.
+# Verifies a production deployment end to end.
+#
+# Two ways in. `deployment_status` fires automatically for hosts that create
+# GitHub deployments (Vercel does). Replit does not, so the manual trigger takes
+# a URL — without it this workflow would sit there looking healthy while never
+# running once, which is exactly the kind of silent gap the rest of this repo
+# exists to prevent.
 #
 # Self-minting: it creates its own session via POST /api/session, so no secrets
 # are needed here. Each assertion below is a regression guard on something that
@@ -10,19 +16,36 @@ name: Deploy smoke
 
 on:
   deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Base URL of the deployment to probe, no trailing slash (e.g. https://klandagi.replit.app)"
+        required: true
+        type: string
 
 jobs:
   smoke:
-    if: github.event.deployment_status.state == 'success' && github.event.deployment_status.environment == 'Production'
+    # Automatic runs only for a successful production deployment; a manual run
+    # is always intentional, so it needs no such gate.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
     runs-on: ubuntu-latest
     steps:
       - name: Probe deployed API
         env:
-          URL: ${{ github.event.deployment_status.environment_url }}
+          URL: ${{ inputs.url || github.event.deployment_status.environment_url }}
         run: |
           set -euo pipefail
           fail() { echo "SMOKE FAIL: $1" >&2; exit 1; }
 
+          [ -n "$URL" ] || fail "no URL to probe (dispatch this workflow with one, or deploy to a host that reports deployments)"
+          case "$URL" in
+            https://*) ;;
+            *) fail "URL must be https:// — the iOS shell will not talk to anything else" ;;
+          esac
+          URL="${URL%/}"
           echo "Target: $URL"
 
           code=$(curl -s -o /tmp/search.json -w '%{http_code}' "$URL/api/trails/search?q=test")
