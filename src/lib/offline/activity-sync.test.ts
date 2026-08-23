@@ -786,3 +786,57 @@ describe("recovery conflict disambiguation", () => {
     expect(recovery.status).toBe("blocked");
   });
 });
+
+/**
+ * A double-tapped Start raced two beginActivity calls and left two open local rows;
+ * recovery then blocked with ">1 unfinished recordings" and Retry re-counted the same
+ * rows forever — recording permanently disabled by one mis-tap. An open row with no
+ * server copy and not a single queued point is a failed start, not a recording:
+ * nothing under it can be lost. The sweep runs only when multiple open rows exist, so
+ * the ordinary crash-on-start case keeps its resume offer.
+ */
+describe("ghost starts cannot brick recovery", () => {
+  it("sweeps empty duplicate starts and unblocks the device", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    await beginActivity({ trailId: "trail-dup" });
+    await beginActivity({ trailId: "trail-dup" });
+    await __resetActivitySyncForTests();
+
+    vi.stubGlobal("fetch", vi.fn(async () => json({ openActivities: [] })));
+    await expect(loadOpenActivityRecovery({ trailId: "trail-dup" })).resolves.toEqual({
+      status: "none",
+    });
+    expect(await listLocalActivities()).toHaveLength(0);
+  });
+
+  it("never sweeps a row that has queued evidence — that one is offered for resume", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    const ghost = await beginActivity({ trailId: "trail-dup" });
+    const real = await beginActivity({ trailId: "trail-dup" });
+    await saveActivityPoint(real.id, { lat: 37, lng: -119, recordedAt: new Date() });
+    await __resetActivitySyncForTests();
+
+    vi.stubGlobal("fetch", vi.fn(async () => json({ openActivities: [] })));
+    const recovery = await loadOpenActivityRecovery({ trailId: "trail-dup" });
+    expect(recovery.status).toBe("recovered");
+    if (recovery.status === "recovered") expect(recovery.activity.id).toBe(real.id);
+    expect(await getLocalActivity(ghost.id)).toBeNull();
+  });
+
+  it("keeps offering a single crashed start for resume", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    const only = await beginActivity({ trailId: "trail-solo" });
+    await __resetActivitySyncForTests();
+
+    vi.stubGlobal("fetch", vi.fn(async () => json({ openActivities: [] })));
+    const recovery = await loadOpenActivityRecovery({ trailId: "trail-solo" });
+    expect(recovery.status).toBe("recovered");
+    if (recovery.status === "recovered") expect(recovery.activity.id).toBe(only.id);
+  });
+});

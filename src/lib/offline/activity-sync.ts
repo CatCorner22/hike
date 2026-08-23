@@ -228,8 +228,34 @@ export async function loadOpenActivityRecovery(context: {
 
   // Recovery is a global recording gate. Filtering first by the current page would
   // let a hiker start a second track while another route's recorder remains open.
-  const localOpen = localRows.filter((activity) => !activity.endedAt);
+  let localOpen = localRows.filter((activity) => !activity.endedAt);
   const locallyFinalized = localRows.filter((activity) => Boolean(activity.endedAt));
+
+  // Ghost sweep: an open row with no server copy and not a single queued point is a
+  // failed start (a double-tapped Start button, a crash before the first fix), not a
+  // recording — there is nothing under it to lose. Left in place, two such rows made
+  // the ">1 unfinished recordings" block PERMANENT: Retry re-counted the same ghosts
+  // forever and the device could never record again. Swept only when more than one
+  // open row exists; a single ghost is still offered for resume, preserving the old
+  // behavior for the ordinary crash-on-start case.
+  if (localOpen.length > 1) {
+    const db = await getOfflineDb();
+    const survivors: LocalActivity[] = [];
+    for (const row of localOpen) {
+      if (row.remoteId) {
+        survivors.push(row);
+        continue;
+      }
+      const queued = db
+        ? (await db.getAllFromIndex("pendingPoints", "by-activity", row.id)).filter(
+            (point) => !point.synced,
+          )
+        : [];
+      if (queued.length > 0) survivors.push(row);
+      else await deleteLocalActivity(row.id);
+    }
+    localOpen = survivors;
+  }
 
   let serverOpen: ServerOpenActivity[] | null = null;
   try {
