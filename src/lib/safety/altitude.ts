@@ -273,6 +273,20 @@ export function expectedSpo2(elevationM: number): number | null {
 }
 
 /** Wilderness Medical Society altitude guidance and pulse-oximeter limitations: use a low reading as a symptom check, not a diagnosis. */
+/**
+ * Oxygen check when the hiker's own elevation is unknown (no GPS altitude). Judging a
+ * reading against a route's MAXIMUM elevation loosened the threshold everywhere below
+ * the high point — a genuinely hypoxic reading taken lower on the route produced no
+ * warning at all. With elevation unknown, judge against the sea-level expectation
+ * instead: the conservative floor (a resting SpO2 at or below ~93% deserves attention
+ * at ANY elevation), stated honestly as elevation-blind.
+ */
+export function spo2WarningUnknownElevation(spo2Pct: number): string | null {
+  if (!Number.isFinite(spo2Pct) || spo2Pct < 0 || spo2Pct > 100) return null;
+  if (spo2Pct > 93) return null;
+  return `SpO2 ${Math.round(spo2Pct)}% is below the sea-level resting expectation (~98%). Your current elevation is unknown, so this cannot be judged against altitude — recheck a warm finger, take symptoms seriously, and do not ascend with a low reading.`;
+}
+
 export function spo2Warning(spo2Pct: number, elevationM: number): string | null {
   if (!Number.isFinite(spo2Pct) || spo2Pct < 0 || spo2Pct > 100) return null;
   if (!Number.isFinite(elevationM)) return null;

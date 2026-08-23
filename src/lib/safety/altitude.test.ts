@@ -8,6 +8,7 @@ import {
   expectedSpo2,
   lakeLouiseScore,
   spo2Warning,
+  spo2WarningUnknownElevation,
 } from "./altitude";
 
 describe("Lake Louise AMS score", () => {
@@ -184,5 +185,28 @@ describe("spo2Warning below sea level", () => {
     expect(spo2Warning(Number.NaN, -10)).toBeNull();
     expect(spo2Warning(70, Number.NaN)).toBeNull();
     expect(spo2Warning(98, -430)).toBeNull();
+  });
+});
+
+/**
+ * When the hiker's own elevation is unknown, the oxygen check must not borrow the
+ * route's MAXIMUM elevation: at a 4,000 m high point the expectation is ~88%, so a
+ * genuinely hypoxic reading taken at 2,000 m (true expectation ~96%) produced no
+ * warning at all. Elevation-blind readings are judged against the sea-level floor —
+ * a resting SpO2 at or below ~93% deserves attention at ANY elevation.
+ */
+describe("spo2WarningUnknownElevation", () => {
+  it("flags a reading the route-max comparison used to silence", () => {
+    expect(spo2Warning(85, 4000)).toBeNull();
+    expect(spo2WarningUnknownElevation(85)).toMatch(/below the sea-level/);
+    expect(spo2WarningUnknownElevation(85)).toMatch(/do not ascend/);
+  });
+
+  it("stays quiet for normal readings and rejects unphysiologic input", () => {
+    expect(spo2WarningUnknownElevation(96)).toBeNull();
+    expect(spo2WarningUnknownElevation(94)).toBeNull();
+    expect(spo2WarningUnknownElevation(Number.NaN)).toBeNull();
+    expect(spo2WarningUnknownElevation(101)).toBeNull();
+    expect(spo2WarningUnknownElevation(-1)).toBeNull();
   });
 });
