@@ -1561,6 +1561,105 @@ offline-banner clear) were confirmed as real against the merged history and
 verified already fixed at HEAD — the refuters re-executed each repro green against
 current code.
 
+## Twenty-first pass — the iOS port, by adversarial swarm
+
+Six finder groups over the query-param routing migration, the fixed navigate shell,
+the platform seams, the Capacitor register layer, the dual builds and the shell
+runtime; every finding attacked by two independent skeptics instructed to default to
+REFUTED. Fourteen confirmed unanimously, two refuted. A first run's "refuted" labels
+were dead-agent artifacts — the skeptics had died on account session limits, leaving
+findings marked refuted with empty reason strings — so the whole set was re-verified
+on live agents before any of it was believed. That trap is worth naming: a swarm that
+dies mid-verification produces output shaped exactly like a verdict.
+
+**Routing migration (6, fixed in `89d9438`).** The home card titled "Upcoming plans"
+sorted descending, so it headlined the hike furthest away and truncated tomorrow's out
+of the list entirely. Legacy path-shaped URLs dead-ended with no redirect. The trail
+research brief and the GPX export anchor both bypassed `apiFetch`, so they resolved
+against `capacitor://localhost`, where no API exists — dead in the shell. Ids from
+`?id=`/`?target=` were interpolated into API paths without `encodeURIComponent` in two
+pages. And the home page rendered fetch *failures* as the empty state: "No recorded
+hikes yet" and first-hike onboarding, shown to someone whose requests had just failed.
+
+**The fixed navigate shell (6).** The offline reference content was unreachable
+offline: all eight safety panels loaded through `next/dynamic`, so their chunks were
+never named by the navigate document and the warm pass never precached them — opening
+the Safety panel with no service threw `ChunkLoadError` and replaced live navigation
+with the error screen. The cached shell could never be refreshed, because the worker
+answered even an explicit `no-store` fetch from cache. The version marker was a
+tautology — `isMarkedNavigateShell(...) || looksLikeNavigateHtml(...)`, whose second
+disjunct is already true by the time it runs — so the kill switch that lets a release
+reject shells stamped by an older one did nothing. Readiness applied no age rule at
+all while the worker expires cached assets at 30 days, so it reported routes trip-ready
+whose assets the worker would already refuse to serve. `/offline` and `/saved` were
+precached with `revision: null`, which keys an entry by URL alone and never refetches
+it, so the offline recovery surface stayed frozen at first install and went dead as
+soon as a deploy rotated its chunks. And the e2e probe matched on copy that had drifted
+from the app's strings, so a real prepare-failure crashed the probe instead of
+diagnosing it.
+
+**Platform seams (2 confirmed, 2 refuted).** `syncOverdueNotification` was called twice
+as `void` from a `datetime-local` onChange, each call on an independent chain — and a
+clear is one bridge hop where a set is four, so a later-issued clear finished first and
+the set's schedule landed after it: the store holding no deadline while the phone stayed
+armed on the one the hiker had just deleted. Syncs are serialized at the seam now.
+`downloadTextFile`'s adapter branch was `void adapter.saveText(...).catch(() =>
+undefined)`, so every native save failure was invisible — a Filesystem write that ran
+out of space still printed "Backup downloaded." — and the clipboard fallbacks those
+handlers were built around only ran on a synchronous throw, which never happens inside
+WKWebView. Meanwhile `saveTextFile`, which returns whether a save actually ran, had zero
+callers. It is the single path now.
+
+Refuted, but instructive. The claim that a discarded sync status makes the panel
+*misleading* does not hold: `deadlineMessage` is documented and implemented as a
+statement about storage, the helper text under the input scopes the promise to the
+in-app OVERDUE state, and no in-app copy anywhere mentions notifications — the
+denied-permission state is byte-identical to the shipped web behaviour. The gap is
+real but it is elsewhere, in `docs/app-store.md`'s promise of an alarm that "fires on
+the phone itself, even with the app closed"; the panel now surfaces a refused
+permission and the store copy is qualified.
+
+**The adapter-ordering finding, and what refuting it uncovered.** One skeptic held that
+adapters registering after the first mount effects makes the wake lock a permanent
+no-op; the other refuted it on the grounds that the navigate screen can never be the
+first-mounted component in the shell. Settling that disagreement against Capacitor's
+own source found something worse than the finding being adjudicated.
+
+`CapacitorRouter.route(for:)` answers **any** path with an empty file extension using
+the root document:
+
+```swift
+if pathUrl.pathExtension.isEmpty {
+    return basePath + "/index.html"
+}
+```
+
+`WebViewAssetHandler` routes every scheme request through it, and `MainViewController`
+did not override the `open func router()` hook. A `next build` with `output: "export"`
+and `trailingSlash: true` emits a separate document per route, none of whose paths
+carries an extension — so fifteen of the sixteen exported documents were unreachable by
+URL. The failure that matters is not a mistyped link: WKWebView's content process is
+killed under memory pressure, which a rendered map plus a live GPS watch on a long hike
+is exactly the load to provoke, and Capacitor answers that kill with `webView.reload()`.
+The reload re-requests `/navigate/?target=…` and is handed the home page. The hiker
+loses the navigation screen mid-hike, silently, at the moment they depend on it.
+`StaticExportRouter` replaces the stock router; `adversarial/probe-capacitor-routing.mjs`
+carries the same rule in JavaScript and runs it over the built export on every PR.
+
+Fixing it re-armed the finding the skeptics had split over — with deep loads working,
+`/navigate` really can be the first-mounted document — so adapter registration now
+notifies subscribers and the two one-shot samplers listen.
+
+**Found while verifying, not by any agent.** `npm run build:cap` was destroying the web
+build. `distDir: ".next-cap"` redirects the export, but Next still writes its compiled
+build to the default `.next` — so a capacitor build replaced whatever was there with one
+carrying `output: "export"`, `trailingSlash: true` and no API routes, and the next
+`next start` served that: every API call answering with a redirect or a 404 while the app
+looked like it was running. It reads as an application bug, and it cost three separate
+debugging cycles in this session before the cause was found. The build script now moves
+the web build aside the way it already moves the proxy, and the routing probe asserts
+that nothing misleading is left behind.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
