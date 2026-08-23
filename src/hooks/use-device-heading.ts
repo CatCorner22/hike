@@ -5,6 +5,7 @@ import {
   reduceDeviceOrientationHeadingSample,
   unavailableDeviceHeadingState,
 } from "@/lib/safety/device-heading";
+import { isHeadingSupported, subscribeHeading } from "@/lib/platform/heading";
 
 export type DeviceHeadingPermission = "unsupported" | "prompt" | "granted" | "denied";
 
@@ -151,6 +152,32 @@ export function useDeviceHeading({
       detach();
       queueMicrotask(() => setReading(unavailableDeviceHeadingState(null)));
       return;
+    }
+    // The shell's native magnetometer needs no per-session permission prompt and
+    // arrives OS-corrected to true north; it takes precedence over the web
+    // deviceorientation path whenever the adapter is registered.
+    if (isHeadingSupported()) {
+      queueMicrotask(() => setPermission("granted"));
+      const unsubscribe = subscribeHeading((sample) => {
+        const declination = declinationRef.current;
+        const headingTrue =
+          sample.trueHeading ??
+          (declination != null
+            ? (((sample.magneticHeading + declination) % 360) + 360) % 360
+            : null);
+        setReading({
+          headingTrue,
+          live: headingTrue != null,
+          message:
+            headingTrue == null
+              ? "Phone compass cannot be converted to true north here — using GPS course when moving."
+              : null,
+        });
+      });
+      return () => {
+        unsubscribe();
+        detach();
+      };
     }
     if (typeof window === "undefined" || !("DeviceOrientationEvent" in window)) {
       queueMicrotask(() => {

@@ -34,6 +34,25 @@ import type {
 const BackgroundGeolocation =
   registerPlugin<BackgroundGeolocationPlugin>("BackgroundGeolocation");
 
+interface HeadingEventData {
+  magneticHeading: number;
+  trueHeading: number;
+  accuracyDeg: number;
+  atMs: number;
+}
+
+interface HeadingNativePlugin {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  addListener(
+    eventName: "heading",
+    listener: (sample: HeadingEventData) => void,
+  ): Promise<{ remove: () => Promise<void> }>;
+}
+
+/** App-local Swift plugin (ios/App/App/HeadingPlugin.swift). */
+const Heading = registerPlugin<HeadingNativePlugin>("Heading");
+
 /**
  * Capacitor's Network API is async; the seam's isOnline() is sync because the
  * web call sites read navigator.onLine inline. Cache the last status and keep
@@ -267,6 +286,32 @@ function buildGeolocationAdapter(): GeolocationAdapter {
   };
 }
 
+/**
+ * CLHeading values pass through raw: trueHeading is negative when the OS could
+ * not correct it, and the JS seam (subscribeHeading) is the single place that
+ * maps negative to null and normalizes — one contract for every consumer.
+ */
+function buildHeadingAdapter(): NonNullable<PlatformAdapters["heading"]> {
+  return {
+    subscribe(onSample) {
+      let removed = false;
+      let handle: { remove: () => Promise<void> } | null = null;
+      void Heading.addListener("heading", (sample) => {
+        if (!removed) onSample(sample);
+      }).then((h) => {
+        handle = h;
+        if (removed) void h.remove().catch(() => undefined);
+      });
+      void Heading.start().catch(() => undefined);
+      return () => {
+        removed = true;
+        if (handle) void handle.remove().catch(() => undefined);
+        void Heading.stop().catch(() => undefined);
+      };
+    },
+  };
+}
+
 export function buildCapacitorAdapters(): PlatformAdapters {
   return {
     network: buildNetworkAdapter(),
@@ -276,5 +321,6 @@ export function buildCapacitorAdapters(): PlatformAdapters {
     notifications: buildNotificationsAdapter(),
     wakeLock: buildWakeLockAdapter(),
     geolocation: buildGeolocationAdapter(),
+    heading: buildHeadingAdapter(),
   };
 }
