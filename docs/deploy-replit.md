@@ -146,7 +146,9 @@ looks healthy and quietly loses hikes is worse than one that refuses.
   check's own ping at three. A hung database answers `500` with a request id
   rather than a spinner that never resolves, which matters because the platform
   gateway's own timeout produces a blank page with nothing to act on. Verified
-  against a listener that accepts the socket and never speaks.
+  against a listener that accepts the socket and never speaks
+  (`adversarial/blackhole-listener.mjs` — it carries the commands to re-run the
+  check, and what the two answers have to be).
 - **The health endpoint is public and cheap.** Its database ping is cached for
   five seconds and it is rate-limited to thirty requests a minute, so probing it
   hard cannot take connections away from requests that carry a hiker's data.
