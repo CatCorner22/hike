@@ -20,6 +20,7 @@ import {
   saveActivityPoint,
 } from "@/lib/offline/activity-sync";
 import { PointSaveBarrier } from "@/components/activities/point-save-barrier";
+import { getPendingPointCount } from "@/lib/offline";
 import { usePointSync } from "@/hooks/use-point-sync";
 import { Pause, Play, Square } from "lucide-react";
 
@@ -78,6 +79,7 @@ export function ActivityRecorder({
   const recoveredGainBaseRef = useRef(0);
   const pointSavesRef = useRef(new PointSaveBarrier());
   const stoppingRef = useRef(false);
+  const startingRef = useRef(false);
 
   const updateStats = useCallback((update: LiveStats | ((current: LiveStats) => LiveStats)) => {
     const next = typeof update === "function" ? update(statsRef.current) : update;
@@ -293,7 +295,12 @@ export function ActivityRecorder({
   useEffect(() => {
     if (recoveryUi.state === "checking" || recoveryUi.state === "blocked") return;
     const onOnline = () => {
-      void flushActivityQueue().then(() => setOffline(false));
+      // Clear the offline-recording banner only when the flush actually drained the
+      // queue: a radio blip fired 'online', the flush delivered nothing, and the
+      // banner still vanished while every point stayed queued.
+      void flushActivityQueue().then(async () => {
+        if ((await getPendingPointCount()) === 0) setOffline(false);
+      });
     };
     const onKeepalive = () => {
       void flushActivityQueue();
@@ -316,9 +323,20 @@ export function ActivityRecorder({
 
   const startRecording = async () => {
     if (recoveryUi.state !== "none") return;
+    // Single-flight: beginActivity is async, and a double tap on Start used to create
+    // TWO open local activities — which the recovery gate then refused to reconcile,
+    // permanently blocking recording on the device. The ref guards re-entry during the
+    // await; the status check guards a tap that lands after recording began.
+    if (startingRef.current || statusRef.current !== "idle") return;
+    startingRef.current = true;
     setError(null);
     setQueueProblem(null);
-    const started = await beginActivity({ trailId, planId });
+    let started: Awaited<ReturnType<typeof beginActivity>>;
+    try {
+      started = await beginActivity({ trailId, planId });
+    } finally {
+      startingRef.current = false;
+    }
     pointSavesRef.current = new PointSaveBarrier();
     stoppingRef.current = false;
     activityIdRef.current = started.id;

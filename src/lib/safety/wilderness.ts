@@ -133,7 +133,13 @@ export function avalancheTerrainWarning(input: {
   month?: number;
   snowOnGround?: boolean;
 }): string | null {
-  const slope = input.slopePct;
+  // `slopeFromProfile` returns a SIGNED grade, so judge on magnitude — the same rule
+  // slopeWarning already follows. Descending into or through a start zone is at least
+  // as dangerous as climbing it (descent is the classic trigger case, and the runout
+  // is below you); the signed comparison silenced this warning on every downhill.
+  const slope = input.slopePct == null || !Number.isFinite(input.slopePct)
+    ? null
+    : Math.abs(input.slopePct);
   if (slope == null || slope < 25) return null;
 
   const month = input.month ?? new Date().getMonth() + 1;

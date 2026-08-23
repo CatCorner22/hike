@@ -115,3 +115,21 @@ describe("breadcrumbGpx", () => {
     expect(gpx).toContain("<time>2026-08-19T18:00:00.000Z</time>");
   });
 });
+
+/**
+ * A corrupt stored breadcrumb timestamp (Date.parse -> NaN) sailed past the interval
+ * check — NaN compares false everywhere — and rendered a permanent
+ * "No water logged for NaN min" banner. An unreadable baseline is no baseline.
+ */
+describe("waterReminder with corrupt timestamps", () => {
+  it("stays silent on a NaN baseline instead of rendering NaN minutes", () => {
+    expect(waterReminder(null, Number.NaN)).toBeNull();
+    expect(waterReminder(Number.NaN, 1_700_000_000_000)).toBeNull();
+  });
+
+  it("still reminds on a real stale baseline", () => {
+    const now = 1_700_000_000_000;
+    expect(waterReminder(now - 45 * 60_000, null, now)).toMatch(/45 min/);
+    expect(waterReminder(now - 10 * 60_000, null, now)).toBeNull();
+  });
+});

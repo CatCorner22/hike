@@ -270,16 +270,51 @@ function firstNonNull<T>(attempts: Array<Promise<T | null>>): Promise<T | null> 
   });
 }
 
+/**
+ * Every navigate-document decision is recorded into a small diagnostic cache the app
+ * (and the e2e probe) can read back. The cold-offline path has failed on CI with the
+ * page showing content this handler never serves — the record answers, from inside the
+ * worker, whether the handler even ran for a given navigation, what each cache attempt
+ * returned, and how long it took. Fire-and-forget; never blocks the response.
+ */
+const NAV_DIAG_CACHE = "klandagi-nav-diag";
+
+function recordNavigateDecision(entry: Record<string, unknown>): void {
+  void (async () => {
+    try {
+      const cache = await caches.open(NAV_DIAG_CACHE);
+      await cache.put(
+        "/__klandagi__/nav-diag/last",
+        new Response(JSON.stringify(entry), { headers: { "content-type": "application/json" } }),
+      );
+    } catch {
+      /* diagnostics must never break navigation */
+    }
+  })();
+}
+
 const navigateShellHandler = async ({ request }: { request: Request }) => {
+  const startedAt = Date.now();
   const navId = navigateIdFromRequest(request);
   if (!navId) return offlineDocument(["no-nav-id"]);
   const misses: string[] = [];
+  const done = (outcome: string, response: Response): Response => {
+    recordNavigateDecision({
+      url: request.url,
+      navId,
+      outcome,
+      misses,
+      durationMs: Date.now() - startedAt,
+      at: new Date(startedAt).toISOString(),
+    });
+    return response;
+  };
   // A prepared shell has already been validated for this exact route and is
   // the only launch path that does not depend on the radio. Prefer it before
   // touching the network: a fetch can remain pending indefinitely under
   // degraded connectivity instead of throwing an offline error.
   const prepared = await readTrustedCachedShell(request, navId, COLD_START_READ_TIMEOUT_MS, misses);
-  if (prepared) return prepared;
+  if (prepared) return done("shell-cold", prepared);
 
   // Retry Cache Storage while the network is attempted. Neither source is
   // allowed to hold navigation open forever: a degraded radio can leave fetch
@@ -290,12 +325,12 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
     recovered,
     network.then((result) => (result?.trusted ? result.response : null)),
   ]);
-  if (usable) return usable;
+  if (usable) return done("shell-retry-or-network", usable);
 
   const attempted = await network;
-  if (attempted?.response) return attempted.response;
+  if (attempted?.response) return done("network-untrusted", attempted.response);
   misses.push("network-failed");
-  return offlineDocument(misses);
+  return done("offline-fallback", offlineDocument(misses));
 };
 
 export { navigateShellHandler };

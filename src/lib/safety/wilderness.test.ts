@@ -224,3 +224,23 @@ describe("first-aid card CPR conditioning", () => {
     expect(cpr).toMatch(/Do not start CPR on someone who is breathing normally/);
   });
 });
+
+/**
+ * `slopeFromProfile` returns a signed grade; the sign-blind `< 25` comparison
+ * silenced the avalanche warning on every descent — the classic trigger case, with
+ * the runout below you. Judged on magnitude now, like slopeWarning beside it.
+ */
+describe("avalancheTerrainWarning on descents", () => {
+  it("warns the same for a descent as for the equivalent climb", () => {
+    const climb = avalancheTerrainWarning({ slopePct: 40, month: 1, snowOnGround: true });
+    const descent = avalancheTerrainWarning({ slopePct: -40, month: 1, snowOnGround: true });
+    expect(climb).not.toBeNull();
+    expect(descent).toEqual(climb);
+    expect(avalancheTerrainWarning({ slopePct: -50 })).toMatch(/avalanche terrain/);
+  });
+
+  it("keeps the quiet band and rejects non-finite grades", () => {
+    expect(avalancheTerrainWarning({ slopePct: -20 })).toBeNull();
+    expect(avalancheTerrainWarning({ slopePct: Number.NaN })).toBeNull();
+  });
+});

@@ -577,12 +577,28 @@ async function run() {
     async function coldNavigateOnce() {
       let navError = null;
       let navigationResponse = null;
-      const response = await page
-        .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
-        .catch((e) => {
-          navError = e.message.split("\n")[0];
-          return null;
-        });
+      let response = null;
+      // Diagnosed from CI (see the nav-diag record in B3a): a same-document History
+      // update — Next's own router bookkeeping settling after the prepare interaction —
+      // can supersede the provisional cross-document navigation on a slow renderer.
+      // goto then resolves null, the browser never leaves the plan page, and the worker
+      // sees no fetch at all. Detect the non-navigation and re-issue the goto: the
+      // field equivalent of a swallowed tap is tapping again. Every occurrence is
+      // logged, so the CI record still shows how often the race fires.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        response = await page
+          .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
+          .catch((e) => {
+            navError = e.message.split("\n")[0];
+            return null;
+          });
+        if (navError || page.url().startsWith(navUrl)) break;
+        log(
+          "B3 note",
+          "....",
+          `navigation superseded by a same-document update (still on ${page.url()}); re-issuing goto`,
+        );
+      }
       if (response) {
         navigationResponse = {
           url: response.url(),
@@ -615,7 +631,20 @@ async function run() {
       // passes locally and has only ever failed on a slower CI runner.
       const why = await page
         .evaluate(async (url) => {
-          const out = { controller: null, registration: null, cacheNames: [], shellKeys: [], entry: null };
+          const out = { finalUrl: null, title: null, shellMiss: null, navDecision: null, controller: null, registration: null, cacheNames: [], shellKeys: [], entry: null };
+          // Where did the browser actually END UP, and what did the worker actually
+          // DECIDE? The failing CI runs show content this handler never serves, so
+          // these two facts are the ground truth everything else hangs off.
+          out.finalUrl = location.href;
+          out.title = document.title;
+          out.shellMiss = document.body?.getAttribute?.("data-shell-miss") ?? null;
+          try {
+            const diag = await caches.open("klandagi-nav-diag");
+            const record = await diag.match("/__klandagi__/nav-diag/last");
+            out.navDecision = record ? await record.json() : "no record — handler never ran";
+          } catch (error) {
+            out.navDecision = `threw: ${String(error)}`;
+          }
           try {
             out.controller = navigator.serviceWorker?.controller?.scriptURL ?? null;
             const reg = await navigator.serviceWorker?.getRegistration?.();
@@ -658,7 +687,7 @@ async function run() {
           return out;
         }, navUrl)
         .catch((error) => ({ evaluateFailed: String(error) }));
-      log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 1200));
+      log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 2000));
     }
     results.push([
       "B: cold offline navigate via verified shell",
