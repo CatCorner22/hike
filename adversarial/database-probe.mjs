@@ -172,6 +172,75 @@ const pt = (n, extra = {}) => ({ lat: 37.75 + n * 1e-4, lng: -119.6 + n * 1e-4, 
   check("and nothing landed", (await count(id)) === 0);
 }
 
+/**
+ * Two devices, or one device retrying while another batch is still in flight.
+ *
+ * The unique indexes are what arbitrate this; the batch writer relies on them
+ * rather than on a lock, so the only way to know they hold is to race real
+ * requests against a real database.
+ */
+{
+  const id = await newActivity("concurrent");
+  const raceAt = (n) => new Date(Date.UTC(2026, 2, 1, 0, 0, n)).toISOString();
+  const racePt = (n) => ({
+    lat: 37.75 + n * 1e-4,
+    lng: -119.6 + n * 1e-4,
+    recordedAt: raceAt(n),
+    clientPointId: `race-${n}`,
+  });
+  // Six batches of a hundred, each overlapping its neighbour by half.
+  const batches = Array.from({ length: 6 }, (_, b) =>
+    Array.from({ length: 100 }, (_, i) => racePt(b * 50 + i)));
+  const responses = await Promise.all(batches.map((points) => post(id, points)));
+
+  check("every concurrent upload succeeded", responses.every((r) => r.status === 200),
+    JSON.stringify(responses.map((r) => r.status)));
+  check("every upload got a row back for every point it sent",
+    responses.every((r) => Array.isArray(r.body.points) && r.body.points.length === 100
+      && r.body.points.every((p) => p && p.id)));
+
+  const stored = (await (await fetch(`${BASE}/api/activities/${id}/points?limit=2000`, { headers })).json()).points;
+  // Six batches of 100 overlapping by 50 covers 0..349: 350 distinct points.
+  check("exactly the distinct points landed", stored.length === 350, `stored=${stored.length}`);
+  check("no duplicate device key survived", new Set(stored.map((p) => p.clientPointId)).size === stored.length);
+  check("no row was handed to two callers",
+    new Set(responses.flatMap((r) => r.body.points.map((p) => p.id))).size === 350);
+  check("the stored track is still in time order",
+    stored.every((p, i) => i === 0 || new Date(p.recordedAt) >= new Date(stored[i - 1].recordedAt)));
+}
+
+/**
+ * The copy a person keeps.
+ *
+ * Everything on the server lived in one database with no way to take it away.
+ * The properties that matter are that it is scoped to the owner asking, that it
+ * refuses a stranger, and that it carries no credential.
+ */
+{
+  const id = await newActivity("export");
+  await post(id, [pt(70, { clientPointId: "x1" }), pt(71, { clientPointId: "x2" })]);
+
+  const mine = await fetch(`${BASE}/api/export`, { headers });
+  const doc = await mine.json();
+  check("an owner can take a copy of everything", mine.status === 200 && doc.klandagiExport === 1,
+    `status=${mine.status}`);
+  check("it carries the recorded hikes and their fixes",
+    Array.isArray(doc.activities) && doc.activities.some((a) => (a.points ?? []).length >= 2));
+  check("it says it is a record, not a restore", /not a restore file/.test(doc.note ?? ""));
+  check("it carries no credential",
+    !JSON.stringify(doc).includes(process.env.SESSION_SECRET ?? "\u0000never")
+      && !JSON.stringify(doc).includes("postgresql://"));
+
+  const anonymous = await fetch(`${BASE}/api/export`);
+  check("a stranger is refused", anonymous.status === 401, `status=${anonymous.status}`);
+
+  const otherCookie = await mintOwner();
+  const theirs = await (await fetch(`${BASE}/api/export`, { headers: { cookie: otherCookie } })).json();
+  check("another owner's export is empty, not somebody else's data",
+    (theirs.plans ?? []).length === 0 && (theirs.activities ?? []).length === 0,
+    `plans=${(theirs.plans ?? []).length} activities=${(theirs.activities ?? []).length}`);
+}
+
 console.log(`\nPOINTS SUMMARY pass=${pass} fail=${fail}`);
 
 /**
