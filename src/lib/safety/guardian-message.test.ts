@@ -36,9 +36,28 @@ describe("Trip Guardian outbound message", () => {
   });
 
   it("builds an sms href only for a usable ICE number", () => {
-    expect(guardianSmsHref("555-123-4567", "hello")).toMatch(/^sms:5551234567\?body=/);
+    expect(guardianSmsHref("555-123-4567", "hello", "Mozilla/5.0 (Linux; Android 14)")).toMatch(
+      /^sms:5551234567\?body=/,
+    );
     expect(guardianSmsHref("x", "hello")).toBeNull();
     expect(guardianSmsHref(undefined, "hello")).toBeNull();
+  });
+
+  /**
+   * Regression: this hardcoded the Android `?body=` form, so on iOS — the
+   * platform the app ships to — Messages opened addressed to the contact with
+   * an EMPTY body. The departing/OK/overdue itinerary, deadline, and last
+   * position were all silently dropped from the one message a guardian acts on.
+   */
+  it("carries the message body on iOS, not just Android", () => {
+    const ios = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)";
+    const href = guardianSmsHref("555-123-4567", "Back by 18:00", ios)!;
+    expect(href).toMatch(/^sms:5551234567&body=/);
+    expect(decodeURIComponent(href.split("body=")[1])).toBe("Back by 18:00");
+
+    const android = guardianSmsHref("555-123-4567", "Back by 18:00", "Mozilla/5.0 (Linux; Android 14)")!;
+    expect(android).toMatch(/^sms:5551234567\?body=/);
+    expect(decodeURIComponent(android.split("body=")[1])).toBe("Back by 18:00");
   });
 
   it("cannot be forged with newlines in the trail name", () => {

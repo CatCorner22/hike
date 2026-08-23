@@ -82,7 +82,7 @@ async function disableWeather(page) {
 
 async function disableShellWarmup(page) {
   await page.route(
-    `${BASE}/navigate/**`,
+    `${BASE}/navigate**`,
     (route) => route.fulfill({ status: 503, contentType: "text/plain", body: "probe: shell unavailable" }),
   );
 }
