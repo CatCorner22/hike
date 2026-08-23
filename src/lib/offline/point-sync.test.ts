@@ -404,3 +404,48 @@ describe("owner-change 404s do not destroy re-homeable recordings", () => {
     expect(result.pending).toBe(0);
   });
 });
+
+/**
+ * The flush's completion used to dispatch "hike-points-queued" unconditionally, and
+ * usePointSync flushes ON that event — after the single-flight guard was already
+ * cleared. flush → event → flush, forever: an invisible busy loop burning battery in
+ * exactly the app that tells hikers to conserve it. A flush that changes nothing must
+ * be silent; one that syncs or drops points notifies once, and the single follow-up
+ * flush that triggers goes quiet on its own.
+ */
+describe("flush completion events cannot self-retrigger forever", () => {
+  function windowRecorder() {
+    const dispatched: string[] = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (event: Event) => {
+        dispatched.push(event.type);
+        return true;
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("Event", class { constructor(public type: string) {} });
+    vi.stubGlobal("CustomEvent", class { constructor(public type: string, public detail?: unknown) {} });
+    return dispatched;
+  }
+
+  it("stays silent on a flush that changes nothing", async () => {
+    const dispatched = windowRecorder();
+    vi.stubGlobal("fetch", respondWith(200));
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(0);
+  });
+
+  it("notifies exactly once when points actually synced, so one follow-up flush then quiescence", async () => {
+    const dispatched = windowRecorder();
+    await queue(2);
+    dispatched.length = 0; // queueing notifies legitimately; the flush is under test
+    vi.stubGlobal("fetch", respondWith(200));
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(1);
+    // The follow-up flush a listener would run now finds nothing and stays silent.
+    dispatched.length = 0;
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(0);
+  });
+});

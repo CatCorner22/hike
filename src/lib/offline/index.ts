@@ -383,13 +383,22 @@ export async function flushPendingPoints(): Promise<FlushResult> {
         .then(({ flushActivityQueue }) => flushActivityQueue())
         .catch(() => undefined);
     }
-    return { synced, dropped, pending: await getPendingPointCount() };
+    const result = { synced, dropped, pending: await getPendingPointCount() };
+    // Notify ONLY when this flush changed something. The unconditional notify in the
+    // old finally block fed the flush's own completion event back into usePointSync's
+    // "hike-points-queued" listener AFTER the single-flight guard was cleared — an
+    // invisible, permanent flush → event → flush busy loop that burned battery in
+    // exactly the app that tells hikers to conserve it. A no-change flush is silent;
+    // a flush that synced or dropped points still updates every listener, and the one
+    // extra follow-up flush that notify triggers picks up stragglers and then goes
+    // quiet because it changes nothing.
+    if (synced > 0 || dropped > 0) notifyQueueChanged();
+    return result;
   })();
   try {
     return await flushPromise;
   } finally {
     flushPromise = null;
-    notifyQueueChanged();
   }
 }
 
