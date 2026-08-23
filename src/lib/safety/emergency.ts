@@ -23,10 +23,12 @@ export function formatCoords(lat: number, lng: number, accuracyM?: number): stri
   const lngDir = point.lng >= 0 ? "E" : "W";
   const base = `${Math.abs(point.lat).toFixed(5)}°${latDir}, ${Math.abs(point.lng).toFixed(5)}°${lngDir}`;
   // An unknown accuracy must not render as "±NaN m", which reads as a measured
-  // value to anyone receiving the message.
-  if (accuracyM != null && Number.isFinite(accuracyM) && accuracyM >= 0 && accuracyM <= 10_000) {
-    const rounded = Math.round(accuracyM);
-    return `${base} (±${rounded === 0 ? 0 : rounded} m)`;
+  // value to anyone receiving the message. Zero is the same mistake wearing a
+  // number: CoreLocation and the W3C Geolocation API both use a non-positive
+  // accuracy to mean "no valid estimate", and "±0 m" tells a rescuer sizing a
+  // search radius that this fix is perfect. Omit the clause instead.
+  if (accuracyM != null && Number.isFinite(accuracyM) && accuracyM > 0 && accuracyM <= 10_000) {
+    return `${base} (±${Math.round(accuracyM)} m)`;
   }
   return base;
 }

@@ -19,7 +19,8 @@ import {
   serializeNavSessionExport,
   type NavTrackSessionSummary,
 } from "@/lib/offline/nav-track";
-import { breadcrumbGpx, downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { breadcrumbGpx, safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 
 export type CompletedTrackLoadState =
   | { status: "loading" }
@@ -82,13 +83,16 @@ export async function exportFinishedNavigationTrack(
   track: NavTrackSessionSummary,
   dependencies: {
     serialize?: typeof serializeNavSessionExport;
-    download?: typeof downloadTextFile;
+    save?: typeof saveTextFile;
   } = {},
 ): Promise<{ filename: string }> {
   assertFinishedTrack(track);
   const text = await (dependencies.serialize ?? serializeNavSessionExport)(track.id);
   const filename = trackFilename(track);
-  (dependencies.download ?? downloadTextFile)(filename, text, "application/json");
+  const saved = await (dependencies.save ?? saveTextFile)(filename, text, "application/json");
+  if (!saved) {
+    throw new NavTrackStorageError("write-failed", "The phone would not save this track export.");
+  }
   return { filename };
 }
 
@@ -96,7 +100,7 @@ export async function exportFinishedNavigationTrackGpx(
   track: NavTrackSessionSummary,
   dependencies: {
     read?: typeof exportNavSession;
-    download?: typeof downloadTextFile;
+    save?: typeof saveTextFile;
   } = {},
 ): Promise<{ filename: string; pointCount: number }> {
   assertFinishedTrack(track);
@@ -117,7 +121,10 @@ export async function exportFinishedNavigationTrackGpx(
     recordedAt: point.recordedAt,
   })));
   const filename = trackGpxFilename(track);
-  (dependencies.download ?? downloadTextFile)(filename, gpx, "application/gpx+xml");
+  const saved = await (dependencies.save ?? saveTextFile)(filename, gpx, "application/gpx+xml");
+  if (!saved) {
+    throw new NavTrackStorageError("write-failed", "The phone would not save this GPX export.");
+  }
   return { filename, pointCount: exported.points.length };
 }
 

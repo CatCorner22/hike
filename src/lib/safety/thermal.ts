@@ -166,7 +166,14 @@ export function hypothermiaStage(input: {
   ) {
     return null;
   }
-  const severe = !conscious || (coreTempC != null && coreTempC < 28);
+  // `!conscious` counts only for a cold-exposed patient, for the same reason
+  // `!shivering` does below. Unconsciousness on its own describes head injury,
+  // syncope, seizure and hypoglycaemia at least as often as it describes
+  // hypothermia — and this branch's advice is "insulate and handle gently",
+  // which is actively wrong for a heat-stroke patient who needs immersion. A
+  // measured core temperature under 28 °C is evidence in itself and needs no
+  // corroborating history.
+  const severe = (!conscious && coldExposed) || (coreTempC != null && coreTempC < 28);
   // `!shivering` counts only for a cold-exposed patient. Without that guard every
   // comfortable, non-shivering person was staged "moderate hypothermia", and the
   // "none" branch below was unreachable.
@@ -230,14 +237,23 @@ export function layeringAdvice(tempC: number, windKph: number, isWet: boolean): 
   return advice;
 }
 
-/** Wilderness Medical Society heat-illness guidance: altered mental status in a hot person is heat stroke until proven otherwise. */
+/**
+ * Wilderness Medical Society heat-illness guidance: altered mental status in a
+ * hot person is heat stroke until proven otherwise.
+ *
+ * "In a hot person" is the load-bearing half, and this function used to skip
+ * it: altered mental status alone returned heat stroke, whose first action is
+ * cold-water immersion. Pass `heatExposed` for that branch to fire. A measured
+ * core temperature at or above 40 °C is evidence in itself.
+ */
 export function heatIllnessTriage(input: {
   coreTempC?: number;
   alteredMental: boolean;
   sweating: boolean;
   crampsOnly: boolean;
+  heatExposed?: boolean;
 }): HeatIllnessAssessment | null {
-  const { coreTempC, alteredMental, sweating, crampsOnly } = input;
+  const { coreTempC, alteredMental, sweating, crampsOnly, heatExposed = false } = input;
   if (
     (coreTempC != null && (!Number.isFinite(coreTempC) || coreTempC < 30 || coreTempC > 45)) ||
     typeof alteredMental !== "boolean" ||
@@ -246,7 +262,7 @@ export function heatIllnessTriage(input: {
   ) {
     return null;
   }
-  if (alteredMental) {
+  if ((alteredMental && heatExposed) || (coreTempC != null && coreTempC >= 40)) {
     return {
       condition: "stroke",
       severity: "critical",
@@ -257,7 +273,14 @@ export function heatIllnessTriage(input: {
       ],
     };
   }
-  if (crampsOnly) {
+  // Every branch below needs heat evidence too, for the same reason the stroke
+  // branch does. Cramps in a cold, wet hiker are not heat cramps, and sweating
+  // on its own describes everybody walking uphill — while the advice here
+  // ("rest in shade", "actively cool with water and airflow") is the opposite
+  // of what a cold patient needs. Without these guards the two aids could both
+  // return an active assessment for one patient: shivering plus sweating gave
+  // mild hypothermia beside heat exhaustion, with no exposure entered at all.
+  if (crampsOnly && heatExposed) {
     return {
       condition: "cramps",
       severity: "caution",
@@ -267,7 +290,7 @@ export function heatIllnessTriage(input: {
       ],
     };
   }
-  if (sweating || (coreTempC != null && coreTempC >= 38)) {
+  if ((sweating && heatExposed) || (coreTempC != null && coreTempC >= 38)) {
     return {
       condition: "exhaustion",
       severity: "warning",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as turf from "@turf/turf";
-import { formatUsng, formatMgrs10, formatUtm, parseUsng, utmZone } from "./usng";
+import { formatDdm, formatDms, formatUsng, formatMgrs10, formatUtm, parseUsng, utmZone } from "./usng";
 
 function metresApart(
   a: { lat: number; lng: number },
@@ -111,5 +111,81 @@ describe("parseUsng", () => {
     expect(parseUsng("not a grid")).toBeNull();
     expect(parseUsng("")).toBeNull();
     expect(parseUsng("11S LV 123")).toBeNull();
+  });
+});
+
+/**
+ * These two functions had no test anywhere in the repo, after twenty-one
+ * adversarial passes — and their output is what gets read over a handheld radio
+ * to a rescuer, and what goes into the medevac 9-line.
+ */
+describe("degrees-minutes-seconds and degrees-decimal-minutes", () => {
+  const COMPONENT = /(\d+)°(\d+(?:\.\d+)?)'(?:([\d.]+)")?([NSEW])/g;
+
+  function parseBack(text: string): Array<{ value: number; hemi: string }> {
+    COMPONENT.lastIndex = 0;
+    const out: Array<{ value: number; hemi: string }> = [];
+    let match: RegExpExecArray | null;
+    while ((match = COMPONENT.exec(text))) {
+      const degrees = Number(match[1]);
+      const minutes = Number(match[2]);
+      const seconds = match[3] ? Number(match[3]) : 0;
+      const magnitude = degrees + minutes / 60 + seconds / 3600;
+      out.push({ value: match[4] === "S" || match[4] === "W" ? -magnitude : magnitude, hemi: match[4] });
+    }
+    return out;
+  }
+
+  /**
+   * Regression: `(37.749999 - 37) * 60 = 44.99994`, whose seconds round to
+   * "60.0". The old code printed the rounded component without carrying, so it
+   * emitted `37°44'60.0"N` — not a coordinate. A call-taker who cannot enter it
+   * re-reads it as 44'06", which is 54 arcseconds of latitude: about 1.67 km,
+   * usually the wrong side of a drainage.
+   */
+  it("carries instead of printing a sixtieth minute or second", () => {
+    expect(formatDms(37.749999, -119.6032)).toBe(`37°45'0.0"N 119°36'11.5"W`);
+    expect(formatDms(37.99999999, -119.9999999)).toBe(`38°00'0.0"N 120°00'0.0"W`);
+    expect(formatDdm(37.99999999, -119.9999999)).toBe("38°0.000'N 120°0.000'W");
+    // The carry must run all the way up, not just one place.
+    expect(formatDms(89.99999999, 179.99999999)).toBe(`90°00'0.0"N 180°00'0.0"E`);
+  });
+
+  it("never emits an invalid component, over the whole coordinate space", () => {
+    const offenders: string[] = [];
+    // Deterministic sweep rather than random sampling: walk the last arcminute
+    // of a degree in fine steps, which is where every rollover lives.
+    for (let degree = -89; degree <= 89; degree += 7) {
+      for (let step = 0; step < 600; step += 1) {
+        const lat = degree + (59 * 60 + 30 + step / 20) / 3600;
+        if (lat > 90 || lat < -90) continue;
+        const lng = (degree * 2 + (59 * 60 + 30 + step / 20) / 3600) % 180;
+        for (const text of [formatDms(lat, lng), formatDdm(lat, lng)]) {
+          if (/'60(\.0+)?"/.test(text) || /°60(\.0+)?'/.test(text)) offenders.push(text);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it("stays within its own printed precision when read back", () => {
+    // 0.1" is ~3.1 m, so a correct formatter is never off by more than half of
+    // that. This is the guarantee a rescuer is relying on.
+    for (const [lat, lng] of [
+      [37.749999, -119.6032],
+      [36.0996, -112.1123],
+      [-33.8688, 151.2093],
+      [64.1466, -21.9426],
+      [0.00001, -0.00001],
+    ] as const) {
+      const [gotLat, gotLng] = parseBack(formatDms(lat, lng));
+      expect(Math.abs(gotLat.value - lat) * 111_320).toBeLessThan(1.6);
+      expect(Math.abs(gotLng.value - lng) * 111_320).toBeLessThan(1.6);
+    }
+  });
+
+  it("refuses positions it cannot express", () => {
+    expect(formatDms(Number.NaN, 0)).toBe("—");
+    expect(formatDdm(91, 0)).toBe("—");
   });
 });

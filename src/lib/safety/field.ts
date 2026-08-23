@@ -1,4 +1,3 @@
-import { getPlatformAdapters } from "@/lib/platform/adapters";
 import { gpxFromTrack } from "@/lib/geo";
 import { formatRangeAzimuth, rangeAzimuth, type RangeAzimuth } from "@/lib/safety/landnav";
 import type { IceProfile, SafetyWaypoint } from "@/lib/safety/profile";
@@ -244,16 +243,18 @@ export function breadcrumbGpx(
   );
 }
 
+/**
+ * The browser anchor download, and nothing else.
+ *
+ * This used to also take the native branch — `void adapter.saveText(...)` with
+ * the rejection swallowed — which made every failure inside WKWebView invisible:
+ * a Filesystem write that ran out of space still printed "Backup downloaded."
+ * and the clipboard fallbacks built around a synchronous throw were dead code on
+ * the one platform that needed them. Saving now goes through `saveTextFile`,
+ * which reports whether a save path actually ran; this stays the web half of it,
+ * throwing synchronously as its callers expect.
+ */
 export function downloadTextFile(filename: string, text: string, mime = "application/gpx+xml") {
-  // Inside WKWebView an <a download> click is a dead end; the shell registers
-  // a save adapter (Filesystem write + iOS share sheet). Fire-and-forget by
-  // design: the share sheet IS the user-visible outcome, and the sync throw
-  // contract below stays web-only.
-  const saveAdapter = getPlatformAdapters().saveFile;
-  if (saveAdapter) {
-    void saveAdapter.saveText(filename, text, mime).catch(() => undefined);
-    return;
-  }
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

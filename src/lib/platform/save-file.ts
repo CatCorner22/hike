@@ -1,4 +1,5 @@
 import { getPlatformAdapters } from "@/lib/platform/adapters";
+import { downloadTextFile } from "@/lib/safety/field";
 
 /**
  * Saving a text file (GPX exports, the safety dossier, paper backups), through the
@@ -7,7 +8,13 @@ import { getPlatformAdapters } from "@/lib/platform/adapters";
  * Web fallback is the existing anchor-download flow. Inside WKWebView that flow is a
  * dead end — `<a download>` does nothing there — so the Capacitor shell registers a
  * SaveFileAdapter (Filesystem write + Share sheet), which is also how iOS users expect
- * to receive a file. Returns whether a save path actually ran.
+ * to receive a file.
+ *
+ * Returns whether a save path actually ran, and every caller must branch on it. A
+ * phone full of offline map packs is exactly where `Filesystem.writeFile` fails, and
+ * that is exactly when a hiker is told "Backup downloaded." about a file that does not
+ * exist. The share sheet is the visible outcome of a SUCCESS; a failure has no visible
+ * outcome at all unless the caller supplies one.
  */
 export async function saveTextFile(
   filename: string,
@@ -23,14 +30,10 @@ export async function saveTextFile(
     }
   }
   if (typeof document === "undefined" || typeof URL === "undefined") return false;
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return true;
+  try {
+    downloadTextFile(filename, text, mime);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   compassLabel,
+  gpsAccuracyLabel,
   isValidGeometry,
   normalizeHeading,
   progressAlongTrail,
@@ -335,5 +336,27 @@ describe("direction of travel along the route", () => {
     // Heading east is uphill; heading west from the same point is all descent.
     expect(forward.remainingElevationMeters).toBeGreaterThan(200);
     expect(backward.remainingElevationMeters).toBeCloseTo(0, 0);
+  });
+});
+
+describe("gpsAccuracyLabel", () => {
+  /**
+   * Regression: the HUD printed "GPS ±0 m (good)" — the most confident thing
+   * the app can say — for the one accuracy value that carries no confidence at
+   * all. A screenshot caught it rendering four rows under an orange banner that
+   * had just declared the same fix untrusted.
+   */
+  it("treats a non-positive accuracy as unknown, not as perfect", () => {
+    expect(gpsAccuracyLabel(0)).toBe("GPS accuracy unknown");
+    expect(gpsAccuracyLabel(-1)).toBe("GPS accuracy unknown");
+    expect(gpsAccuracyLabel(null)).toBe("GPS accuracy unknown");
+    expect(gpsAccuracyLabel(Number.NaN)).toBe("GPS accuracy unknown");
+    expect(gpsAccuracyLabel(20_000)).toBe("GPS accuracy unknown");
+  });
+
+  it("still grades a real measurement", () => {
+    expect(gpsAccuracyLabel(4)).toBe("GPS ±4 m (good)");
+    expect(gpsAccuracyLabel(15)).toBe("GPS ±15 m (fair)");
+    expect(gpsAccuracyLabel(60)).toBe("GPS ±60 m (poor — canyon/trees)");
   });
 });

@@ -3,11 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __resetPlatformAdaptersForTests,
   setPlatformAdapters,
+  subscribePlatformAdapters,
 } from "@/lib/platform/adapters";
 import { startGeoWatch } from "@/lib/platform/geolocation";
 import { vibrateOffTrail } from "@/lib/safety/alerts";
 import { SOS_VIBRATION_PATTERN, vibrateSos } from "@/lib/safety/strobe";
-import { downloadTextFile } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 import { requestWakeLock, isWakeLockHeld, releaseWakeLock, __resetWakeLockForTests } from "@/lib/offline/wake-lock";
 import { isStoragePersistent, requestPersistentStorage } from "@/lib/offline/storage";
 import { getNavigateOfflineStatus, warmNavigateShell } from "@/lib/offline/navigate-shell";
@@ -99,13 +100,34 @@ describe("haptics seam consumers", () => {
 });
 
 describe("save-file seam consumer", () => {
-  it("downloadTextFile prefers a registered adapter over the anchor flow", () => {
+  it("saveTextFile prefers a registered adapter over the anchor flow", async () => {
     const saveText = vi.fn(async () => true);
     setPlatformAdapters({ saveFile: { saveText } });
 
-    downloadTextFile("track.gpx", "<gpx/>", "application/gpx+xml");
-
+    expect(await saveTextFile("track.gpx", "<gpx/>", "application/gpx+xml")).toBe(true);
     expect(saveText).toHaveBeenCalledWith("track.gpx", "<gpx/>", "application/gpx+xml");
+  });
+
+  /**
+   * Regression: the export path used to be `void adapter.saveText(...).catch(() => undefined)`
+   * inside downloadTextFile, so a Filesystem write that failed — the ordinary
+   * outcome on a phone full of offline map packs — produced no signal at all.
+   * Every caller then printed "GPX downloaded" / "Backup downloaded." / "Dossier
+   * downloaded", and the clipboard fallbacks they were built around were dead
+   * code on the one platform that needed them.
+   */
+  it("reports a native save failure instead of swallowing it", async () => {
+    setPlatformAdapters({ saveFile: { saveText: async () => false } });
+    expect(await saveTextFile("pack.json", "{}", "application/json")).toBe(false);
+
+    setPlatformAdapters({
+      saveFile: {
+        saveText: async () => {
+          throw new Error("Filesystem write failed: disk full");
+        },
+      },
+    });
+    expect(await saveTextFile("pack.json", "{}", "application/json")).toBe(false);
   });
 });
 
@@ -182,5 +204,50 @@ describe("overdue notification tracks the stored alarm", () => {
     await vi.waitFor(() => {
       expect(cancel).toHaveBeenCalledWith(OVERDUE_NOTIFICATION_ID);
     });
+  });
+});
+
+/**
+ * Regression: the native adapters register after React has flushed the first
+ * mount effects (NativeBootstrap awaits two dynamic imports first), and the web
+ * fallbacks these seams return are permanent — `requestWakeLock()` hands back a
+ * no-op handle and never retries. While every launch landed on the root
+ * document that was unreachable, because the navigate screen could only arrive
+ * via a client navigation. Serving deep routes properly makes /navigate a real
+ * first mount — which is exactly what Capacitor loads after a WKWebView
+ * content-process kill — so late registration has to be observable.
+ */
+describe("late adapter registration is observable", () => {
+  it("notifies subscribers when the native adapters land", () => {
+    const seen: string[] = [];
+    const stop = subscribePlatformAdapters(() => seen.push("registered"));
+
+    setPlatformAdapters({ wakeLock: { acquire: async () => true, release: async () => undefined } });
+    expect(seen).toEqual(["registered"]);
+
+    stop();
+    setPlatformAdapters({});
+    expect(seen).toEqual(["registered"]);
+  });
+
+  it("lets a wake lock requested before registration be acquired for real afterwards", async () => {
+    // No adapter and no navigator.wakeLock: exactly the WKWebView first mount.
+    vi.stubGlobal("navigator", {});
+    const first = await requestWakeLock();
+    expect(isWakeLockHeld()).toBe(false);
+    expect(typeof first.release).toBe("function");
+
+    const acquire = vi.fn(async () => true);
+    let reacquired: Promise<unknown> = Promise.resolve();
+    const stop = subscribePlatformAdapters(() => {
+      reacquired = requestWakeLock();
+    });
+
+    setPlatformAdapters({ wakeLock: { acquire, release: async () => undefined } });
+    await reacquired;
+    stop();
+
+    expect(acquire).toHaveBeenCalledOnce();
+    expect(isWakeLockHeld()).toBe(true);
   });
 });

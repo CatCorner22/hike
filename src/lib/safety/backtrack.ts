@@ -5,6 +5,64 @@ import { progressAlongTrail, type TrailProgress } from "@/lib/geo/navigation";
 export interface TrackPoint {
   lat: number;
   lng: number;
+  recordedAt?: number | string;
+}
+
+/**
+ * A pocketed phone, a suspended GPS watch or a dead battery leaves a hole in the
+ * breadcrumb, and joining the two points either side of it draws a straight line
+ * the hiker never walked — across a drainage, a cliff band, whatever they went
+ * around. The app has no terrain data to tell them otherwise, and the line is
+ * rendered as one unbroken dashed polyline, so there is no visual tell either.
+ *
+ * Two minutes is well beyond any normal sampling interval, and 250 m is further
+ * than a walker covers in that time on any trail. Either alone is enough to
+ * distrust the segment.
+ */
+export const BREADCRUMB_GAP_SECONDS = 120;
+export const BREADCRUMB_GAP_METERS = 250;
+
+function pointTimeMs(point: TrackPoint): number | null {
+  if (point.recordedAt == null) return null;
+  const ms = typeof point.recordedAt === "number" ? point.recordedAt : Date.parse(point.recordedAt);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** True when nothing was recorded between these two consecutive fixes. */
+export function isBreadcrumbGap(a: TrackPoint, b: TrackPoint): boolean {
+  if (!isValidCoordinate(a) || !isValidCoordinate(b)) return true;
+  const meters = turf.distance(turf.point([a.lng, a.lat]), turf.point([b.lng, b.lat]), {
+    units: "meters",
+  });
+  if (meters > BREADCRUMB_GAP_METERS) return true;
+  const aMs = pointTimeMs(a);
+  const bMs = pointTimeMs(b);
+  if (aMs == null || bMs == null) return false;
+  return Math.abs(bMs - aMs) > BREADCRUMB_GAP_SECONDS * 1000;
+}
+
+/**
+ * The reversed track split at every gap. The first entry is the run leading back
+ * from where the hiker is now — the only stretch a bearing can honestly be taken
+ * along.
+ */
+export function reverseTrackSegments(points: TrackPoint[]): GeoJSON.LineString[] {
+  const reversed = [...points].reverse();
+  const segments: TrackPoint[][] = [];
+  let current: TrackPoint[] = [];
+  for (const point of reversed) {
+    const previous = current[current.length - 1];
+    if (previous && isBreadcrumbGap(previous, point)) {
+      if (current.length >= 2) segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length >= 2) segments.push(current);
+  return segments.map((run) => ({
+    type: "LineString",
+    coordinates: run.map((p) => [p.lng, p.lat]),
+  }));
 }
 
 export function reverseTrackLine(points: TrackPoint[]): GeoJSON.LineString | null {
@@ -15,10 +73,51 @@ export function reverseTrackLine(points: TrackPoint[]): GeoJSON.LineString | nul
   };
 }
 
+export interface BacktrackResult {
+  progress: TrailProgress | null;
+  /**
+   * Set when the retrace runs out at a recording gap. The distance and bearing
+   * beyond it are not knowable, and a blank is honest where a confident number
+   * is not.
+   */
+  gapAhead: { minutes: number | null; meters: number } | null;
+}
+
 export function backtrackProgress(here: TrackPoint, points: TrackPoint[]): TrailProgress | null {
-  const line = reverseTrackLine(points);
-  if (!line) return null;
-  return progressAlongTrail(here, line);
+  return backtrackAlongContiguousTrack(here, points).progress;
+}
+
+/**
+ * Retrace guidance that stops at the first hole in the breadcrumb instead of
+ * bridging it. `progressAlongTrail` used to be handed the whole reversed array,
+ * so "Remaining" and "Est. time back" were computed along fabricated geometry
+ * and the bearing pointed across ground nobody had walked.
+ */
+export function backtrackAlongContiguousTrack(
+  here: TrackPoint,
+  points: TrackPoint[],
+): BacktrackResult {
+  const segments = reverseTrackSegments(points);
+  const contiguous = segments[0];
+  if (!contiguous) return { progress: null, gapAhead: null };
+
+  const progress = progressAlongTrail(here, contiguous);
+  if (segments.length < 2) return { progress, gapAhead: null };
+
+  // Where the usable run ends, and where the next one picks up.
+  const end = contiguous.coordinates[contiguous.coordinates.length - 1];
+  const resume = segments[1].coordinates[0];
+  const meters = turf.distance(turf.point(end), turf.point(resume), { units: "meters" });
+
+  const reversed = [...points].reverse();
+  const endPoint = reversed.find((p) => p.lng === end[0] && p.lat === end[1]);
+  const resumePoint = reversed.find((p) => p.lng === resume[0] && p.lat === resume[1]);
+  const endMs = endPoint ? pointTimeMs(endPoint) : null;
+  const resumeMs = resumePoint ? pointTimeMs(resumePoint) : null;
+  const minutes =
+    endMs != null && resumeMs != null ? Math.round(Math.abs(endMs - resumeMs) / 60_000) : null;
+
+  return { progress, gapAhead: { minutes, meters: Math.round(meters) } };
 }
 
 export function stationaryMinutes(

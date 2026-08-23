@@ -273,21 +273,46 @@ export function formatDdm(lat: number, lng: number): string {
   return `${toDdm(lat, "N", "S")} ${toDdm(lng, "E", "W")}`;
 }
 
+/**
+ * Rounding a sexagesimal component can push it to exactly 60, which is not a
+ * coordinate. `(37.749999 - 37) * 60 = 44.99994`, and its seconds round to
+ * `60.0` — so the old code emitted `37°44'60.0"N`, roughly once in every 560
+ * CONUS fixes. That string reaches the SOS text message, the rescue card, the
+ * QR handoff and the medevac 9-line; a call-taker who cannot type it does the
+ * natural thing and reads it back as 44'06", which is 54 arcseconds of
+ * latitude — about 1.67 km, typically the wrong side of a drainage.
+ *
+ * So round first, then carry, exactly as you would by hand.
+ */
+function carry(units: number[], base: number): number[] {
+  const out = [...units];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    if (out[i] < base) break;
+    out[i] -= base;
+    out[i - 1] += 1;
+  }
+  return out;
+}
+
 function toDms(value: number, pos: string, neg: string) {
   const hemi = value >= 0 ? pos : neg;
   const abs = Math.abs(value);
-  const deg = Math.floor(abs);
+  let deg = Math.floor(abs);
   const minFloat = (abs - deg) * 60;
-  const min = Math.floor(minFloat);
-  const sec = (minFloat - min) * 60;
+  let min = Math.floor(minFloat);
+  // Round the seconds to the precision we print BEFORE deciding whether they
+  // overflow, or the carry misses exactly the cases that produce "60.0".
+  let sec = Math.round((minFloat - min) * 60 * 10) / 10;
+  [deg, min, sec] = carry([deg, min, sec], 60);
   return `${deg}°${String(min).padStart(2, "0")}'${sec.toFixed(1)}"${hemi}`;
 }
 
 function toDdm(value: number, pos: string, neg: string) {
   const hemi = value >= 0 ? pos : neg;
   const abs = Math.abs(value);
-  const deg = Math.floor(abs);
-  const min = (abs - deg) * 60;
+  let deg = Math.floor(abs);
+  let min = Math.round((abs - deg) * 60 * 1000) / 1000;
+  [deg, min] = carry([deg, min], 60);
   return `${deg}°${min.toFixed(3)}'${hemi}`;
 }
 

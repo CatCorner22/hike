@@ -13,7 +13,8 @@ import {
   waypointsGeoJson,
   type EverydayWaypointKind,
 } from "@/lib/safety/field-capture";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 import type { PositionSource } from "@/lib/safety/emergency";
 import {
   deleteFieldPhoto,
@@ -234,14 +235,14 @@ export function FieldCapture({
       setStatus({ tone: "error", text: "There are no saved places to export." });
       return;
     }
-    try {
-      downloadTextFile(
-        `${safeFilename(trailName)}-saved-places.geojson`,
-        waypointsGeoJson(trailName, result.waypoints),
-        "application/geo+json",
-      );
+    const saved = await saveTextFile(
+      `${safeFilename(trailName)}-saved-places.geojson`,
+      waypointsGeoJson(trailName, result.waypoints),
+      "application/geo+json",
+    );
+    if (saved) {
       setStatus({ tone: "saved", text: `${result.waypoints.length} saved place${result.waypoints.length === 1 ? "" : "s"} exported.` });
-    } catch {
+    } else {
       setStatus({ tone: "error", text: "The phone could not export your saved places." });
     }
   }

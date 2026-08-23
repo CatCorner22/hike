@@ -4,7 +4,10 @@ import { apiFetch } from "@/lib/api/client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { copyEmergencyInfo } from "@/lib/safety/emergency";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
+import { shareableOrigin } from "@/lib/api/client";
+import type { StoredDeadlineLocal } from "@/lib/safety/deadline-text";
 import type { IceProfile } from "@/lib/safety/profile";
 import {
   formatLeaveBehindCard,
@@ -24,6 +27,9 @@ type GuardianShareProps = {
   trailName: string;
   profile: IceProfile;
   returnAt?: string | null;
+  /** The stored local form of the deadline. Without it every civilian-facing
+      line falls back to UTC, which reads as tomorrow for an evening return. */
+  returnLocal?: StoredDeadlineLocal | null;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString | null;
   plannedDate?: string | null;
   departureTime?: string | null;
@@ -78,6 +84,7 @@ export function GuardianShare({
   trailName,
   profile,
   returnAt,
+  returnLocal,
   geometry,
   plannedDate,
   departureTime,
@@ -103,6 +110,9 @@ export function GuardianShare({
   const [link, setLink] = useState<GuardianLinkControl | null>(null);
   const [linkBusy, setLinkBusy] = useState(false);
   const [linkNotice, setLinkNotice] = useState<string | null>(null);
+  /** Shown verbatim after a copy, so a link that cannot work is visible rather
+      than hidden behind a "copied" toast. */
+  const [linkUrl, setLinkUrl] = useState<string | null>(null);
   const [linkConsent, setLinkConsent] = useState(false);
   const [expiresInHours, setExpiresInHours] = useState(24);
   const [linkClock, setLinkClock] = useState(() => Date.now());
@@ -126,8 +136,11 @@ export function GuardianShare({
       }
     }
     const ok = await copyEmergencyInfo(text);
-    if (!ok) downloadTextFile(filename, text, "text/plain");
-    flash(ok ? "Copied" : "Downloaded");
+    if (ok) {
+      flash("Copied");
+      return;
+    }
+    flash((await saveTextFile(filename, text, "text/plain")) ? "Downloaded" : "Could not save");
   }
 
   function message(kind: GuardianMessageKind) {
@@ -136,6 +149,7 @@ export function GuardianShare({
       trailName,
       profile,
       returnAt,
+      returnLocal,
       lat,
       lng,
       accuracyM,
@@ -284,10 +298,36 @@ export function GuardianShare({
       setLinkNotice("The secret link left this browser tab. Revoke this link and create a new one to share again.");
       return;
     }
-    const privateUrl = `${window.location.origin}/guardian#${control.token}`;
+    // NOT window.location.origin. In the iOS shell that is capacitor://localhost,
+    // which produces a link nobody else can open — while the sender's own tap
+    // works, because the shell bundles /guardian/index.html. A dead link that
+    // self-verifies is worse than no link.
+    const origin = shareableOrigin();
+    if (!origin) {
+      setLinkNotice(
+        "This build has no public address to share from, so the link would not open on anyone else's phone. Set NEXT_PUBLIC_API_BASE to the deployed site and rebuild.",
+      );
+      return;
+    }
+    const privateUrl = `${origin}/guardian#${control.token}`;
+    setLinkUrl(privateUrl);
     const copied = await copyEmergencyInfo(privateUrl);
-    if (!copied) downloadTextFile(`${safeFilename(trailName)}-guardian-link.txt`, privateUrl, "text/plain");
-    setLinkNotice(copied ? "Private link copied." : "Private link downloaded.");
+    if (copied) {
+      setLinkNotice("Private link copied.");
+      return;
+    }
+    // The token lives only in this tab; if it reaches neither the clipboard nor
+    // a file, saying it was saved would lose it silently.
+    const saved = await saveTextFile(
+      `${safeFilename(trailName)}-guardian-link.txt`,
+      privateUrl,
+      "text/plain",
+    );
+    setLinkNotice(
+      saved
+        ? "Private link downloaded."
+        : "Could not copy or save the private link — revoke it and create a new one.",
+    );
   }
 
   async function createPrivateLink() {
@@ -378,11 +418,12 @@ export function GuardianShare({
           type="button"
           variant="outline"
           className={compact ? "min-h-11" : undefined}
-          onClick={() => {
+          onClick={async () => {
             const text = formatLeaveBehindCard({
               trailName,
               profile,
               returnAt,
+              returnLocal,
               geometry,
               plannedDate,
               departureTime,
@@ -392,15 +433,21 @@ export function GuardianShare({
               bailouts,
               routeFacts,
             });
-            const outcome = printOrDownloadPlain(
+            const outcome = await printOrDownloadPlain(
               {
                 title: `${trailName} leave-behind`,
                 body: text,
                 filename: `${safeFilename(trailName)}-leave-behind.txt`,
               },
-              { download: downloadTextFile },
+              { download: saveTextFile },
             );
-            flash(outcome === "printed" ? "Print dialog opened" : "Popup blocked; downloaded text");
+            flash(
+              outcome === "printed"
+                ? "Print dialog opened"
+                : outcome === "downloaded"
+                  ? "Popup blocked; downloaded text"
+                  : "Could not print or save the leave-behind",
+            );
           }}
         >
           Print leave-behind
@@ -528,6 +575,11 @@ export function GuardianShare({
             </>
           )}
 
+          {linkUrl && (
+            <p className="text-xs break-all text-muted-foreground">
+              Link: <code>{linkUrl}</code>
+            </p>
+          )}
           {linkNotice && (
             <p className="text-xs" role="status" aria-live="polite">{linkNotice}</p>
           )}

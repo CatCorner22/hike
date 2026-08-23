@@ -4,6 +4,7 @@ import { formatCoords, type PositionSource } from "@/lib/safety/emergency";
 import type { IceProfile } from "@/lib/safety/profile";
 import { formatReport, reportField } from "@/lib/safety/report-field";
 import { smsHref } from "@/lib/safety/strobe";
+import { formatDeadlineForPerson, type StoredDeadlineLocal } from "@/lib/safety/deadline-text";
 
 export type GuardianMessageKind = "departing" | "ok" | "overdue";
 
@@ -22,6 +23,8 @@ export function formatGuardianMessage(input: {
   batteryPct?: number | null;
   positionSource?: PositionSource;
   lastUpdateAt?: number | string | null;
+  /** The stored local form of the deadline, so the contact can read it. */
+  returnLocal?: StoredDeadlineLocal | null;
   now?: Date;
 }): string {
   const deadline = input.returnAt && Number.isFinite(Date.parse(input.returnAt))
@@ -65,7 +68,7 @@ export function formatGuardianMessage(input: {
     `${APP_NAME} Trip Guardian`,
     kindLine,
     deadline
-      ? `Agreed overdue-action time: ${reportField(deadline.toISOString())}`
+      ? `Call for help if not heard from by: ${reportField(formatDeadlineForPerson(deadline, input.returnLocal))}`
       : "No overdue-action time is set.",
     reportField(status.message),
     `Last update: ${lastUpdate ? reportField(lastUpdate) : "none on this device"}`,

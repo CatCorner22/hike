@@ -23,6 +23,23 @@ export interface TokenStore {
 /** Inlined at build time; empty on the web build, absolute HTTPS in the shell build. */
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
+/**
+ * The origin to put in a link somebody else will open.
+ *
+ * `window.location.origin` is right on the web and catastrophic in the shell:
+ * there it is `capacitor://localhost`, so the private Guardian link pasted into
+ * a text message is unopenable on the recipient's phone — and the sender's own
+ * tap works, because the shell bundles /guardian/index.html, so nothing looks
+ * wrong. Returns null when there is no shareable origin at all, so callers can
+ * say so instead of producing a dead link.
+ */
+export function shareableOrigin(): string | null {
+  if (API_BASE) return API_BASE.replace(/\/+$/, "");
+  if (typeof window === "undefined") return null;
+  const origin = window.location.origin;
+  return /^https?:$/.test(new URL(origin).protocol) ? origin : null;
+}
+
 let tokenStore: TokenStore | null = null;
 let cachedToken: string | null | undefined;
 

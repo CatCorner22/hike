@@ -436,14 +436,25 @@ export function SafetyNavMap({
         ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        if (user.heading != null) {
+        if (user.heading != null && Number.isFinite(user.heading)) {
+          // The cone is drawn apex-up, and it used to inherit the scene's
+          // rotation with none of its own — so on screen it landed exactly where
+          // map-north landed, in BOTH modes. It pointed north and called itself
+          // a heading, and was only ever right when you happened to be walking
+          // due north. Rotating it by the heading in map space puts it along the
+          // direction of travel when north is up, and screen-up when the map
+          // turns with you.
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate((user.heading * Math.PI) / 180);
           ctx.fillStyle = nightMode === "red" ? "#ffc1c1" : nightMode === "nvg" ? "#b8f5c8" : "#93c5fd";
           ctx.beginPath();
-          ctx.moveTo(p.x, p.y - 16);
-          ctx.lineTo(p.x - 5, p.y - 4);
-          ctx.lineTo(p.x + 5, p.y - 4);
+          ctx.moveTo(0, -16);
+          ctx.lineTo(-5, -4);
+          ctx.lineTo(5, -4);
           ctx.closePath();
           ctx.fill();
+          ctx.restore();
         }
       }
 
@@ -454,13 +465,35 @@ export function SafetyNavMap({
       ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
       ctx.font = "12px sans-serif";
       ctx.fillText(headingUp ? "Heading up" : "North up", 12, labelTop);
-      if (!headingUp) {
-        ctx.fillText("N", width / 2 - 4, labelTop - 2);
+      // The north reference used to be drawn only when north was already up —
+      // absent from the one mode where the map turns underneath you and a hiker
+      // cannot otherwise tell which way north is. It is drawn in both modes now,
+      // pointing wherever north actually ended up on screen.
+      {
+        const anchorX = width / 2;
+        const anchorY = labelTop + 8;
+        ctx.save();
+        ctx.translate(anchorX, anchorY);
+        ctx.rotate(-rotation);
         ctx.strokeStyle = nightMode === "red" ? "#d88a8a" : nightMode === "nvg" ? "#8ee6a6" : "#9ca3af";
         ctx.beginPath();
-        ctx.moveTo(width / 2, labelTop + 2);
-        ctx.lineTo(width / 2, labelTop + 14);
+        ctx.moveTo(0, 6);
+        ctx.lineTo(0, -6);
         ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, -10);
+        ctx.lineTo(-3, -5);
+        ctx.lineTo(3, -5);
+        ctx.closePath();
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
+        ctx.fillText(
+          "N",
+          anchorX + Math.sin(-rotation) * 18 - 4,
+          anchorY - Math.cos(-rotation) * 18 + 4,
+        );
       }
     };
 

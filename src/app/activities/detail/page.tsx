@@ -11,7 +11,8 @@ import { formatDistance, formatDuration, formatElevation } from "@/lib/geo";
 import { format } from "date-fns";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { downloadTextFile, safeFilename } from "@/lib/safety/field";
+import { safeFilename } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
 
 const MapView = dynamic(
   () => import("@/components/map/map-view").then((m) => m.MapView),
@@ -195,11 +196,12 @@ function ActivityDetail({ activityId }: { activityId: string }) {
                   try { message = (JSON.parse(text) as { error?: string }).error ?? message; } catch { /* non-JSON error */ }
                   throw new Error(message);
                 }
-                downloadTextFile(
+                const saved = await saveTextFile(
                   `${safeFilename(activity.name || "Trail activity")}-activity.gpx`,
                   text,
                   "application/gpx+xml",
                 );
+                if (!saved) throw new Error("The phone would not save the GPX file.");
               } catch (error) {
                 setExportError(error instanceof Error ? error.message : "The GPX track could not be exported.");
               } finally {

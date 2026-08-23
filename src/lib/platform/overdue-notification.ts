@@ -22,9 +22,79 @@ export type OverdueNotificationSync =
   | { status: "unsupported" }
   | { status: "failed" };
 
-export async function syncOverdueNotification(
+/**
+ * Every sync runs to completion before the next one starts.
+ *
+ * The two callers are `void syncOverdueNotification(...)` inside the profile
+ * writer, driven by a `datetime-local` onChange — so a picker spin or a key
+ * autorepeat that crosses a valid/invalid boundary emits set-then-clear pairs
+ * milliseconds apart, each starting an independent chain. The two chains are
+ * not the same length: a clear is one bridge hop (`cancel`), while a set is
+ * four (permissions, cancel, the plugin's own cancel, schedule). Unserialized,
+ * a later-issued clear overtakes an earlier-issued set and the set's schedule
+ * lands after the clear's cancel — the store says no deadline while the phone
+ * stays armed on one the hiker just deleted, or armed on a time they scrolled
+ * past. That is exactly the invariant the docblock above claims to enforce.
+ *
+ * Chaining is the whole fix: the last-issued sync executes last, so the store
+ * and the phone converge on the newest deadline. The wait stays off the write
+ * path — callers still fire and forget, and the panel's message is about
+ * storage, which has already succeeded by then.
+ */
+let queue: Promise<unknown> = Promise.resolve();
+
+/**
+ * The outcome of the most recent sync, and a way to watch it.
+ *
+ * Callers fire and forget — deliberately, because the panel's "Deadline: …"
+ * message is about STORAGE and must not wait on three bridge hops. But the
+ * outcome still matters: the App Store listing promises "a return-time alarm
+ * fires on the phone itself, even with the app closed", and a hiker who tapped
+ * "Don't Allow" on the notification prompt gets no alarm and, until now, no
+ * word of it. `unsupported` is the honest steady state on the web and is not a
+ * problem to report; `failed` means the phone refused something it can do.
+ */
+let lastSync: OverdueNotificationSync = { status: "unsupported" };
+const syncListeners = new Set<(sync: OverdueNotificationSync) => void>();
+
+export function lastOverdueNotificationSync(): OverdueNotificationSync {
+  return lastSync;
+}
+
+export function subscribeOverdueNotification(
+  listener: (sync: OverdueNotificationSync) => void,
+): () => void {
+  syncListeners.add(listener);
+  return () => {
+    syncListeners.delete(listener);
+  };
+}
+
+export function syncOverdueNotification(
   returnAt: Date | string | null,
   now = Date.now(),
+): Promise<OverdueNotificationSync> {
+  const run = queue.then(async () => {
+    const result = await runOverdueSync(returnAt, now);
+    lastSync = result;
+    for (const listener of [...syncListeners]) listener(result);
+    return result;
+  });
+  // A failed sync must not poison the queue for the ones behind it.
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+/** Test-only: forget the last outcome and any watchers. */
+export function __resetOverdueNotificationForTests(): void {
+  lastSync = { status: "unsupported" };
+  syncListeners.clear();
+  queue = Promise.resolve();
+}
+
+async function runOverdueSync(
+  returnAt: Date | string | null,
+  now: number,
 ): Promise<OverdueNotificationSync> {
   const adapter = getPlatformAdapters().notifications;
   if (!adapter) return { status: "unsupported" };

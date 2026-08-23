@@ -177,10 +177,15 @@ export function useGps() {
 
     const startWatch = () => {
       stopWatchRef.current?.();
-      // Foreground watch: the navigate screen holds a wake lock, so fixes keep
-      // arriving; only track RECORDING needs the background variant.
+      // Background, not foreground. The old comment here said the navigate
+      // screen's wake lock keeps fixes arriving — but a wake lock only stops the
+      // screen sleeping on its own. Press the power button, switch apps, or drop
+      // the phone in a pocket and iOS suspends a foreground-only watcher: the
+      // breadcrumb stops, off-route alerting stops, and the check-in timer stops,
+      // all silently, while the header still reads "Breadcrumb: saved · N fixes".
+      // A hiker pocketing their phone is the normal case, not an edge case.
       stopWatchRef.current = startGeoWatch(applyFix, onError, {
-        background: false,
+        background: true,
         enableHighAccuracy: true,
         maximumAge: 3000,
         timeout: 20000,

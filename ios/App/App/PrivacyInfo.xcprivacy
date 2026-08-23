@@ -11,8 +11,12 @@
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypePreciseLocation</string>
+			<!-- Linked: precise location and user content are uploaded against a
+			     stable per-install identifier, and Apple treats a stable identifier
+			     as identity whether or not a name is attached. Tracking stays false:
+			     nothing goes to a data broker and nothing is used for advertising. -->
 			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<false/>
+			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>
@@ -23,8 +27,12 @@
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
 			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<!-- Linked: precise location and user content are uploaded against a
+			     stable per-install identifier, and Apple treats a stable identifier
+			     as identity whether or not a name is attached. Tracking stays false:
+			     nothing goes to a data broker and nothing is used for advertising. -->
 			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<false/>
+			<true/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>

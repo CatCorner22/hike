@@ -1,13 +1,22 @@
 "use client";
 
 import { APP_NAME } from "@/lib/brand";
+import { formatDeadlineForPerson } from "@/lib/safety/deadline-text";
 import { GuardianShare } from "@/components/safety/guardian-share";
-import { getIceProfile, resolveLocalDateTime, type IceProfile } from "@/lib/safety/profile";
+import {
+  getIceProfile,
+  getOverdueAlarm,
+  resolveLocalDateTime,
+  setOverdueAlarm,
+  type IceProfile,
+  type OverdueAlarm,
+} from "@/lib/safety/profile";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, MapPinned, ShieldAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -60,6 +69,15 @@ export function PreDeparturePanel({
   const [departureTime, setDepartureTime] = useState("");
   const [returnLocal, setReturnLocal] = useState("");
   const [returnOccurrence, setReturnOccurrence] = useState<ReturnOccurrence>(null);
+  /**
+   * The deadline the PHONE is armed with, which is a different thing from the
+   * one printed on this card. This field is deliberately per-plan and never
+   * reuses another trip's deadline; the phone alarm is device-global and has
+   * exactly one. Keeping them separate is right — letting them disagree in
+   * silence is not, because the card goes to a person and the alarm does not.
+   */
+  const [deviceAlarm, setDeviceAlarm] = useState<OverdueAlarm | null>(null);
+  const [alarmNote, setAlarmNote] = useState<string | null>(null);
   const [vehicle, setVehicle] = useState("");
   const [paceMph, setPaceMph] = useState("2.0");
   const [profile, setProfile] = useState<IceProfile>({
@@ -145,9 +163,31 @@ export function PreDeparturePanel({
       paceMetersPerHour: mph * 1609.344,
     });
   }, [plannedDate, departureTime, geometry, paceMph, routeLength]);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const alarm = await getOverdueAlarm();
+      if (!cancelled) setDeviceAlarm(alarm);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const returnResolution = returnLocal
     ? resolveLocalDateTime(returnLocal, undefined, returnOccurrence)
     : null;
+  const alarmMismatch = useMemo(() => {
+    if (!deviceAlarm?.returnAt) return null;
+    if (returnResolution?.kind !== "resolved") return null;
+    const armedMs = Date.parse(deviceAlarm.returnAt);
+    if (!Number.isFinite(armedMs)) return null;
+    if (armedMs === returnResolution.value.instant.getTime()) return null;
+    return {
+      armed: formatDeadlineForPerson(new Date(armedMs), deviceAlarm) ?? deviceAlarm.returnAt,
+    };
+  }, [deviceAlarm, returnResolution]);
+
   const returnAt = returnResolution?.kind === "resolved"
     ? returnResolution.value.instant.toISOString()
     : null;
@@ -320,9 +360,39 @@ export function PreDeparturePanel({
               }}
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Enter and confirm this for this plan. Klandagi will not reuse a deadline
-              saved for another trip; an unset deadline prints as not set.
+              Enter and confirm this for this plan. {APP_NAME} will not reuse a deadline
+              saved for another trip; an unset deadline prints as not set. This is the
+              time printed on the card — it does not arm the alarm on this phone.
             </p>
+            {alarmMismatch && (
+              <div className="mt-2 rounded border border-amber-500/50 p-2 text-xs">
+                <p>
+                  This phone&rsquo;s return-time alarm is set to{" "}
+                  <strong>{alarmMismatch.armed}</strong>, not the time on this card. Whoever
+                  holds the printed card and whoever is holding this phone are working to
+                  two different deadlines.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2"
+                  onClick={async () => {
+                    if (returnResolution?.kind !== "resolved") return;
+                    const stored = await setOverdueAlarm(returnResolution.value);
+                    setDeviceAlarm(stored ? await getOverdueAlarm() : deviceAlarm);
+                    setAlarmNote(
+                      stored
+                        ? "This phone's alarm now matches the card."
+                        : "This phone refused to store the deadline — the alarm is unchanged.",
+                    );
+                  }}
+                >
+                  Use the card&rsquo;s time on this phone too
+                </Button>
+                {alarmNote && <p className="mt-1" role="status" aria-live="polite">{alarmNote}</p>}
+              </div>
+            )}
           </div>
           {returnResolution?.kind === "ambiguous" && (
             <fieldset className="max-w-xl space-y-2 rounded-md border p-3">
@@ -371,6 +441,7 @@ export function PreDeparturePanel({
             trailName={trailName || `Plan ${planId.slice(0, 8)}`}
             profile={profile}
             returnAt={returnAt}
+            returnLocal={returnResolution?.kind === "resolved" ? returnResolution.value : null}
             geometry={geometry}
             plannedDate={plannedDate}
             departureTime={departureTime}

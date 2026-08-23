@@ -44,7 +44,12 @@ import {
   formatCoords,
   type PositionSource,
 } from "@/lib/safety/emergency";
-import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
+import { breadcrumbGpx, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
+import {
+  lastOverdueNotificationSync,
+  subscribeOverdueNotification,
+} from "@/lib/platform/overdue-notification";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { buildSafetyDossier } from "@/lib/safety/dossier";
 import { formatFixAge } from "@/lib/safety/gps-quality";
@@ -694,6 +699,22 @@ export function SafetyPanel({
     );
   }
 
+  /**
+   * A refused notification permission is invisible otherwise. `setOverdueAlarm`
+   * fires the sync and forgets it — correctly, since the write path must not
+   * wait on the native bridge — so the outcome is read from the seam instead.
+   * Only an outright refusal is worth surfacing: "unsupported" is the honest
+   * steady state on the web, where the in-app banner has always been the whole
+   * mechanism.
+   */
+  const [alarmRefused, setAlarmRefused] = useState(
+    () => lastOverdueNotificationSync().status === "failed",
+  );
+  useEffect(
+    () => subscribeOverdueNotification((sync) => setAlarmRefused(sync.status === "failed")),
+    [],
+  );
+
   // The deadline message used to be written before the store was awaited, so a phone
   // that refused the write left an alarm that read as armed and did nothing.
   function deadlineMessage(time: ResolvedLocalTime, stored: boolean) {
@@ -997,12 +1018,15 @@ export function SafetyPanel({
               disabled={trackPoints.length < 2}
               onClick={async () => {
                 const gpx = breadcrumbGpx(`${trailName} breadcrumbs`, trackPoints);
-                try {
-                  downloadTextFile(`${safeFilename(trailName)}-track.gpx`, gpx);
+                // saveTextFile reports whether a save actually ran. It used to be
+                // a synchronous throw, which never happened inside WKWebView — so
+                // this clipboard fallback was dead on iOS and the button claimed
+                // a download that had failed.
+                if (await saveTextFile(`${safeFilename(trailName)}-track.gpx`, gpx, "application/gpx+xml")) {
                   setGpxStatus("GPX downloaded");
-                } catch {
-                  const ok = await copyEmergencyInfo(gpx);
-                  setGpxStatus(ok ? "GPX copied" : "GPX export failed");
+                } else {
+                  const copied = await copyEmergencyInfo(gpx);
+                  setGpxStatus(copied ? "GPX copied" : "GPX export failed");
                 }
                 window.setTimeout(() => setGpxStatus(null), 2500);
               }}
@@ -1094,14 +1118,21 @@ export function SafetyPanel({
                   positionSource,
                   offTrailM,
                   returnAt: returnResolution?.instant.toISOString() ?? null,
+                  returnLocal: returnResolution,
                   checkins,
                   navLegs: legs,
                   waypoints,
                 });
                 const ok = await copyEmergencyInfo(text);
                 if (!ok) {
-                  downloadTextFile(`${safeFilename(trailName)}-dossier.txt`, text, "text/plain");
-                  setDossierStatus("Dossier downloaded");
+                  // Last resort for the dossier: if this fails too, it exists
+                  // nowhere, and saying otherwise is the worst possible lie here.
+                  const saved = await saveTextFile(
+                    `${safeFilename(trailName)}-dossier.txt`,
+                    text,
+                    "text/plain",
+                  );
+                  setDossierStatus(saved ? "Dossier downloaded" : "Dossier NOT saved");
                 } else {
                   setDossierStatus("Dossier copied");
                 }
@@ -1135,8 +1166,16 @@ export function SafetyPanel({
                     : null,
                 });
                 const ok = await copyEmergencyInfo(text);
-                if (!ok) downloadTextFile(`${safeFilename(trailName)}-paper.txt`, text, "text/plain");
-                setDossierStatus(ok ? "Paper backup copied" : "Paper backup downloaded");
+                if (ok) {
+                  setDossierStatus("Paper backup copied");
+                } else {
+                  const saved = await saveTextFile(
+                    `${safeFilename(trailName)}-paper.txt`,
+                    text,
+                    "text/plain",
+                  );
+                  setDossierStatus(saved ? "Paper backup downloaded" : "Paper backup NOT saved");
+                }
                 window.setTimeout(() => setDossierStatus(null), 2500);
               }}
             >
@@ -1187,6 +1226,7 @@ export function SafetyPanel({
                   ? new Date(returnLocal).toISOString()
                   : null
             }
+            returnLocal={returnResolution}
             geometry={geometry}
             lat={lat}
             lng={lng}
@@ -1331,7 +1371,7 @@ export function SafetyPanel({
               </ul>
               <p className="mt-2 font-medium text-foreground">Food / bear basics</p>
               <ul className="list-disc pl-4">
-                {bearSafetyCard().slice(0, 4).map((line) => (
+                {bearSafetyCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1346,7 +1386,7 @@ export function SafetyPanel({
                 ))}
               </ul>
               <ul className="mt-2 list-disc pl-4">
-                {wildernessFirstAidCard().slice(0, 5).map((line) => (
+                {wildernessFirstAidCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1528,7 +1568,7 @@ export function SafetyPanel({
               <p className="text-xs text-muted-foreground">Waiting for GPS grid…</p>
             )}
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-              {mgrsGridTips().slice(0, 4).map((t) => (
+              {mgrsGridTips().map((t) => (
                 <li key={t}>{t}</li>
               ))}
             </ul>
@@ -1553,7 +1593,7 @@ export function SafetyPanel({
             </p>
             <p className="text-xs text-muted-foreground">{backstopDefinition()}</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-              {backstopChecklist().slice(0, 4).map((b) => (
+              {backstopChecklist().map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>
@@ -2336,7 +2376,7 @@ export function SafetyPanel({
               <summary className="cursor-pointer font-medium text-foreground">Hunting &amp; trapping</summary>
               <p className="mt-2 font-medium text-foreground">Hunting</p>
               <ul className="list-disc pl-4">
-                {huntingBasics().slice(0, 4).map((l) => (
+                {huntingBasics().map((l) => (
                   <li key={l}>{l}</li>
                 ))}
               </ul>
@@ -2498,6 +2538,14 @@ export function SafetyPanel({
             <p className="text-xs text-muted-foreground">
               {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
+            {alarmRefused && (
+              <p className="text-xs font-medium text-destructive">
+                This phone refused the return-time alarm, so nothing will wake you
+                with the screen locked. Turn on Notifications for Klandagi in
+                Settings. The in-app OVERDUE warning still works whenever the app
+                is open.
+              </p>
+            )}
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">

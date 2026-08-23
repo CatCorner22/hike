@@ -98,7 +98,16 @@ export function CompassHud({
           })}
         </g>
         {readout && (
-          <g transform={`rotate(${readout.trueDeg} ${CX} ${CY})`}>
+          /**
+           * The needle's angle is measured against the CARD, not the screen, so
+           * it has to carry the card's own rotation. Without `+ rotation` the
+           * card turned by -heading while the needle turned by +heading, and the
+           * needle read twice the heading against the dial beneath it: at
+           * heading 180 it pointed 000, at 090 it pointed 180. Heading-up is the
+           * shipped default (navigate/page.tsx `useState(true)`), so this was
+           * live the moment any heading arrived.
+           */
+          <g transform={`rotate(${readout.trueDeg + rotation} ${CX} ${CY})`}>
             <polygon
               points={`${CX},${CY - R + 10} ${CX - 5},${CY + 4} ${CX + 5},${CY + 4}`}
               fill={needle}

@@ -86,6 +86,17 @@ async function main() {
   ) failed += 1;
 
   // Directory denial must reject instead of replacing the existing file.
+  //
+  // Root ignores the directory's permission bits, so under a root container —
+  // which is how these probes are usually run locally — the write succeeds and
+  // this case reports a failure that says nothing about the app. A probe that
+  // cries wolf in the environment it lives in teaches people to ignore it, so
+  // say plainly that the case could not be exercised instead.
+  if (process.getuid?.() === 0) {
+    console.log(
+      "SKIP read-only-directory-preserves-good-store — running as root, which bypasses the directory permission bit. CI runs unprivileged and does exercise this.",
+    );
+  } else {
   await writeFile(STORE, JSON.stringify(good));
   await chmod(DIR, 0o555);
   const readonly = await runTsx(
@@ -99,6 +110,7 @@ async function main() {
   await chmod(DIR, 0o755);
   const readonlyRaw = await readFile(STORE, "utf8");
   if (!log("read-only-directory-preserves-good-store", readonly.stdout.startsWith("REJECTED") && readonlyRaw === JSON.stringify(good), `status=${readonly.status}; ${readonly.stdout}; ${readonly.stderr}; unchanged=${readonlyRaw === JSON.stringify(good)}`)) failed += 1;
+  }
 
   // The recording queue must reject at the device budget without consuming route-pack space.
   // Mock the pending count at the ceiling — inserting 65k points in CI would take minutes.

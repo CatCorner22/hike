@@ -9,6 +9,16 @@
  * discovered by the WEB build either. The export build instead moves
  * src/proxy.ts aside for the duration of the build and always restores it —
  * on success, failure, and signals — so the working tree ends unchanged.
+ *
+ * `.next` gets the same treatment, for a reason that is not obvious: setting
+ * `distDir: ".next-cap"` redirects the EXPORT, but Next still writes its
+ * compiled build to the default `.next`. So a capacitor build silently replaces
+ * whatever web build was there with one that has `output: "export"`,
+ * `trailingSlash: true` and no API routes at all — and the next `next start`
+ * serves that, answering every API call with a redirect or a 404 while looking
+ * like a running app. That failure reads as an application bug and has cost
+ * real debugging time. Move the web build aside, let the export build have its
+ * own `.next`, then discard it and put the web build back.
  */
 import { existsSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -40,6 +50,16 @@ for (const file of ASIDE_FILES) {
   }
 }
 
+// The web build, if there is one, waits out the export next to the proxy.
+const webBuild = path.join(root, ".next");
+const webBuildAside = path.join(asideDir, "next-web-build");
+if (existsSync(webBuildAside)) {
+  rmSync(webBuild, { recursive: true, force: true });
+  renameSync(webBuildAside, webBuild);
+  console.error("build:cap: restored the .next web build left aside by an interrupted build");
+}
+if (existsSync(webBuild)) renameSync(webBuild, webBuildAside);
+
 let restored = false;
 const restore = () => {
   if (restored) return;
@@ -47,6 +67,10 @@ const restore = () => {
   for (const file of moved) {
     if (existsSync(file.aside)) renameSync(file.aside, file.source);
   }
+  // Whatever the export build put in .next describes a server that cannot serve
+  // this app. Never leave it where `next start` will find it.
+  rmSync(webBuild, { recursive: true, force: true });
+  if (existsSync(webBuildAside)) renameSync(webBuildAside, webBuild);
 };
 process.on("exit", restore);
 process.on("SIGINT", () => {

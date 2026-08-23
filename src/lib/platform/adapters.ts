@@ -77,9 +77,34 @@ export interface PlatformAdapters {
 }
 
 let adapters: PlatformAdapters = {};
+const listeners = new Set<() => void>();
 
 export function setPlatformAdapters(next: PlatformAdapters): void {
   adapters = next;
+  for (const listener of [...listeners]) listener();
+}
+
+/**
+ * Notifies when the native adapters land.
+ *
+ * Registration is asynchronous by construction: NativeBootstrap awaits two
+ * dynamic imports before it calls `setPlatformAdapters`, so it always resolves
+ * AFTER React has flushed the first round of mount effects. A seam sampled once
+ * in such an effect therefore reads the web fallback and keeps it forever —
+ * `requestWakeLock()` returns its no-op handle and never retries, and
+ * `isHeadingSupported()` answers false for the rest of the session.
+ *
+ * That was unreachable while every launch landed on the root document, because
+ * the navigate screen could only be reached by a client navigation long after
+ * hydration. Serving deep routes properly (StaticExportRouter) makes /navigate a
+ * genuine first mount — after a WKWebView content-process reload, the common
+ * case — so the seams have to be able to notice a late registration.
+ */
+export function subscribePlatformAdapters(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function getPlatformAdapters(): PlatformAdapters {
@@ -89,4 +114,5 @@ export function getPlatformAdapters(): PlatformAdapters {
 /** Test-only: restore the web-default state. */
 export function __resetPlatformAdaptersForTests(): void {
   adapters = {};
+  listeners.clear();
 }

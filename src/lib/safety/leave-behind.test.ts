@@ -91,7 +91,14 @@ describe("leave-behind trip card", () => {
 
     expect(card).toContain("Planned date: Saturday, Aug 22, 2026");
     expect(card).toContain("Planned departure: 7:30 AM (time entered on this device)");
-    expect(card).toContain("Agreed overdue-action time: 2026-08-23T01:00:00.000Z");
+    // Corrected expectation: this line used to be `deadline.toISOString()`, and
+    // for an evening return that carries TOMORROW's date under a "Planned date"
+    // line rendered as a local wall clock. It is the one fact that starts a
+    // search, so it now leads with the hiker's own clock when one was stored
+    // and otherwise says plainly that the time is UTC.
+    expect(card).toContain("Call for help if not heard from by:");
+    expect(card).toContain("0100Z 23 AUG 2026");
+    expect(card).not.toContain("2026-08-23T01:00:00.000Z");
     expect(card).toContain("Vehicle: Blue Subaru, plate ABC 123");
     expect(card).toContain("Notes: Clockwise from the north lot");
     expect(card).toContain("--- ROUTE FACTS ---");
@@ -146,7 +153,14 @@ describe("leave-behind trip card", () => {
     expect(card.length).toBeLessThanOrEqual(REPORT_MAX_LENGTH);
     expect(card.endsWith(" …[TRUNCATED]")).toBe(false);
     expect(card).toContain("--- RETURN ---");
-    expect(card).toContain("Agreed overdue-action time: 2026-08-23T01:00:00.000Z");
+    // Corrected expectation: this line used to be `deadline.toISOString()`, and
+    // for an evening return that carries TOMORROW's date under a "Planned date"
+    // line rendered as a local wall clock. It is the one fact that starts a
+    // search, so it now leads with the hiker's own clock when one was stored
+    // and otherwise says plainly that the time is UTC.
+    expect(card).toContain("Call for help if not heard from by:");
+    expect(card).toContain("0100Z 23 AUG 2026");
+    expect(card).not.toContain("2026-08-23T01:00:00.000Z");
     expect(card).toContain(LEAVE_BEHIND_DISCLAIMER);
     expect(card).toContain("--- IF THEY ARE OVERDUE ---");
     expect(card).toContain("Give SAR the exact itinerary");

@@ -26,10 +26,16 @@
 	<false/>
 	<key>NSCameraUsageDescription</key>
 	<string>Klandagi uses the camera only to scan a position QR code shown on another phone, so you can share locations with no signal. Nothing is recorded, stored, or sent anywhere.</string>
+	<!-- These must describe what the app actually does. The first string used to
+	     say "Location never leaves the device except in the emergency messages
+	     you send yourself", which is contradicted by flushActivityPoints in
+	     src/lib/offline/index.ts: it POSTs batches of {lat, lng, elevation,
+	     recordedAt} to this app's own backend so a finished hike survives losing
+	     the phone. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Klandagi shows your position on the downloaded trail map and computes off-route alerts on this phone. Location never leaves the device except in the emergency messages you send yourself.</string>
+	<string>Klandagi shows your position on the downloaded trail map and works out off-route alerts on this phone, with no signal. When you are back in range, finished tracks are uploaded to Klandagi's own server so they survive losing this phone. Nothing is sold or shared, and there is no advertising or analytics.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Track recording keeps saving your breadcrumb trail while the screen is locked, so the route back stays on this phone even with no signal. Recording runs only while you have started it.</string>
+	<string>While you are navigating or recording, Klandagi keeps your position updating with the screen off or the phone in a pocket — otherwise the breadcrumb you would follow home, your off-route alerts, and your check-in timer all stop without telling you. This runs only while a hike is open, and finished tracks are uploaded to Klandagi's own server when you are back in range.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
@@ -42,11 +48,16 @@
 	<array>
 		<string>armv7</string>
 	</array>
+	<!-- Portrait only, matching public/manifest.json and the web compass path,
+	     which refuses a device-orientation sample unless the screen orientation
+	     is exactly 0. The port widened this to landscape without widening any of
+	     the code written against it: the heading was uncorrected for device
+	     orientation, and the navigate screen's alert layer is clipped to about
+	     52px by a max-height:480px media query. Re-enable landscape only
+	     together with those. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

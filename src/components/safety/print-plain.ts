@@ -12,7 +12,12 @@ export type PrintablePopup = {
 
 export type OpenPrintablePopup = () => PrintablePopup | null;
 
-type DownloadPlainText = (filename: string, body: string, mime: string) => void;
+/**
+ * Reports whether the file was actually saved. It used to return void, which
+ * inside WKWebView meant "downloaded" was printed for an `<a download>` click
+ * the engine had ignored — the print fallback claimed a file that did not exist.
+ */
+type DownloadPlainText = (filename: string, body: string, mime: string) => Promise<boolean>;
 
 function escapeHtml(value: string): string {
   return value
@@ -64,14 +69,15 @@ export function printPlain(
   }
 }
 
-export function printOrDownloadPlain(
+export async function printOrDownloadPlain(
   input: { title: string; body: string; filename: string },
   dependencies: {
     download: DownloadPlainText;
     openPopup?: OpenPrintablePopup;
   },
-): "printed" | "downloaded" {
+): Promise<"printed" | "downloaded" | "failed"> {
   if (printPlain(input.title, input.body, dependencies.openPopup)) return "printed";
-  dependencies.download(input.filename, input.body, "text/plain");
-  return "downloaded";
+  return (await dependencies.download(input.filename, input.body, "text/plain"))
+    ? "downloaded"
+    : "failed";
 }
