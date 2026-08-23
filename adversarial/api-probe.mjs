@@ -90,6 +90,22 @@ async function main() {
   const headers = await ownerA("/api/plans");
   result(Boolean(headers.headers["content-security-policy"]) && headers.headers["x-content-type-options"] === "nosniff" && headers.headers["cache-control"] === "no-store", "F-07 and F-04 security/cache headers are present");
 
+  // The one request that answers "is this deployment able to do its job at all".
+  const health = await ownerA("/api/health");
+  result(
+    health.status === 200
+      && health.body?.canStoreUserData === true
+      && Array.isArray(health.body?.checks)
+      && health.body.checks.every((check) => check.status !== "fail"),
+    "F-10 health endpoint reports a working deployment",
+    `HTTP ${health.status} ${JSON.stringify(health.body?.checks?.filter((c) => c.status !== "ok") ?? [])}`,
+  );
+  result(
+    !JSON.stringify(health.body).includes("postgresql://")
+      && !JSON.stringify(health.body).includes(process.env.SESSION_SECRET ?? "\u0000never"),
+    "F-10 health endpoint leaks no credential",
+  );
+
   console.log(`\nSUMMARY PASS=${pass} FAIL=${fail}`);
   process.exitCode = fail ? 2 : 0;
 }

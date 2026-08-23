@@ -48,6 +48,21 @@ jobs:
           URL="${URL%/}"
           echo "Target: $URL"
 
+          # Ask the deployment about itself before probing anything else. A 503
+          # here names the exact missing setting, which is a far better first
+          # line in a failure log than "trail search returned 500".
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' "$URL/api/health")
+          python3 -m json.tool /tmp/health.json || cat /tmp/health.json
+          [ "$code" = "200" ] || fail "health check returned $code — the body above names the failing check"
+          python3 - <<'PYCHECK' || fail "health check reported a problem"
+          import json, sys
+          report = json.load(open("/tmp/health.json"))
+          bad = [c for c in report["checks"] if c["status"] == "fail"]
+          if bad or not report.get("canStoreUserData"):
+              print("failing checks:", json.dumps(bad, indent=2))
+              sys.exit(1)
+          PYCHECK
+
           code=$(curl -s -o /tmp/search.json -w '%{http_code}' "$URL/api/trails/search?q=test")
           [ "$code" = "200" ] || fail "trail search returned $code"
           head -c 200 /tmp/search.json; echo

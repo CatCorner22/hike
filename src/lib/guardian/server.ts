@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, sql } from "drizzle-orm";
 import { getDb, hasDatabase } from "@/lib/db";
 import { guardianShares } from "@/lib/db/schema";
 import {
@@ -19,6 +19,48 @@ export class GuardianStorageUnavailableError extends Error {
 function requireGuardianDb() {
   if (!hasDatabase()) throw new GuardianStorageUnavailableError();
   return getDb();
+}
+
+/**
+ * How long a finished link's row lingers before it is deleted.
+ *
+ * The app tells a hiker their guardian link is revocable and short-lived, and it
+ * kept every one forever. Expired and revoked links were correctly *hidden* —
+ * every read filters on `expires_at` and `revoked_at`, so nobody could read a
+ * stale one — but the row itself, with the route name and the last progress,
+ * ETA, battery and deviation the hiker published, stayed in the table for good.
+ * "Short-lived" has to mean the data as well as the access.
+ *
+ * A week of grace, so a hiker who revokes a link at the trailhead and reopens the
+ * app the next evening still sees that it was revoked rather than that it never
+ * existed.
+ */
+export const GUARDIAN_RETENTION_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Bounded so a purge cannot become a long-running statement on a large table. */
+const GUARDIAN_PURGE_LIMIT = 500;
+
+/**
+ * Delete links that are finished and past their grace period.
+ *
+ * Opportunistic: called when a hiker creates a new link, which is a moment they
+ * are already waiting on a write, and never on a read. Best-effort by design —
+ * a failed purge must not stop somebody sharing their route.
+ */
+export async function purgeFinishedGuardianShares(now = new Date()): Promise<number> {
+  if (!hasDatabase()) return 0;
+  const cutoff = new Date(now.getTime() - GUARDIAN_RETENTION_GRACE_MS);
+  const deleted = await getDb()
+    .delete(guardianShares)
+    .where(
+      sql`${guardianShares.id} in (
+        select id from ${guardianShares}
+        where (expires_at < ${cutoff} or (revoked_at is not null and revoked_at < ${cutoff}))
+        limit ${GUARDIAN_PURGE_LIMIT}
+      )`,
+    )
+    .returning({ id: guardianShares.id });
+  return deleted.length;
 }
 
 export async function createGuardianShare(input: {
@@ -43,6 +85,9 @@ export async function createGuardianShare(input: {
     updatedAt: now,
   }).returning();
   if (!saved) throw new Error("Guardian link was not persisted");
+  // The hiker is already waiting on this write, so it is the cheapest honest
+  // moment to retire finished links. Never allowed to fail the share.
+  void purgeFinishedGuardianShares(now).catch(() => 0);
   return { share: saved, token };
 }
 
