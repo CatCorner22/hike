@@ -1,5 +1,6 @@
 import { APP_NAME } from "@/lib/brand";
 import { formatZulu } from "@/lib/safety/landnav";
+import { formatDeadlineForPerson, type StoredDeadlineLocal } from "@/lib/safety/deadline-text";
 import { formatCoords, emergencyMessage, type PositionSource } from "@/lib/safety/emergency";
 import { formatCheckinLog, type CheckinEntry } from "@/lib/safety/checkin";
 import { formatNavLog, type NavLeg } from "@/lib/safety/navlog";
@@ -18,6 +19,8 @@ export function buildSafetyDossier(input: {
   recordedAt?: number;
   offTrailM?: number;
   returnAt?: string | null;
+  /** The stored local form of the deadline, so a reader sees their own clock. */
+  returnLocal?: StoredDeadlineLocal | null;
   checkins?: CheckinEntry[];
   navLegs?: NavLeg[];
   waypoints?: SafetyWaypoint[];
@@ -73,7 +76,9 @@ export function buildSafetyDossier(input: {
   if (input.returnAt) {
     const status = overdueStatus(input.returnAt);
     lines.push("--- PLANNED RETURN ---");
-    lines.push(`Return by: ${input.returnAt}`);
+    lines.push(
+      `Return by: ${formatDeadlineForPerson(new Date(input.returnAt), input.returnLocal) ?? "unreadable"}`,
+    );
     lines.push(status ? status.label : "Return time unreadable — re-enter it before relying on the overdue alarm.");
     lines.push("");
   }

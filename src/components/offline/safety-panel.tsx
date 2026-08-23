@@ -1118,6 +1118,7 @@ export function SafetyPanel({
                   positionSource,
                   offTrailM,
                   returnAt: returnResolution?.instant.toISOString() ?? null,
+                  returnLocal: returnResolution,
                   checkins,
                   navLegs: legs,
                   waypoints,
@@ -1225,6 +1226,7 @@ export function SafetyPanel({
                   ? new Date(returnLocal).toISOString()
                   : null
             }
+            returnLocal={returnResolution}
             geometry={geometry}
             lat={lat}
             lng={lng}

@@ -1,5 +1,6 @@
 "use client";
 
+import { APP_NAME } from "@/lib/brand";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -131,9 +132,18 @@ export function ReadinessGate({
           <CardTitle>Pre-hike checklist</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {/* This used to read "they are what lets someone find you", which is a
+              capability claim the software does not have: nothing here ever
+              contacts the ICE number. It is validated, printed on the dossier
+              and the QR handoff, and dialled by a human — the hiker, or whoever
+              finds the phone. The return time arms an alarm on THIS phone. The
+              app's own guide has said the true thing all along. */}
           <p className="text-sm text-muted-foreground">
-            Set these before you leave: they are what lets someone find you. You can
-            still open the map without them.
+            {APP_NAME} cannot tell anyone you are overdue. The return time sets an
+            alarm on this phone only, and the contact details are here for you or
+            for whoever reaches you. Before you leave, tell a person your route and
+            your return time — that is what actually starts a search. You can still
+            open the map without any of this.
           </p>
           {overdueNote && (
             <p className="text-sm font-medium text-destructive">{overdueNote}</p>

@@ -9,6 +9,7 @@ import {
   REPORT_MAX_LENGTH,
 } from "@/lib/safety/report-field";
 import { formatPlannedDate, plannedDateOnly } from "@/lib/plans/date-only";
+import { formatDeadlineForPerson, type StoredDeadlineLocal } from "@/lib/safety/deadline-text";
 
 export const LEAVE_BEHIND_DISCLAIMER =
   "Silence is not distress. Call SAR only at the agreed overdue-action time, if an SOS arrives, or if there is other evidence of trouble.";
@@ -188,6 +189,8 @@ export function formatLeaveBehindCard(input: {
   waypoints?: LeaveBehindLocation[] | null;
   bailouts?: LeaveBehindLocation[] | null;
   routeFacts?: LeaveBehindRouteFact[] | null;
+  /** The stored local form of the deadline, so the card can print it. */
+  returnLocal?: StoredDeadlineLocal | null;
   now?: Date;
 }): string {
   const ends = routeEnds(input.geometry);
@@ -220,9 +223,12 @@ export function formatLeaveBehindCard(input: {
       ? `Planned departure: ${reportField(departure)} (time entered on this device)`
       : "Planned departure: (not set)",
     deadline
-      ? `Agreed overdue-action time: ${reportField(deadline.toISOString())}`
+      ? `Call for help if not heard from by: ${reportField(formatDeadlineForPerson(deadline, input.returnLocal))}`
       : "Agreed overdue-action time: (not set — do not treat silence as an emergency)",
-    reportField(status.message),
+    // The countdown is relative to the moment of printing. On a sheet of paper
+    // that someone reads hours or days later it is not just useless, it is
+    // misleading — so it is labeled, not printed bare.
+    deadline ? `(as of printing: ${reportField(status.message)})` : reportField(status.message),
     LEAVE_BEHIND_DISCLAIMER,
     "",
     "--- IF THEY ARE OVERDUE ---",
