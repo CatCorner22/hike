@@ -108,3 +108,67 @@ describe("haptics seam", () => {
     expect(received).toEqual([[120, 120, 360]]);
   });
 });
+
+describe("overdue notification seam", () => {
+  function fakeNotifications() {
+    const calls: string[] = [];
+    return {
+      calls,
+      adapter: {
+        scheduleAt: async (id: number, atMs: number) => {
+          calls.push(`schedule:${id}@${atMs}`);
+          return true;
+        },
+        cancel: async (id: number) => {
+          calls.push(`cancel:${id}`);
+        },
+      },
+    };
+  }
+
+  it("reports unsupported on the web instead of pretending an alarm exists", async () => {
+    const { syncOverdueNotification } = await import("./overdue-notification");
+    expect(await syncOverdueNotification("2026-08-23T18:00:00Z")).toEqual({ status: "unsupported" });
+  });
+
+  it("always cancels before scheduling, with one fixed id", async () => {
+    const { OVERDUE_NOTIFICATION_ID, syncOverdueNotification } = await import("./overdue-notification");
+    const fake = fakeNotifications();
+    setPlatformAdapters({ notifications: fake.adapter });
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    const at = Date.parse("2026-08-23T18:00:00Z");
+    const result = await syncOverdueNotification("2026-08-23T18:00:00Z", now);
+    expect(result).toEqual({ status: "scheduled", atMs: at });
+    expect(fake.calls).toEqual([
+      `cancel:${OVERDUE_NOTIFICATION_ID}`,
+      `schedule:${OVERDUE_NOTIFICATION_ID}@${at}`,
+    ]);
+  });
+
+  it("clears on null, on an unparseable time, and on a deadline already past", async () => {
+    const { syncOverdueNotification } = await import("./overdue-notification");
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    for (const returnAt of [null, "not-a-time", "2026-08-23T09:00:00Z"]) {
+      const fake = fakeNotifications();
+      setPlatformAdapters({ notifications: fake.adapter });
+      const result = await syncOverdueNotification(returnAt, now);
+      expect(result.status).toBe("cleared");
+      expect(fake.calls).toHaveLength(1);
+      expect(fake.calls[0]).toMatch(/^cancel:/);
+    }
+  });
+
+  it("degrades an adapter failure to failed, never a false scheduled", async () => {
+    const { syncOverdueNotification } = await import("./overdue-notification");
+    setPlatformAdapters({
+      notifications: {
+        scheduleAt: async () => {
+          throw new Error("plugin died");
+        },
+        cancel: async () => undefined,
+      },
+    });
+    const now = Date.parse("2026-08-23T10:00:00Z");
+    expect((await syncOverdueNotification("2026-08-23T18:00:00Z", now)).status).toBe("failed");
+  });
+});

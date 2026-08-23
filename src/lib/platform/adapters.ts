@@ -34,11 +34,18 @@ export interface SaveFileAdapter {
   saveText(filename: string, text: string, mime: string): Promise<boolean>;
 }
 
+export interface NotificationsAdapter {
+  /** Idempotent: scheduling an id that is already scheduled replaces it. */
+  scheduleAt(id: number, atMs: number, title: string, body: string): Promise<boolean>;
+  cancel(id: number): Promise<void>;
+}
+
 export interface PlatformAdapters {
   network?: NetworkAdapter;
   battery?: BatteryAdapter;
   haptics?: HapticsAdapter;
   saveFile?: SaveFileAdapter;
+  notifications?: NotificationsAdapter;
 }
 
 let adapters: PlatformAdapters = {};
