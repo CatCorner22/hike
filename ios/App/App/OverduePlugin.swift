@@ -111,16 +111,17 @@ public class OverduePlugin: CAPPlugin, CAPBridgedPlugin {
                 content.relevanceScore = 1.0
             }
 
-            var components = Calendar(identifier: .gregorian)
-                .dateComponents(in: TimeZone(identifier: "UTC") ?? TimeZone.current, from: fireDate)
-            components.nanosecond = nil
-            components.weekday = nil
-            components.weekdayOrdinal = nil
-            components.quarter = nil
-            components.weekOfMonth = nil
-            components.weekOfYear = nil
-            components.yearForWeekOfYear = nil
-            components.dayOfYear = nil
+            // Ask for exactly the six fields the trigger needs, in UTC, rather
+            // than taking every component of the date and clearing the rest:
+            // DateComponents keeps gaining fields (dayOfYear arrived in iOS 18),
+            // and a list of things to null out is a list that goes stale.
+            var utc = Calendar(identifier: .gregorian)
+            utc.timeZone = TimeZone(identifier: "UTC") ?? TimeZone.current
+            var components = utc.dateComponents(
+                [.year, .month, .day, .hour, .minute, .second],
+                from: fireDate
+            )
+            components.timeZone = utc.timeZone
 
             let request = UNNotificationRequest(
                 identifier: self.requestIdentifier(id),

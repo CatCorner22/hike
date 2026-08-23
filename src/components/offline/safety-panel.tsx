@@ -1021,6 +1021,20 @@ export function SafetyPanel({
             )}
           </div>
 
+          {/*
+            Directly in the panel, not behind a disclosure triangle labelled
+            "Advanced tools and field guides".
+
+            This is where the tourniquet clock, the triage card, the hypothermia
+            and heat guidance, the avalanche and wildlife references live. None
+            of them is an advanced tool — they are the reason somebody opened
+            this panel at the worst moment of their day, and reaching them took
+            a tap on a summary whose own words did not mention medicine. The tab
+            contents render only when their tab is selected, so the cost of
+            surfacing them is a tab bar.
+          */}
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
+
           <FieldCapture
             packId={packId}
             trailName={trailName}
@@ -2530,7 +2544,6 @@ export function SafetyPanel({
             </Button>
           </div>
 
-          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
             </div>
           </details>
 

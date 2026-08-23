@@ -1743,6 +1743,147 @@ and did drop claims that did not survive — the route-card copy preview that
 shows four lines and says "… copied" is honest, because the clipboard gets the
 whole card. A panel that cannot reject its own members is a panel that inflates.
 
+## Twenty-third pass — the panel's fast-follows, and the backlog it flagged
+
+Every item the twenty-second pass ranked below a ship-blocker, worked through in
+order, plus the two backlog entries the chair singled out. No new swarm: the
+findings were already named, and what was missing was the work.
+
+**A grid reference said more than the app knew.** The grid line always printed
+ten digits — one-metre precision — whatever the fix behind it was, so a
+dead-reckoned position, which is the app's own estimate after the GPS is gone and
+can be hundreds of metres out, printed identically to a ±5 m satellite fix. The
+digit count now comes from the reported accuracy (1 m under ±10 m, 10 m under
+±100 m, 100 m under ±1 km, 1 km beyond) and a dead-reckoned fix is capped at
+100 m regardless of what accuracy it claims, because that figure describes the
+last real fix and not the estimate. Every grid line also states its datum: a
+reference without one is ambiguous by roughly 200 m in the lower 48 — WGS 84
+against NAD 27 — the same order as the error being reported.
+
+**The leave-behind card never said who to phone.** It had a field for the
+vehicle's license plate and none for the agency with jurisdiction. "Call 911" is
+right in a town and wrong on a trail, where a county sheriff or park dispatch
+runs the search and 911 costs a transfer. The profile carries the responding
+agency and its number, the card prints CALL FIRST at the top of the overdue
+block, and when nobody recorded one it says to ask before the hiker leaves —
+a question someone can still act on, unlike a blank.
+
+**The tourniquet clock could only start at "now", and offered conversion from
+minute zero.** A tourniquet goes on before a phone comes out, so the clock ran
+late by however long the casualty was being treated first — and the boundary
+that ran late with it is the 6 h one, the one that decides whether the limb is
+salvageable. The applied time is now correctable in place, clamped so it can
+never sit in the future and never more than a day back, and the 2 h and 6 h
+decision points print as wall-clock Zulu times. Conversion is gated on the
+conditions CoTCCC actually names — evacuation delayed, no shock, not an
+amputation, someone present to watch the wound — where before it was offered to
+anyone whose tourniquet was under two hours old, which meant a solo hiker who
+had just stopped a femoral bleed was invited to undo it two minutes later. An
+unticked box reads as "not confirmed", never as "confirmed false". And the mark
+no longer reads `TQ LIMB NOT ENTERED 1603Z`: there is no mark until a limb is
+recorded, though the time still reaches the casualty card.
+
+**Turnaround warnings ignored the pace the app had been measuring all along.**
+`pace.ts` was a flat 5 km/h — a fit walker on a good path with a day pack —
+while `guardian/status.ts` already computed the party's real speed and spent it
+only on the ETA sent to the people at home. A troop moving at 2 km/h was told six
+flat kilometres was seventy minutes when it was three hours. The measured pace
+now feeds the turnaround warning, the HUD tile and the panel readout, taking the
+slower of the book figure and the party's own, under the same gates as the
+family-facing ETA so the two screens cannot disagree about whether a pace is
+known. Every estimate says which estimator produced it.
+
+**A green check sat beside "context not saved."** One readiness row computed its
+pass mark from a different condition than its own title branched on — the only
+row in the list where the two disagreed — so VoiceOver read "Nearby coverage
+recorded; context not saved. Pass."
+
+**"Party size: 1" for a group of nine.** The field existed only behind the
+navigate gate, so a fresh install printed the default onto the leave-behind card
+and the SOS text as though somebody had stated it. It is now on the pre-hike
+checklist, the profile records whether anyone actually stated a number, and both
+cards say "not stated — ask the contact how many went out" when nobody did.
+
+**"Not set up: ICE contact is unusable: ICE phone is required., Planned return
+time."** The navigate banner joined the validator's own sentences with commas. A
+readiness gap now carries two strings — the validator's words for the field that
+fixes it, a short imperative for the sentence — so the seams are gone by
+construction rather than by whoever remembers to reword at the call site.
+
+**Status colour was hue without luminance.** Measured in the running app against
+the page background: `text-green-600` is 3.22:1 and `text-amber-600` is 3.20:1,
+both under AA's 4.5:1 for body text. The -700 shades measure 4.95:1 and 5.03:1.
+Separately, the SOS strobe's Stop control was the app's secondary grey on a
+background alternating white and black — 1.09:1 against the light frame,
+invisible half the time, on the one screen where panic is the expected state. It
+now carries its own colour and a double outline, and the strobe does not start by
+itself on a device that asked for reduced motion.
+
+**The trauma card was set in 12px type behind five collapsed sections**, asked
+for two dropdown answers before printing any action text, and its "Start
+tourniquet clock" button was 28 px tall. Tap targets across the app moved to
+Apple's 44 pt guidance — the default button was 32 px and "sm" was 28 px.
+
+**Sleep Focus was swallowing the alarm the app exists to raise.**
+`@capacitor/local-notifications` has no way to set an interruption level, so
+every overdue alarm shipped at `.active`, which iOS withholds during any Focus
+mode and can fold into a Scheduled Summary. The app now ships its own
+notification plugin setting `.timeSensitive`, with the entitlement that lets the
+mark break through, and asks for the permission on the pre-hike checklist rather
+than from inside a datetime picker's onChange where one reflexive "Don't Allow"
+cost the whole trip's alarm silently.
+
+**Every content-process kill left a CLLocationManager running.** The
+background-geolocation watcher id lived only in the JavaScript closure that
+created it. WKWebView kills its content process under memory pressure and
+Capacitor answers with `webView.reload()`; the page dies, the native manager does
+not, and the reloaded page opens another. One orphan per kill at navigation
+accuracy, against the battery that decides whether the hiker walks out. Ids now
+outlive the page in Preferences and are reclaimed at bootstrap before any adapter
+is published.
+
+**The submission notes told whoever files this app to answer "None" to every
+objectionable-content question.** Two taps from the home screen is a tourniquet
+conversion timer; one tab over is snare and deadfall construction. That is a
+2.3.6 metadata violation checkable by anyone who opens the Medical tab. The
+notes now describe the content question by question. The recorder also states,
+before the Start button, that recording keeps GPS running with the screen off and
+uses the battery noticeably faster — the notice guideline 2.5.4 asks for, and
+which no user-facing string in the app had ever carried.
+
+**"Subtract 15.0°" came out of a table of whole numbers.** The declination model
+is integers on ten-degree cells; at Yosemite Valley it returns 13.4° where the
+published field is about 12.4, and the navigate screen printed a tenth of a
+degree — roughly twenty times the precision the source supports, in the
+typography of a surveyed figure. Everything now leaves the model as whole degrees
+with its own error beside it ("subtract 15° ±2°"), and the uncertainty widens as
+the model ages. `headingDisagreement`, the check meant to catch a declination
+sign error, had a 45° threshold — a quadrant — while a sign error over the
+western US produces 12° to 27°. Every one passed under the gate built to catch
+it; the threshold is now 20°.
+
+**A four-day trip could never create a share link.** The guardian dialog disabled
+its own create button whenever the return time fell past the link's expiry, under
+"Choose a longer link", while the longest link on offer and the server's ceiling
+were both 72 hours. The ceiling is fourteen days, the picker offers "Through my
+return time", and the button is never disabled on the duration. The ETA sanity
+bound stayed at 72 hours — it had been sharing the constant, and a link covering
+a two-week expedition is a different claim from an ETA projected two weeks out
+from an hour of walking.
+
+**And the plugin added for the first of those was never compiled.** A pbxproj is
+a graph keyed by 24-hex identifiers with no integrity check of its own, and
+`OverduePlugin.swift` was added by hand with two identifiers
+`MainViewController.swift` already held. Xcode resolves duplicates to whichever
+it parsed first and drops the other, silently — the file was in the repo, listed
+in the Sources phase, and never built. The simulator lane caught it only because
+one line referenced the missing symbol; a plugin added without a call site would
+have vanished with no error at all. The project file is now checked like any
+other graph: every identifier defined once, every build file resolving to a real
+file reference, every Swift file on disk reaching the Sources phase.
+
+Sixteen fixes, each with a regression test and a mutation check. 1,328 tests.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

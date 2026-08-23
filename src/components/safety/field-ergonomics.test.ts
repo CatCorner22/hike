@@ -111,3 +111,33 @@ describe("a missing accuracy is never rendered as zero metres", () => {
     expect(capture).toMatch(/No accuracy estimate came with this fix/);
   });
 });
+
+
+/**
+ * The tourniquet clock, the triage card and the hypothermia guidance sat behind
+ * a disclosure triangle reading "Advanced tools and field guides" — a summary
+ * whose own words do not mention medicine — inside a panel that is already long.
+ * They are not advanced tools; they are why somebody opened this panel.
+ */
+describe("the field references are not filed under advanced tools", () => {
+  const panel = read("src/components/offline/safety-panel.tsx");
+
+  it("puts the capability tabs in the panel body, not inside a details block", () => {
+    const tabs = panel.indexOf("<CapabilityTabs");
+    // The summary element itself, not the prose about it in the comment above.
+    const advanced = panel.indexOf(">Advanced tools and field guides</summary>");
+    expect(tabs).toBeGreaterThan(-1);
+    expect(advanced).toBeGreaterThan(-1);
+    expect(tabs).toBeLessThan(advanced);
+  });
+
+  it("keeps them above the emergency-position capture, near the top of the sheet", () => {
+    expect(panel.indexOf("<CapabilityTabs")).toBeLessThan(panel.indexOf("<FieldCapture"));
+  });
+
+  it("opens on the medical tab", () => {
+    expect(read("src/components/safety/capability-tabs.tsx")).toMatch(
+      /useState<Tab>\("medical"\)/,
+    );
+  });
+});
