@@ -96,7 +96,73 @@ describe("hypothermiaStage — false positives", () => {
     expect(hypothermiaStage({ coreTempC: 27, shivering: false, alteredMental: false, conscious: true })!.stage).toBe("severe");
     expect(hypothermiaStage({ coreTempC: 31, shivering: true, alteredMental: false, conscious: true })!.stage).toBe("moderate");
     expect(hypothermiaStage({ coreTempC: 34, shivering: true, alteredMental: false, conscious: true })!.stage).toBe("mild");
-    expect(hypothermiaStage({ shivering: true, alteredMental: false, conscious: false })!.stage).toBe("severe");
+    expect(
+      hypothermiaStage({ shivering: true, alteredMental: false, conscious: false, coldExposed: true })!.stage,
+    ).toBe("severe");
+  });
+
+  /**
+   * Regression — and a correction to this suite. The line above used to read
+   * `hypothermiaStage({ shivering: true, alteredMental: false, conscious: false })`
+   * and assert "severe", which is the defect written down as an expectation:
+   * unconsciousness with no cold exposure anywhere in the input. That describes
+   * head injury, syncope, seizure and hypoglycaemia at least as often as
+   * hypothermia, and this branch's advice is "insulate and handle gently" —
+   * actively wrong for the heat-stroke patient who needs immersion. `!shivering`
+   * was already guarded on `coldExposed` for exactly this reason; `!conscious`
+   * was not.
+   */
+  it("does not stage an unconscious patient as hypothermic without cold exposure", () => {
+    expect(
+      hypothermiaStage({ shivering: false, alteredMental: false, conscious: false })!.stage,
+    ).not.toBe("severe");
+    expect(
+      hypothermiaStage({ shivering: false, alteredMental: false, conscious: false, coldExposed: true })!.stage,
+    ).toBe("severe");
+    // A measured core temperature is evidence in itself and needs no history.
+    expect(
+      hypothermiaStage({ coreTempC: 26, shivering: false, alteredMental: false, conscious: true })!.stage,
+    ).toBe("severe");
+  });
+});
+
+/**
+ * The two aids give opposite instructions — insulate versus immerse in cold
+ * water — so it must be impossible for both to fire at once. They used to, from
+ * a single shared "Altered mental status" checkbox in the panel: hypothermia
+ * moderate/WARNING beside heat illness stroke/CRITICAL, equal authority, no
+ * exposure ever entered. Following the app was worse than having no app.
+ */
+describe("the cold aid and the heat aid can never both fire", () => {
+  it("needs heat exposure before calling altered mental status heat stroke", () => {
+    expect(heatIllnessTriage({ alteredMental: true, sweating: false, crampsOnly: false })!.condition).not.toBe("stroke");
+    expect(
+      heatIllnessTriage({ alteredMental: true, sweating: false, crampsOnly: false, heatExposed: true })!.condition,
+    ).toBe("stroke");
+    // Measured core temperature stands on its own, as the docblock says.
+    expect(
+      heatIllnessTriage({ coreTempC: 40.5, alteredMental: false, sweating: true, crampsOnly: false })!.condition,
+    ).toBe("stroke");
+  });
+
+  it("needs heat evidence for every heat branch, not just the critical one", () => {
+    // Sweating alone describes everyone walking uphill, and cramps in a cold,
+    // wet hiker are not heat cramps — while this advice ("rest in shade",
+    // "actively cool with water and airflow") is the opposite of what a cold
+    // patient needs. Found by an invariant sweep: shivering plus sweating
+    // returned mild hypothermia beside heat exhaustion, no exposure entered.
+    expect(heatIllnessTriage({ alteredMental: false, sweating: true, crampsOnly: false })!.condition).toBe("none");
+    expect(heatIllnessTriage({ alteredMental: false, sweating: false, crampsOnly: true })!.condition).toBe("none");
+    expect(
+      heatIllnessTriage({ alteredMental: false, sweating: true, crampsOnly: false, heatExposed: true })!.condition,
+    ).toBe("exhaustion");
+    expect(
+      heatIllnessTriage({ alteredMental: false, sweating: false, crampsOnly: true, heatExposed: true })!.condition,
+    ).toBe("cramps");
+    // A measured core temperature still stands on its own.
+    expect(
+      heatIllnessTriage({ coreTempC: 38.5, alteredMental: false, sweating: false, crampsOnly: false })!.condition,
+    ).toBe("exhaustion");
   });
 });
 

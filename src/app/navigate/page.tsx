@@ -1331,10 +1331,17 @@ function NavigateScreen({ navId }: { navId: string }) {
           </div>
         </div>
         <p className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+          {/* The banner above may already have said this fix is untrusted and
+              display-only. Printing "GPS ±4 m (good)" four rows under that is
+              the app contradicting itself about the one number a hiker uses to
+              decide whether to believe their own position. The Heading-up
+              button six lines up already consults `trusted`; so does this. */}
           {gpsDenied
             ? "GPS denied — compass / pace"
             : gps.fix
-              ? gpsAccuracyLabel(gps.fix.accuracy)
+              ? trusted
+                ? gpsAccuracyLabel(gps.fix.accuracy)
+                : "GPS not trusted — accuracy unknown"
               : "Waiting for GPS…"}
         </p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">

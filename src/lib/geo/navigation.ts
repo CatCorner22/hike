@@ -466,11 +466,14 @@ export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
   if (
     accuracyMeters == null ||
     !Number.isFinite(accuracyMeters) ||
-    accuracyMeters < 0 ||
+    // Zero is not a measurement. Both CoreLocation and the W3C Geolocation API
+    // use a non-positive accuracy to mean "no valid estimate", and "±0 m (good)"
+    // is the most confident thing this app can say — printed for the one value
+    // that carries no confidence at all.
+    accuracyMeters <= 0 ||
     accuracyMeters > 10_000
   ) return "GPS accuracy unknown";
-  const rounded = Math.round(accuracyMeters);
-  const meters = rounded === 0 ? 0 : rounded;
+  const meters = Math.round(accuracyMeters);
   if (accuracyMeters <= 8) return `GPS ±${meters} m (good)`;
   if (accuracyMeters <= 20) return `GPS ±${meters} m (fair)`;
   return `GPS ±${meters} m (poor — canyon/trees)`;

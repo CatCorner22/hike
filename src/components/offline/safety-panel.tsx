@@ -1369,7 +1369,7 @@ export function SafetyPanel({
               </ul>
               <p className="mt-2 font-medium text-foreground">Food / bear basics</p>
               <ul className="list-disc pl-4">
-                {bearSafetyCard().slice(0, 4).map((line) => (
+                {bearSafetyCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1384,7 +1384,7 @@ export function SafetyPanel({
                 ))}
               </ul>
               <ul className="mt-2 list-disc pl-4">
-                {wildernessFirstAidCard().slice(0, 5).map((line) => (
+                {wildernessFirstAidCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1566,7 +1566,7 @@ export function SafetyPanel({
               <p className="text-xs text-muted-foreground">Waiting for GPS grid…</p>
             )}
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-              {mgrsGridTips().slice(0, 4).map((t) => (
+              {mgrsGridTips().map((t) => (
                 <li key={t}>{t}</li>
               ))}
             </ul>
@@ -1591,7 +1591,7 @@ export function SafetyPanel({
             </p>
             <p className="text-xs text-muted-foreground">{backstopDefinition()}</p>
             <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
-              {backstopChecklist().slice(0, 4).map((b) => (
+              {backstopChecklist().map((b) => (
                 <li key={b}>{b}</li>
               ))}
             </ul>
@@ -2374,7 +2374,7 @@ export function SafetyPanel({
               <summary className="cursor-pointer font-medium text-foreground">Hunting &amp; trapping</summary>
               <p className="mt-2 font-medium text-foreground">Hunting</p>
               <ul className="list-disc pl-4">
-                {huntingBasics().slice(0, 4).map((l) => (
+                {huntingBasics().map((l) => (
                   <li key={l}>{l}</li>
                 ))}
               </ul>

@@ -25,6 +25,16 @@ describe("emergencyMessage refuses to invent a position", () => {
 
   it("does not render an unknown accuracy as a measured value", () => {
     expect(formatCoords(40, -105, Number.NaN)).not.toMatch(/NaN/);
+    /**
+     * Regression: zero is the same mistake wearing a number. CoreLocation and
+     * the W3C Geolocation API both use a non-positive accuracy to mean "no
+     * valid estimate", and "±0 m" tells a rescuer sizing a search radius that
+     * this fix is perfect. Omit the clause instead of printing a confidence
+     * nobody measured.
+     */
+    expect(formatCoords(40, -105, 0)).not.toMatch(/±/);
+    expect(formatCoords(40, -105, -1)).not.toMatch(/±/);
+    expect(formatCoords(40, -105, 12)).toMatch(/±12 m/);
     expect(formatCoords(40, -105)).toMatch(/40\.00000°N/);
   });
 
