@@ -20,6 +20,7 @@ import {
   saveActivityPoint,
 } from "@/lib/offline/activity-sync";
 import { PointSaveBarrier } from "@/components/activities/point-save-barrier";
+import { getPendingPointCount } from "@/lib/offline";
 import { usePointSync } from "@/hooks/use-point-sync";
 import { Pause, Play, Square } from "lucide-react";
 
@@ -294,7 +295,12 @@ export function ActivityRecorder({
   useEffect(() => {
     if (recoveryUi.state === "checking" || recoveryUi.state === "blocked") return;
     const onOnline = () => {
-      void flushActivityQueue().then(() => setOffline(false));
+      // Clear the offline-recording banner only when the flush actually drained the
+      // queue: a radio blip fired 'online', the flush delivered nothing, and the
+      // banner still vanished while every point stayed queued.
+      void flushActivityQueue().then(async () => {
+        if ((await getPendingPointCount()) === 0) setOffline(false);
+      });
     };
     const onKeepalive = () => {
       void flushActivityQueue();

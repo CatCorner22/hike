@@ -365,14 +365,26 @@ export default function NavigatePage() {
       setLoadState(next);
     };
     if (!options.forceNetwork) setLoadState({ status: "loading" });
-    const timeout = window.setTimeout(() => complete({
-      status: "error",
-      message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
-    }), 12_000);
+    // The deadline must never destroy a working route: on a manual refresh with a slow
+    // radio (the exact field case for pressing Refresh), the network chain can outlast
+    // this timer — 8 s per fetch, two fetches for a plan — and the old handler replaced
+    // the on-screen route with the full-screen error while a valid cached pack sat in
+    // hand. Time out INTO the cached pack when one exists; the honest error is only for
+    // a first load with nothing cached.
+    let timeoutFallback: RoutePack | null = null;
+    const timeout = window.setTimeout(() => complete(
+      timeoutFallback
+        ? { status: "ready", pack: timeoutFallback, source: "cache" }
+        : {
+            status: "error",
+            message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
+          }
+    ), 12_000);
     let cached: RoutePack | null = null;
     try {
       try {
         cached = await loadCachedRoutePack(navId);
+        timeoutFallback = cached;
       } catch (error) {
         complete({ status: "error", message: error instanceof Error ? error.message : "Saved route does not match this trail — re-download while you have signal." });
         return;
