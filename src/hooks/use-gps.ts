@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
+import { startGeoWatch } from "@/lib/platform/geolocation";
+import { getPlatformAdapters } from "@/lib/platform/adapters";
 import {
   isClockSuspectFix,
   isTrustedFix,
@@ -39,7 +41,7 @@ export function useGps() {
     status: "acquiring",
     message: "Waiting for a GPS fix. Stay outdoors with a clear view of the sky.",
   });
-  const watchIdRef = useRef<number | null>(null);
+  const stopWatchRef = useRef<(() => void) | null>(null);
   const lastFixRef = useRef<GpsFix | null>(null);
   const lastCallbackRef = useRef(0);
   const deniedRef = useRef(false);
@@ -50,7 +52,9 @@ export function useGps() {
     let cancelled = false;
     lastCallbackRef.current = Date.now();
 
-    if (!("geolocation" in navigator)) {
+    // Through the platform seam: the shell registers a native watcher, so the
+    // web-API absence check applies only when no adapter is present.
+    if (!getPlatformAdapters().geolocation && !("geolocation" in navigator)) {
       queueMicrotask(() => {
         if (!cancelled) setState({
           fix: null,
@@ -172,10 +176,11 @@ export function useGps() {
     };
 
     const startWatch = () => {
-      if (watchIdRef.current != null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      watchIdRef.current = navigator.geolocation.watchPosition(applyFix, onError, {
+      stopWatchRef.current?.();
+      // Foreground watch: the navigate screen holds a wake lock, so fixes keep
+      // arriving; only track RECORDING needs the background variant.
+      stopWatchRef.current = startGeoWatch(applyFix, onError, {
+        background: false,
         enableHighAccuracy: true,
         maximumAge: 3000,
         timeout: 20000,
@@ -239,9 +244,8 @@ export function useGps() {
 
     return () => {
       cancelled = true;
-      if (watchIdRef.current != null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
+      stopWatchRef.current?.();
+      stopWatchRef.current = null;
       permissionStatus?.removeEventListener("change", onPermissionChange);
       window.clearInterval(staleTimer);
       window.clearInterval(watchdog);

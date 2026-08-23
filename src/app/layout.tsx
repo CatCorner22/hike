@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { AppNav } from "@/components/layout/app-nav";
+import { NativeBootstrap } from "@/components/platform/native-bootstrap";
 import {
   APP_DESCRIPTION,
   APP_FULL_TITLE,
@@ -47,6 +48,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col bg-background pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
+        <NativeBootstrap />
         <AppNav />
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           {children}

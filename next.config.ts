@@ -74,6 +74,10 @@ const capacitorConfig: NextConfig = {
   // No "api.ts": route handlers do not exist for the static shell. The app
   // talks to the deployed API over HTTPS with a bearer token instead.
   pageExtensions: ["ts", "tsx"],
+  // Its own build dir: sharing .next with the web build meant whichever build
+  // ran last was what `next start` silently served — the web server then 404'd
+  // every API route because it was serving the exported shell's manifest.
+  distDir: ".next-cap",
   output: "export",
   trailingSlash: true,
   images: { unoptimized: true },

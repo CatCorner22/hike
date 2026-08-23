@@ -23,6 +23,9 @@ import { PointSaveBarrier } from "@/components/activities/point-save-barrier";
 import { getPendingPointCount } from "@/lib/offline";
 import { usePointSync } from "@/hooks/use-point-sync";
 import { Pause, Play, Square } from "lucide-react";
+import { subscribeNetworkStatus } from "@/lib/platform/network";
+import { startGeoWatch } from "@/lib/platform/geolocation";
+import { getPlatformAdapters } from "@/lib/platform/adapters";
 
 interface ActivityRecorderProps {
   trailId?: string;
@@ -67,7 +70,7 @@ export function ActivityRecorder({
   const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const pointSync = usePointSync();
 
-  const watchIdRef = useRef<number | null>(null);
+  const stopWatchRef = useRef<(() => void) | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const pauseAccumRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
@@ -95,10 +98,8 @@ export function ActivityRecorder({
   }, [status, activityId]);
 
   const stopWatch = useCallback(() => {
-    if (watchIdRef.current != null) {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
-    }
+    stopWatchRef.current?.();
+    stopWatchRef.current = null;
   }, []);
 
   const activeDurationSec = useCallback(() => {
@@ -126,12 +127,15 @@ export function ActivityRecorder({
   }, [activeDurationSec]);
 
   const startWatch = useCallback(() => {
-    if (!navigator.geolocation) {
+    if (!getPlatformAdapters().geolocation && !navigator.geolocation) {
       setError("Geolocation is not available on this device.");
       return;
     }
     stopWatch();
-    watchIdRef.current = navigator.geolocation.watchPosition(
+    // background: true — recording is the one flow that must keep appending
+    // points with the screen locked; the shell's native watcher delivers that,
+    // and the web fallback stays foreground-only exactly as before.
+    stopWatchRef.current = startGeoWatch(
       (position) => {
         if (statusRef.current !== "recording") return;
         const id = activityIdRef.current;
@@ -189,7 +193,7 @@ export function ActivityRecorder({
           });
       },
       (err) => setError(err.message),
-      { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
+      { background: true, enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
     );
   }, [activeDurationSec, stopWatch, updateStats]);
 
@@ -306,12 +310,14 @@ export function ActivityRecorder({
       void flushActivityQueue();
       void persistSnapshot(true);
     };
-    window.addEventListener("online", onOnline);
+    const unsubscribeNetwork = subscribeNetworkStatus((online) => {
+      if (online) onOnline();
+    });
     window.addEventListener("pagehide", onKeepalive);
     document.addEventListener("visibilitychange", onKeepalive);
     void flushActivityQueue();
     return () => {
-      window.removeEventListener("online", onOnline);
+      unsubscribeNetwork();
       window.removeEventListener("pagehide", onKeepalive);
       document.removeEventListener("visibilitychange", onKeepalive);
       // Next.js client navigation does not fire pagehide or visibilitychange.

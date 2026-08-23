@@ -55,3 +55,4 @@ adversarial/perf-results.json
 # Capacitor static export + build-time aside
 out/
 .cap-build-aside/
+.next-cap/

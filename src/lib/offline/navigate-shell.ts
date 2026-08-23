@@ -1,3 +1,5 @@
+import { isOnline } from "@/lib/platform/network";
+import { isNative } from "@/lib/platform/native";
 import {
   headersForRewrittenNavigateDocument,
   isValidNavigateShellDocument,
@@ -157,8 +159,25 @@ async function pruneLegacyShellEntries(shellCache: Cache, keep: Set<string>): Pr
   }
 }
 
+/**
+ * Inside the native shell every app asset ships in the bundle itself — there is
+ * no service worker and nothing to warm, and reporting "not ready" here would
+ * permanently lock the readiness gate on the platform where offline launch is
+ * guaranteed by construction.
+ */
+const NATIVE_BUNDLED_STATUS: NavigateOfflineStatus = {
+  shellCached: true,
+  expectedAssets: 1,
+  cachedAssets: 1,
+  missingAssets: [],
+  serviceWorkerControlled: true,
+  filesReady: true,
+  ready: true,
+};
+
 /** Warm only an app-shaped, explicitly marked navigation document. */
 export async function warmNavigateShell(): Promise<WarmNavigateShellResult> {
+  if (isNative()) return { ...NATIVE_BUNDLED_STATUS, ok: true };
   const first = await warmNavigateShellOnce();
   if (first.ok) return first;
   await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -174,7 +193,7 @@ async function warmNavigateShellOnce(): Promise<WarmNavigateShellResult> {
     error,
   });
   if (!url || typeof caches === "undefined") return fail("Offline cache is unavailable in this browser.");
-  if (typeof navigator === "undefined" || !navigator.onLine) return fail("Reconnect to cache the navigation screen.");
+  if (!isOnline()) return fail("Reconnect to cache the navigation screen.");
   try {
     const response = await fetch(url.toString(), { cache: "no-store", credentials: "same-origin" });
     if (!response.ok) return fail(`Navigation screen could not be cached (${response.status}).`);
@@ -242,6 +261,7 @@ export async function isNavigateShellCached(): Promise<boolean> {
 }
 
 export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus> {
+  if (isNative()) return { ...NATIVE_BUNDLED_STATUS };
   const shellUrl = navigateUrl();
   const manifestKey = manifestUrl();
   if (!shellUrl || !manifestKey || typeof caches === "undefined") return EMPTY_STATUS;

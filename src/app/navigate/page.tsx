@@ -33,6 +33,7 @@ import {
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
 import { planDetailHref, trailDetailHref } from "@/lib/routes";
+import { isOnline } from "@/lib/platform/network";
 import {
   isLikelyOffline,
   loadCachedRoutePack,
@@ -472,7 +473,7 @@ function NavigateScreen({ navId }: { navId: string }) {
   // service worker has controlled the document. It is intentionally
   // best-effort; Prepare offline is the explicit pre-departure verification flow.
   useEffect(() => {
-    if (navigator.onLine) void warmNavigateShell();
+    if (isOnline()) void warmNavigateShell();
   }, []);
 
   useEffect(() => {

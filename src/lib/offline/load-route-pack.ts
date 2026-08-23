@@ -1,3 +1,4 @@
+import { isOnline } from "@/lib/platform/network";
 import {
   buildRoutePack,
   getRoutePackStatus,
@@ -156,5 +157,5 @@ export async function withNetworkTimeout<T>(
 
 export function isLikelyOffline(): boolean {
   if (typeof navigator === "undefined") return false;
-  return !navigator.onLine;
+  return !isOnline();
 }

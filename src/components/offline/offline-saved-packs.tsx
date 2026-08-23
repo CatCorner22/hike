@@ -15,6 +15,7 @@ import {
 import { downloadTextFile, safeFilename } from "@/lib/safety/field";
 import { savedPackLaunchCopy, savedPackLaunchState } from "@/lib/offline/saved-pack-readiness";
 import { navigateHref } from "@/lib/routes";
+import { isOnline, subscribeNetworkStatus } from "@/lib/platform/network";
 
 export function OfflineSavedPacks() {
   const [packs, setPacks] = useState<RoutePack[] | null>(null);
@@ -46,17 +47,16 @@ export function OfflineSavedPacks() {
           }
         });
     };
-    const updateOnline = () => setOnline(navigator.onLine);
+    const updateOnline = () => setOnline(isOnline());
     updateOnline();
     readPacks();
     window.addEventListener("hike:offline-readiness-changed", readPacks);
-    window.addEventListener("online", updateOnline);
-    window.addEventListener("offline", updateOnline);
+    // Through the platform seam: navigator.onLine misreports inside WKWebView.
+    const unsubscribeNetwork = subscribeNetworkStatus(setOnline);
     return () => {
       cancelled = true;
       window.removeEventListener("hike:offline-readiness-changed", readPacks);
-      window.removeEventListener("online", updateOnline);
-      window.removeEventListener("offline", updateOnline);
+      unsubscribeNetwork();
     };
   }, []);
 
