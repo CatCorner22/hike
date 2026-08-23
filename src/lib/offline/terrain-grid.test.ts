@@ -38,6 +38,27 @@ describe("the sample plan stays inside what the app is willing to spend", () => 
     expect(chunkTerrainPoints(plan!.points).every((c) => c.length <= TERRAIN_SAMPLES_PER_REQUEST)).toBe(true);
   });
 
+  it("holds the budget on a long thin corridor, which is what an out-and-back is", () => {
+    // 70 km east-west, 200 m north-south. This produced 617 columns floored to
+    // two rows -- 1,234 samples against a budget of 1,200, and a fourth request
+    // to a free public service.
+    for (const bbox of [
+      [-119.9, 37.749, -119.1, 37.751],
+      [-120.5, 37.7, -119.0, 37.72],
+      [-119.61, 37.0, -119.6, 38.0],
+    ] as Array<[number, number, number, number]>) {
+      const plan = planTerrainGrid(bbox);
+      expect(plan, `no plan for ${bbox.join(",")}`).not.toBeNull();
+      expect(plan!.points.length, `over budget for ${bbox.join(",")}`).toBeLessThanOrEqual(
+        TERRAIN_MAX_SAMPLES,
+      );
+      expect(chunkTerrainPoints(plan!.points).length).toBeLessThanOrEqual(3);
+      // And still at least two rows, or there is no cross-slope to shade.
+      expect(plan!.rows).toBeGreaterThanOrEqual(2);
+      expect(plan!.cols).toBeGreaterThanOrEqual(2);
+    }
+  });
+
   it("never claims a spacing finer than the source can support", () => {
     // A tiny corridor would otherwise be sampled every few metres off 30 m data.
     const tiny = planTerrainGrid([-119.601, 37.7501, -119.6, 37.7502]);

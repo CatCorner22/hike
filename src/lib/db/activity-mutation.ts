@@ -71,6 +71,30 @@ export interface StoredActivityPoint {
 }
 
 /**
+ * A UTC wall-clock literal for `recorded_at`, which is `timestamp` WITHOUT time
+ * zone.
+ *
+ * Passing a JS `Date` here is wrong in a way that only shows up on a server that
+ * is not running in UTC. `pg` serializes a Date in the process's *local* zone
+ * with an offset — `2026-01-01 04:00:00.000-08:00` — and casting that to
+ * `timestamp` throws the offset away and keeps the local wall time. Measured on
+ * a server with TZ=America/Los_Angeles: a fix recorded at 12:00Z was stored and
+ * read back as 04:00Z. Every point of every uploaded track, off by the host's
+ * offset, and a search team reading a last-known-position eight hours wrong.
+ *
+ * Drizzle's own column mapper writes the UTC wall time, which is what every
+ * other timestamp in this app means. This does the same thing explicitly, and
+ * `database-probe.mjs` runs under a non-UTC TZ so it stays that way.
+ */
+function utcTimestampLiteral(value: string): string {
+  const at = new Date(value);
+  if (!Number.isFinite(at.getTime())) {
+    throw new Error("Activity point has an unreadable recordedAt");
+  }
+  return at.toISOString().replace("T", " ").replace("Z", "");
+}
+
+/**
  * Writes a whole batch of GPS points in one statement.
  *
  * The previous version issued a lookup and an insert per point: a 500-point
@@ -102,7 +126,7 @@ export async function insertActivityPointBatch(
   const rows = points.map((point, index) => {
     const clientPointId = point.clientPointId ?? null;
     const elevation = point.elevation ?? null;
-    const recordedAt = new Date(point.recordedAt);
+    const recordedAt = utcTimestampLiteral(point.recordedAt);
     return index === 0
       ? sql`(${clientPointId}::text, ${point.lat}::double precision, ${point.lng}::double precision, ${elevation}::double precision, ${recordedAt}::timestamp)`
       : sql`(${clientPointId}, ${point.lat}, ${point.lng}, ${elevation}, ${recordedAt})`;

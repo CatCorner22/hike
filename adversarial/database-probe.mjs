@@ -123,6 +123,42 @@ const pt = (n, extra = {}) => ({ lat: 37.75 + n * 1e-4, lng: -119.6 + n * 1e-4, 
   check("recordedAt round-trips", new Date(points[0].recordedAt).toISOString() === at(50));
 }
 
+/**
+ * The timestamp on a GPS fix, on a server that is not running in UTC.
+ *
+ * `pg` serializes a JS Date in the process's local zone with an offset, and
+ * casting that to `timestamp` WITHOUT time zone throws the offset away and keeps
+ * the local wall time. Measured at TZ=America/Los_Angeles before the fix: a fix
+ * recorded at 12:00Z was stored and read back as 04:00Z. A search team reading a
+ * last-known position eight hours wrong is the whole reason this check exists,
+ * and it can only be seen with a database and a non-UTC clock.
+ */
+{
+  const id = await newActivity("timezone");
+  const instants = [
+    "2026-01-01T12:00:00.000Z",
+    "2026-06-30T23:45:17.000Z",
+    "2026-11-01T09:30:00.000Z",
+  ];
+  await post(id, instants.map((iso, index) => ({
+    lat: 37.75 + index * 1e-4,
+    lng: -119.6 + index * 1e-4,
+    recordedAt: iso,
+    clientPointId: `tz-${index}`,
+  })));
+  const res = await fetch(`${BASE}/api/activities/${id}/points`, { headers });
+  const stored = (await res.json()).points;
+  const readBack = instants.map(
+    (_, index) => stored.find((p) => p.clientPointId === `tz-${index}`)?.recordedAt,
+  );
+  const normalized = readBack.map((value) => (value ? new Date(value).toISOString() : null));
+  check(
+    `every fix time survives the server's timezone (TZ=${process.env.TZ ?? "unset"})`,
+    JSON.stringify(normalized) === JSON.stringify(instants),
+    `sent=${JSON.stringify(instants)} got=${JSON.stringify(normalized)}`,
+  );
+}
+
 // 7. Someone else's activity is invisible.
 {
   const id = await newActivity("owned");

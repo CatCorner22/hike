@@ -100,9 +100,17 @@ export function powerReserveSuggestion(input: {
   if (percent > POWER_RESERVE_SUGGEST_AT_PERCENT) return { suggest: false, message: null };
 
   const hours = input.hoursRemaining;
+  // "About an hour" for six minutes of walking is the kind of rounding this app
+  // spends its time removing. Under half an hour says so; between that and an
+  // hour is "under an hour"; past that it rounds to whole hours, which is all
+  // the estimate supports anyway.
   const ahead =
     hours != null && Number.isFinite(hours) && hours > 0
-      ? ` with about ${hours < 1 ? "an hour" : `${Math.round(hours)} h`} of walking left`
+      ? hours < 0.5
+        ? " with under half an hour of walking left"
+        : hours < 1.5
+          ? " with about an hour of walking left"
+          : ` with about ${Math.round(hours)} h of walking left`
       : "";
   return {
     suggest: true,

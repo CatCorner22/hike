@@ -103,9 +103,14 @@ export function planTerrainGrid(
   // so the grid never claims to be finer than the source can support.
   const area = widthM * heightM;
   const spacing = Math.max(TERRAIN_MIN_SPACING_M, Math.sqrt(area / maxSamples));
-  const cols = Math.max(2, Math.min(Math.floor(widthM / spacing) + 1, maxSamples));
+  // Two rows and two columns are the floor — a single line of samples has no
+  // cross-slope to shade — so the column count has to leave room for them.
+  // Clamping rows to `maxSamples / cols` after the fact does not: a long thin
+  // corridor (an out-and-back ridge walk is exactly that shape) produced 617
+  // columns, floored to 2 rows, and 1,234 samples against a budget of 1,200.
+  const cols = Math.max(2, Math.min(Math.floor(widthM / spacing) + 1, Math.floor(maxSamples / 2)));
   const rows = Math.max(2, Math.min(Math.floor(heightM / spacing) + 1, Math.floor(maxSamples / cols)));
-  if (cols * rows < 4) return null;
+  if (cols * rows < 4 || cols * rows > maxSamples) return null;
 
   const points: Array<{ lat: number; lng: number }> = [];
   for (let row = 0; row < rows; row += 1) {

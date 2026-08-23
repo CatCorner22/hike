@@ -83,8 +83,13 @@ describe("reserve is offered, never taken", () => {
     expect(powerReserveSuggestion({ ...low, hoursRemaining: 3.4 }).message).toMatch(
       /about 3 h of walking left/,
     );
-    expect(powerReserveSuggestion({ ...low, hoursRemaining: 0.5 }).message).toMatch(
+    expect(powerReserveSuggestion({ ...low, hoursRemaining: 1 }).message).toMatch(
       /about an hour of walking left/,
+    );
+    // Six minutes is not "about an hour". Rounding a short walk up to one is
+    // exactly the false comfort the rest of this app spends its time removing.
+    expect(powerReserveSuggestion({ ...low, hoursRemaining: 0.1 }).message).toMatch(
+      /under half an hour of walking left/,
     );
     // No estimate, no invented one.
     expect(powerReserveSuggestion({ ...low, hoursRemaining: null }).message).not.toMatch(

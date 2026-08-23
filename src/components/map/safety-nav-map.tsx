@@ -83,6 +83,13 @@ export function SafetyNavMap({
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
+  /**
+   * The shading depends only on the grid, and the grid is fixed for a whole
+   * hike. Recomputing it inside the draw would repeat about a thousand
+   * trigonometric cells on every GPS fix, on the screen a hiker is trying to
+   * keep alive.
+   */
+  const terrainShade = useMemo(() => (terrain ? hillshade(terrain) : null), [terrain]);
   const endpoints = useMemo(() => {
     const first = lines.find((line) => line.length >= 2)?.[0];
     const lastLine = [...lines].reverse().find((line) => line.length >= 2);
@@ -156,8 +163,8 @@ export function SafetyNavMap({
         no elevation are skipped, so missing data stays visibly missing instead
         of reading as flat.
       */
-      if (terrain) {
-        const shade = hillshade(terrain);
+      if (terrain && terrainShade) {
+        const shade = terrainShade;
         const [tMinLng, tMinLat, tMaxLng, tMaxLat] = terrain.bbox;
         const lngStep = (tMaxLng - tMinLng) / (terrain.cols - 1);
         const latStep = (tMaxLat - tMinLat) / (terrain.rows - 1);
@@ -556,7 +563,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, terrain, topInsetPx, uncertaintyM, user, waypoints]);
+  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, terrain, terrainShade, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas
