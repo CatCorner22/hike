@@ -30,7 +30,7 @@ try {
   await context.addCookies([{ name, value: value.join("="), domain: new URL(BASE).hostname, path: "/", httpOnly: true, secure: false, sameSite: "Lax" }]);
   const page = await context.newPage();
   await page.route("https://api.open-meteo.com/**", () => new Promise(() => {}));
-  await page.goto(`${BASE}/plan/${plan.id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/plan/detail?id=${plan.id}`, { waitUntil: "domcontentloaded" });
   const button = page.getByRole("button", { name: /prepare offline/i });
   await button.waitFor({ state: "visible", timeout: 12_000 }).catch(async (error) => {
     throw new Error(`prepare button unavailable: ${(await page.locator("body").innerText()).slice(0, 500)}; ${error.message}`);

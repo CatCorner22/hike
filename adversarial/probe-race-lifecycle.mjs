@@ -160,7 +160,7 @@ async function main() {
   await context.addCookies([{ name, value, domain: new URL(BASE).hostname, path: "/", httpOnly: true, sameSite: "Lax" }]);
   const recoveryPlan = await createPlan("race-reload-recovery");
   const page = await context.newPage();
-  await page.goto(`${BASE}/plan/${recoveryPlan.id}`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/plan/detail?id=${recoveryPlan.id}`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Start recording" }).click();
   await page.getByRole("button", { name: "Pause" }).waitFor({ timeout: 10_000 });
   const activeBeforeReload = await request("/api/activities");

@@ -45,7 +45,7 @@ async function newNavPage(browser, { width = 414, height = 896, forcedColors = '
   }
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
   await installPack(page);
-  await page.goto(`${BASE}/navigate/${NAV_ID}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE}/navigate?target=${NAV_ID}`, { waitUntil: 'domcontentloaded' });
   const gate = await clearReadinessGate(page);
   await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 15000 });
   await page.getByText(/OFF TRAIL/i).first().waitFor({ state: 'visible', timeout: 15000 });

@@ -66,7 +66,7 @@ async function waitForSaveResult(page) {
 }
 
 async function preparePlan(page, id) {
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
   const button = page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i });
   await button.waitFor({ state: "visible", timeout: 12_000 });
   await button.click();
@@ -158,7 +158,7 @@ async function scenarioQuota(browser) {
   await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
   await session.send("Storage.overrideQuotaForOrigin", { origin: ORIGIN, quotaSize: 1 });
   const id = await createPlan("quota one byte");
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
   const action = page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i });
   await action.click();
   let completed = true;
@@ -205,7 +205,7 @@ async function scenarioLiveEvictionClaim(browser) {
   const id = await createPlan("live eviction");
   await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
   await seedPack(page, `plan-${id}`);
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => {
     const row = document.querySelector('[data-offline-check="route-pack"]');
     return row?.getAttribute("data-offline-status") === "ready"
@@ -304,7 +304,7 @@ async function scenarioCorruption(browser) {
     const id = await createPlan(`corrupt ${name}`);
     await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
     await seedPack(page, `plan-${id}`, mutate);
-    await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
     const text = await bodyText(page);
     result(`corrupt-${name}-refused`, expected.test(text) && /Cannot navigate offline/.test(text), JSON.stringify(text.slice(-250)));
@@ -333,7 +333,7 @@ async function scenarioCorruption(browser) {
       };
     });
   }, `plan-${id}`);
-  await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
   const text = await bodyText(page);
   result("orphan-alias-refused", /No offline route pack and no network\./.test(text), JSON.stringify(text.slice(-250)));
@@ -356,7 +356,7 @@ async function scenarioSchema(browser) {
     await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
     await databaseAtVersion(page, version, stores);
     const id = await createPlan(`schema ${name}`);
-    await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
     const text = await bodyText(page);
     const shown = expected.test(text);
