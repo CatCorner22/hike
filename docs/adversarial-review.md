@@ -1660,6 +1660,89 @@ debugging cycles in this session before the cause was found. The build script no
 the web build aside the way it already moves the proxy, and the routing probe asserts
 that nothing misleading is left behind.
 
+## Twenty-second pass — ten stakeholder personas on the near-final iOS app
+
+A SAR incident commander, a wilderness EMT instructor, a thru-hiker, a scout trip
+leader, a senior iOS engineer, a land-navigation instructor, an accessibility
+designer, the emergency contact who receives the text, an App Store reviewer and a
+liability attorney, each grounded in the repo and in twelve screenshots of the
+running app at iPhone size, then a chair who re-verified every claimed
+ship-blocker against the tree before believing it. Fifteen survived. Two of them
+were found only because a persona looked at a screenshot rather than at code.
+
+**The compass pointed the wrong way in the shipped default.** `compass-hud.tsx`
+rotated the card by `-heading` and the needle by `+heading` in a group outside
+the card, so the needle read twice the heading against its own dial — 180 showed
+000. The map's heading cone was drawn apex-up inside the rotated scene with no
+rotation of its own, so it rendered exactly where map-north rendered: it pointed
+north in both modes and was correct only while walking due north. The north tick
+was drawn only when north was already up. Separately, `HeadingPlugin.load()` set
+`delegate` and `headingFilter` and never `headingOrientation`, which defaults to
+portrait and is not tracked for you — while `Info.plist` had opted the shell into
+landscape, widening a contract the JS was written against (`device-heading.ts`
+refuses a web sample unless screen orientation is exactly 0). The shell is
+portrait-only again and the plugin tracks orientation.
+
+**One fix in about 560 printed an invalid coordinate.** `toDms` and `toDdm`
+rounded a sexagesimal component and printed it without carrying, so
+`37.749999` became `37°44'60.0"N`. Measured on the shipped functions: 359 bad
+components in 200,000 CONUS samples. Those strings reach the SOS message, the
+rescue card, the QR handoff and the medevac 9-line, and a call-taker who cannot
+type `44'60"` reads it back as `44'06"` — 54 arcseconds, about 1.67 km. Neither
+function had a test anywhere in the repo after twenty-one passes.
+
+**The thermal aids could tell you to insulate and to immerse at the same time.**
+One shared "Altered mental status" checkbox fed both `hypothermiaStage` and
+`heatIllnessTriage`, and the panel rendered both, badged, side by side: moderate
+hypothermia beside heat stroke, opposite interventions, no exposure ever asked
+for. `thermal.ts`'s `severe` branch also lacked the `coldExposed` guard its
+sibling `shiveringStopped` had, so unticking "Conscious" alone — which describes
+head injury, syncope, seizure and hypoglycaemia — returned severe hypothermia. An
+invariant sweep written while fixing it found a second contradiction no persona
+reported: shivering plus sweating returned mild hypothermia beside heat
+exhaustion. Exposure is one exclusive required choice now, and with it
+unanswered the panel renders neither aid and says why.
+
+**Two `.slice()` calls deleted the guidance that matters most.** The wilderness
+first-aid card's seventh entry is the only anaphylaxis line in the codebase, and
+the bear card's seventh is "black bear, fight back; grizzly, play dead". Five
+reference cards were truncated in total; a truncated card looks complete.
+
+**The one line that starts a search carried tomorrow's date.** The overdue
+deadline was `deadline.toISOString()` on the printed leave-behind card, in the
+SMS the contact receives, and in the dossier — and every US evening return after
+about 1600 PDT crosses UTC midnight, printed two lines under a "Planned date"
+rendered as a local wall clock. Three personas found it independently. The local
+form was already stored and thrown away. Alongside it: the private Guardian link
+was built from `window.location.origin`, which is `capacitor://localhost` in the
+shell, so it could not open on the recipient's phone while the sender's own tap
+worked; and the pre-hike gate said "Set these before you leave: they are what
+lets someone find you" above four fields that no code path ever transmits.
+
+**The safety net switched off when the phone went in a pocket.** The navigate
+watch was foreground-only on the theory that the wake lock keeps fixes arriving,
+with `distanceFilter: 0` (the GNSS never sleeps) and no way to turn the wake lock
+off — the only surfaced control being a 10px string a screenshot showed truncated
+to "wake lock ne" by the SOS button. `reverseTrackLine` bridged recording gaps
+with a straight line and gave a confident bearing along it. And a
+`max-height: 3.25rem` in a `max-height: 480px` media query clipped the alert
+layer to one banner inside a `pointer-events: none` container, so rotating the
+phone deleted turnaround and daylight — the two warnings the product is built on
+— with no way to scroll to them.
+
+**The build could not have reached App Review.** The location purpose string
+claimed location never leaves the device, contradicted by `flushActivityPoints`;
+there was no privacy policy or terms page, and a Privacy Policy URL is a required
+submission field; the privacy manifest declared uploaded precise location as
+not-linked when it travels with a stable per-install identifier; and the
+install-from-Safari card rendered inside the shipped app on the exact screen the
+review notes send the reviewer to.
+
+Method note worth keeping: the chair was instructed to verify before promoting,
+and did drop claims that did not survive — the route-card copy preview that
+shows four lines and says "… copied" is honest, because the clipboard gets the
+whole card. A panel that cannot reject its own members is a panel that inflates.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error
