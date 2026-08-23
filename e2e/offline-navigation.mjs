@@ -577,12 +577,28 @@ async function run() {
     async function coldNavigateOnce() {
       let navError = null;
       let navigationResponse = null;
-      const response = await page
-        .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
-        .catch((e) => {
-          navError = e.message.split("\n")[0];
-          return null;
-        });
+      let response = null;
+      // Diagnosed from CI (see the nav-diag record in B3a): a same-document History
+      // update — Next's own router bookkeeping settling after the prepare interaction —
+      // can supersede the provisional cross-document navigation on a slow renderer.
+      // goto then resolves null, the browser never leaves the plan page, and the worker
+      // sees no fetch at all. Detect the non-navigation and re-issue the goto: the
+      // field equivalent of a swallowed tap is tapping again. Every occurrence is
+      // logged, so the CI record still shows how often the race fires.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        response = await page
+          .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
+          .catch((e) => {
+            navError = e.message.split("\n")[0];
+            return null;
+          });
+        if (navError || page.url().startsWith(navUrl)) break;
+        log(
+          "B3 note",
+          "....",
+          `navigation superseded by a same-document update (still on ${page.url()}); re-issuing goto`,
+        );
+      }
       if (response) {
         navigationResponse = {
           url: response.url(),
