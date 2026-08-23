@@ -18,9 +18,20 @@ moment the deployment does.
 
 2. **Add the database.** In the workspace, open the Database tool and create a
    PostgreSQL database. Replit sets `DATABASE_URL` in your Secrets
-   automatically — confirm it is there before going further. (If you would
-   rather use Neon, paste its connection string as `DATABASE_URL` instead; the
-   app cannot tell the difference.)
+   automatically — confirm it is there before going further. Any Postgres works:
+   Replit's own, Neon, or your own server.
+
+   The app picks its client from the host. Anything that is not a Neon endpoint
+   gets `pg`, which speaks the protocol every Postgres understands; a
+   `*.neon.tech` host gets `@neondatabase/serverless`, which is faster on a
+   serverless platform and is what the Vercel path in `docs/deploy.md` uses. The
+   guess leans that way on purpose — choosing `pg` for Neon still works, while
+   choosing the Neon HTTP driver for an ordinary Postgres fails outright, because
+   it is not a Postgres client at all: it posts SQL to `https://<host>/sql`.
+
+   If a host ever defeats the guess, set `DATABASE_DRIVER` to `postgres` or
+   `neon-http` and it is settled. The server names its choice in the first log
+   line it writes: `[db] using the postgres driver for …`.
 
 3. **Push the schema**, once, from the Replit shell:
 

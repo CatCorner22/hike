@@ -55,6 +55,65 @@ jobs:
         # shows up in the build log instead of being noticed months later.
         run: npm audit --omit=dev --audit-level=high || true
 
+  database:
+    name: Real Postgres — schema push and API
+    # Everything else in this file runs on the JSON file fallback
+    # (ALLOW_LOCAL_STORE_IN_PRODUCTION=true), so until this job existed the
+    # entire Drizzle layer was exercised only by a live deployment. It was
+    # broken: the insert-select that saves a GPS point omitted `id`, and every
+    # POST of a track point answered 500. This is the job that would have caught
+    # it, and it runs the same two commands a deploy does — schema push, then
+    # the API against a real database.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: klandagi
+          POSTGRES_PASSWORD: klandagi
+          POSTGRES_DB: klandagi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klandagi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://klandagi:klandagi@127.0.0.1:5432/klandagi
+      SESSION_SECRET: ci-only-session-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Push the schema, exactly as a deploy does
+        run: npx drizzle-kit push
+      - name: Build
+        run: npm run build
+      - name: Start the server against the database
+        run: |
+          npx next start --port 3111 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:3111/; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          exit 1
+      - name: API probe against real Postgres
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/api-probe.mjs
+      - name: Points really landed in the table
+        # The probe asserts the API's answers; this asserts the database agrees,
+        # which is the half that was silently false before.
+        run: |
+          count=$(psql "$DATABASE_URL" -t -A -c "select count(*) from activity_points;")
+          echo "activity_points rows: $count"
+          [ "$count" -gt 0 ] || { echo "the API reported success but wrote nothing" >&2; exit 1; }
+
   shell-export:
     name: Capacitor shell export
     runs-on: ubuntu-latest

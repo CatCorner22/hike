@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { and, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import { getDb, hasDatabase } from "@/lib/db";
-import { withActivityMutation } from "@/lib/db/activity-mutation";
+import { openActivityPointSelection, withActivityMutation } from "@/lib/db/activity-mutation";
 import { activities, activityPoints } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, latLngPointSchema, parseJsonBody } from "@/lib/api/validation";
@@ -165,14 +165,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
           // read followed by INSERT would let another server finalize between them and
           // still return 200 for a fix that belongs to no completed track.
           const insertFromOpenActivity = db
-            .select({
-              activityId: activities.id,
-              clientPointId: sql<string | null>`${point.clientPointId ?? null}`.as("client_point_id"),
-              lat: sql<number>`${point.lat}`.as("lat"),
-              lng: sql<number>`${point.lng}`.as("lng"),
-              elevation: sql<number | null>`${point.elevation ?? null}`.as("elevation"),
-              recordedAt: sql<Date>`${new Date(point.recordedAt)}`.as("recorded_at"),
-            })
+            .select(openActivityPointSelection(point))
             .from(activities)
             .where(and(
               eq(activities.id, id),
