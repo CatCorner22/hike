@@ -13,8 +13,44 @@ const withSerwist = withSerwistInit({
   disable: process.env.NODE_ENV === "development",
 });
 
-const nextConfig: NextConfig = {
+/**
+ * One codebase, two build outputs.
+ *
+ * The web build is the deployed PWA: Serwist service worker, cookie minting in
+ * src/proxy.ts, security headers, API route handlers. BUILD_TARGET=capacitor
+ * produces the static shell the iOS app bundles: `output: "export"`, no server
+ * pieces. Server-only files are excluded by extension — API route handlers are
+ * named route.api.ts, which only the web build's pageExtensions recognize.
+ * (The proxy CANNOT use that trick: Next's proxy detection compares
+ * `path.parse(file).name === "proxy"`, and a compound extension makes the name
+ * "proxy.api" — so proxy.ts keeps its name and the capacitor build script
+ * moves it aside for the duration of the export instead.)
+ */
+const isCapacitorBuild = process.env.BUILD_TARGET === "capacitor";
+
+const sharedConfig: NextConfig = {
   transpilePackages: ["maplibre-gl"],
+};
+
+const webConfig: NextConfig = {
+  ...sharedConfig,
+  pageExtensions: ["api.ts", "api.tsx", "ts", "tsx"],
+  /**
+   * Bookmarks and pinned tabs from before the query-param migration must not
+   * dead-end. Each pattern deliberately excludes the new `detail` segment so
+   * `/plan/detail` cannot match `/plan/:id` and redirect to itself forever.
+   *
+   * Web only: a static export has no server to redirect, and the shell has no
+   * legacy URLs to rescue — it only ever links through the route helpers.
+   */
+  async redirects() {
+    return [
+      { source: "/trails/:id((?!detail$)[^/]+)", destination: "/trails/detail?id=:id", permanent: true },
+      { source: "/plan/:id((?!detail$)[^/]+)", destination: "/plan/detail?id=:id", permanent: true },
+      { source: "/activities/:id((?!detail$)[^/]+)", destination: "/activities/detail?id=:id", permanent: true },
+      { source: "/navigate/:target([^/]+)", destination: "/navigate?target=:target", permanent: true },
+    ];
+  },
   async headers() {
     const contentSecurityPolicy = [
       "default-src 'self'",
@@ -49,4 +85,24 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSerwist(nextConfig);
+const capacitorConfig: NextConfig = {
+  ...sharedConfig,
+  // No "api.ts": route handlers do not exist for the static shell. The app
+  // talks to the deployed API over HTTPS with a bearer token instead.
+  pageExtensions: ["ts", "tsx"],
+  // Its own build dir: sharing .next with the web build meant whichever build
+  // ran last was what `next start` silently served — the web server then 404'd
+  // every API route because it was serving the exported shell's manifest.
+  // NOTE: with output:"export" this directory IS the export destination; the
+  // build script renames it to out/ afterwards so the public contract holds.
+  distDir: ".next-cap",
+  output: "export",
+  trailingSlash: true,
+  images: { unoptimized: true },
+  // No headers(): a static export has no server to send them. The shell's CSP
+  // ships as a <meta http-equiv> tag in the layout for capacitor builds.
+};
+
+// No Serwist for the native shell: assets are bundled with the app, and a web
+// service worker inside WKWebView would only fight the bundle.
+export default isCapacitorBuild ? capacitorConfig : withSerwist(webConfig);

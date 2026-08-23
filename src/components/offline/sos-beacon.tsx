@@ -18,6 +18,8 @@ export function SosBeacon({ onClose }: { onClose: () => void }) {
       window.clearInterval(timer);
       window.clearInterval(vibe);
       if (typeof navigator !== "undefined" && navigator.vibrate) {
+        // Web-only cancel of an in-flight vibration; native impacts are
+        // discrete taps with nothing to cancel.
         navigator.vibrate(0);
       }
     };
@@ -41,6 +43,7 @@ export function SosBeacon({ onClose }: { onClose: () => void }) {
       </p>
       <p className={`mt-3 max-w-sm px-6 text-center text-sm ${flash ? "text-black" : "text-white"}`}>
         Screen strobe + looping tone. Use to be seen or heard. Stop cancels the sound.
+        Keep the screen on — the beacon stops if the phone locks.
       </p>
       <Button className="mt-8" variant="secondary" onClick={onClose}>
         Stop sound &amp; flash

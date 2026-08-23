@@ -1,3 +1,4 @@
+import { syncOverdueNotification } from "@/lib/platform/overdue-notification";
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { PositionSource } from "@/lib/safety/emergency";
 
@@ -676,6 +677,9 @@ export async function setOverdueAlarm(returnTime: ResolvedLocalTime | null): Pro
   try {
     if (!returnTime) {
       await db.delete("overdue", "current");
+      // Best-effort, after the store succeeded: the native locked-screen alarm
+      // must track the stored deadline (web: no-op "unsupported").
+      void syncOverdueNotification(null);
       return true;
     }
     await db.put("overdue", {
@@ -685,6 +689,7 @@ export async function setOverdueAlarm(returnTime: ResolvedLocalTime | null): Pro
       timeZone: returnTime.timeZone,
       utcOffset: returnTime.utcOffset,
     });
+    void syncOverdueNotification(returnTime.instant.toISOString());
     return true;
   } catch {
     return false;

@@ -15,7 +15,7 @@ vi.mock("@/lib/guardian/server", () => ({
   revokeGuardianShare: mocks.revokeGuardianShare,
 }));
 
-import { PATCH } from "./[id]/route";
+import { PATCH } from "./[id]/route.api";
 
 function revokeRequest() {
   return new Request("http://localhost/api/guardian/share-test", {

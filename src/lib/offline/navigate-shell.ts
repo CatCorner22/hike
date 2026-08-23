@@ -1,21 +1,36 @@
+import { isOnline } from "@/lib/platform/network";
+import { isNative } from "@/lib/platform/native";
 import {
   headersForRewrittenNavigateDocument,
   isValidNavigateShellDocument,
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
+  NAVIGATE_SHELL_ROUTE_ID,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
 export { NAVIGATE_ASSETS_CACHE, NAVIGATE_SHELL_CACHE, NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
-const NAVIGATE_MANIFEST_VERSION = 1;
+/**
+ * One fixed shell document serves every route.
+ *
+ * With ?target= routing the navigate document is plan-agnostic: the plan id
+ * travels in the query string and the route data lives in IndexedDB, so the
+ * shell (and its asset manifest) is cached once at a fixed URL instead of once
+ * per plan. Per-plan readiness is the route pack in IndexedDB, which callers
+ * check separately — this module answers only "can the navigate APP open with
+ * no radio". Version 2 keys make every version-1 per-plan entry unreadable, so
+ * a device upgraded mid-season honestly reports not-ready until the next
+ * Prepare offline instead of trusting a stale per-plan shell.
+ */
+const NAVIGATE_MANIFEST_VERSION = 2;
 const MAX_NAVIGATE_ASSETS = 500;
 
 interface NavigateAssetManifest {
   version: number;
   marker: string;
-  navId: string;
+  routeId: string;
   shellUrl: string;
   assetUrls: string[];
   cachedAt: string;
@@ -46,9 +61,9 @@ const EMPTY_STATUS: NavigateOfflineStatus = {
   ready: false,
 };
 
-function navigateUrl(navId: string): URL | null {
+function navigateUrl(): URL | null {
   if (typeof window === "undefined") return null;
-  return new URL(`/navigate/${encodeURIComponent(navId)}`, window.location.origin);
+  return new URL("/navigate", window.location.origin);
 }
 
 function nextStaticUrls(html: string, baseUrl: URL): URL[] {
@@ -66,9 +81,9 @@ function nextStaticUrls(html: string, baseUrl: URL): URL[] {
   return [...urls].map((url) => new URL(url));
 }
 
-function ownMarkedDocument(response: Response, html: string, navId: string): Response | null {
+function ownMarkedDocument(response: Response, html: string): Response | null {
   const contentType = response.headers.get("content-type") ?? "";
-  if (!isValidNavigateShellDocument(html, contentType, null, navId)) return null;
+  if (!isValidNavigateShellDocument(html, contentType, null, NAVIGATE_SHELL_ROUTE_ID)) return null;
   const headers = headersForRewrittenNavigateDocument(response.headers);
   headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
   return new Response(stampNavigateShellHtml(html), {
@@ -78,18 +93,18 @@ function ownMarkedDocument(response: Response, html: string, navId: string): Res
   });
 }
 
-function manifestUrl(navId: string): URL | null {
+function manifestUrl(): URL | null {
   if (typeof window === "undefined") return null;
-  return new URL(`/__klandagi__/navigate-manifest/${encodeURIComponent(navId)}`, window.location.origin);
+  return new URL("/__klandagi__/navigate-manifest/shell", window.location.origin);
 }
 
-function validManifest(value: unknown, navId: string, origin: string): value is NavigateAssetManifest {
+function validManifest(value: unknown, origin: string): value is NavigateAssetManifest {
   if (!value || typeof value !== "object") return false;
   const candidate = value as NavigateAssetManifest;
   if (
     candidate.version !== NAVIGATE_MANIFEST_VERSION ||
     candidate.marker !== NAVIGATE_SHELL_MARKER ||
-    candidate.navId !== navId ||
+    candidate.routeId !== NAVIGATE_SHELL_ROUTE_ID ||
     typeof candidate.shellUrl !== "string" ||
     !Array.isArray(candidate.assetUrls) ||
     candidate.assetUrls.length < 1 ||
@@ -99,7 +114,7 @@ function validManifest(value: unknown, navId: string, origin: string): value is 
   ) return false;
   try {
     const shell = new URL(candidate.shellUrl);
-    if (shell.origin !== origin || shell.pathname !== `/navigate/${encodeURIComponent(navId)}`) return false;
+    if (shell.origin !== origin || shell.pathname !== "/navigate") return false;
     return candidate.assetUrls.every((raw) => {
       const asset = new URL(raw);
       return asset.origin === origin && asset.pathname.startsWith("/_next/static/");
@@ -109,8 +124,8 @@ function validManifest(value: unknown, navId: string, origin: string): value is 
   }
 }
 
-async function readCachedShell(navId: string): Promise<boolean> {
-  const url = navigateUrl(navId);
+async function readCachedShell(): Promise<boolean> {
+  const url = navigateUrl();
   if (!url || typeof caches === "undefined") return false;
   const cache = await caches.open(NAVIGATE_SHELL_CACHE);
   const response = await cache.match(url.toString(), { ignoreSearch: true, ignoreVary: true });
@@ -122,23 +137,55 @@ async function readCachedShell(navId: string): Promise<boolean> {
       html,
       response.headers.get("content-type") ?? "",
       response.headers.get("x-hike-navigate-shell"),
-      navId,
+      NAVIGATE_SHELL_ROUTE_ID,
     );
   } catch {
     return false;
   }
 }
 
-/** Warm only an app-shaped, explicitly marked navigation document. */
-export async function warmNavigateShell(navId: string): Promise<WarmNavigateShellResult> {
-  const first = await warmNavigateShellOnce(navId);
-  if (first.ok) return first;
-  await new Promise((resolve) => setTimeout(resolve, 1_500));
-  return warmNavigateShellOnce(navId);
+/**
+ * Drop version-1 per-plan entries (`/navigate/<id>`, per-plan manifests) so the
+ * shell cache cannot grow one dead document per plan forever. Best-effort.
+ */
+async function pruneLegacyShellEntries(shellCache: Cache, keep: Set<string>): Promise<void> {
+  try {
+    for (const key of await shellCache.keys()) {
+      const raw = typeof key === "string" ? key : key.url;
+      if (!keep.has(raw)) await shellCache.delete(key);
+    }
+  } catch {
+    // Pruning is hygiene, not readiness: a failure here must never fail a warm.
+  }
 }
 
-async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellResult> {
-  const url = navigateUrl(navId);
+/**
+ * Inside the native shell every app asset ships in the bundle itself — there is
+ * no service worker and nothing to warm, and reporting "not ready" here would
+ * permanently lock the readiness gate on the platform where offline launch is
+ * guaranteed by construction.
+ */
+const NATIVE_BUNDLED_STATUS: NavigateOfflineStatus = {
+  shellCached: true,
+  expectedAssets: 1,
+  cachedAssets: 1,
+  missingAssets: [],
+  serviceWorkerControlled: true,
+  filesReady: true,
+  ready: true,
+};
+
+/** Warm only an app-shaped, explicitly marked navigation document. */
+export async function warmNavigateShell(): Promise<WarmNavigateShellResult> {
+  if (isNative()) return { ...NATIVE_BUNDLED_STATUS, ok: true };
+  const first = await warmNavigateShellOnce();
+  if (first.ok) return first;
+  await new Promise((resolve) => setTimeout(resolve, 1_500));
+  return warmNavigateShellOnce();
+}
+
+async function warmNavigateShellOnce(): Promise<WarmNavigateShellResult> {
+  const url = navigateUrl();
   const fail = (error: string, status: Partial<NavigateOfflineStatus> = {}): WarmNavigateShellResult => ({
     ...EMPTY_STATUS,
     ...status,
@@ -146,13 +193,13 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
     error,
   });
   if (!url || typeof caches === "undefined") return fail("Offline cache is unavailable in this browser.");
-  if (typeof navigator === "undefined" || !navigator.onLine) return fail("Reconnect to cache the navigation screen.");
+  if (!isOnline()) return fail("Reconnect to cache the navigation screen.");
   try {
     const response = await fetch(url.toString(), { cache: "no-store", credentials: "same-origin" });
     if (!response.ok) return fail(`Navigation screen could not be cached (${response.status}).`);
     const html = await response.clone().text();
-    const marked = ownMarkedDocument(response, html, navId);
-    if (!marked) return fail("Navigation screen response did not prove that it was the requested route.");
+    const marked = ownMarkedDocument(response, html);
+    if (!marked) return fail("Navigation screen response did not prove that it was the navigate app shell.");
     const assets = nextStaticUrls(html, url);
     if (assets.length < 1) return fail("Navigation screen listed no versioned app files, so offline readiness cannot be verified.");
     if (assets.length > MAX_NAVIGATE_ASSETS) return fail("Navigation screen listed too many app files to verify safely.");
@@ -175,12 +222,12 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
       );
     }
     await shellCache.put(url.toString(), marked);
-    const manifestKey = manifestUrl(navId);
+    const manifestKey = manifestUrl();
     if (!manifestKey) return fail("Navigation manifest could not be created.");
     const manifest: NavigateAssetManifest = {
       version: NAVIGATE_MANIFEST_VERSION,
       marker: NAVIGATE_SHELL_MARKER,
-      navId,
+      routeId: NAVIGATE_SHELL_ROUTE_ID,
       shellUrl: url.toString(),
       assetUrls: assets.map((asset) => asset.toString()),
       cachedAt: new Date().toISOString(),
@@ -188,10 +235,11 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
     await shellCache.put(manifestKey.toString(), new Response(JSON.stringify(manifest), {
       headers: { "content-type": "application/json", "cache-control": "no-store" },
     }));
+    await pruneLegacyShellEntries(shellCache, new Set([url.toString(), manifestKey.toString()]));
 
     // Slow browsers can expose Cache Storage writes a few ticks later.
     for (let attempt = 0; attempt < 15; attempt += 1) {
-      const status = await getNavigateOfflineStatus(navId);
+      const status = await getNavigateOfflineStatus();
       if (status.ready) return { ...status, ok: true };
       if (status.filesReady && !status.serviceWorkerControlled) {
         return fail(
@@ -201,28 +249,29 @@ async function warmNavigateShellOnce(navId: string): Promise<WarmNavigateShellRe
       }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    const status = await getNavigateOfflineStatus(navId);
+    const status = await getNavigateOfflineStatus();
     return fail("Navigation files were written but failed complete verification.", status);
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Navigation screen could not be cached.");
   }
 }
 
-export async function isNavigateShellCached(navId: string): Promise<boolean> {
-  return (await getNavigateOfflineStatus(navId)).filesReady;
+export async function isNavigateShellCached(): Promise<boolean> {
+  return (await getNavigateOfflineStatus()).filesReady;
 }
 
-export async function getNavigateOfflineStatus(navId: string): Promise<NavigateOfflineStatus> {
-  const shellUrl = navigateUrl(navId);
-  const manifestKey = manifestUrl(navId);
+export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus> {
+  if (isNative()) return { ...NATIVE_BUNDLED_STATUS };
+  const shellUrl = navigateUrl();
+  const manifestKey = manifestUrl();
   if (!shellUrl || !manifestKey || typeof caches === "undefined") return EMPTY_STATUS;
-  const shellCached = await readCachedShell(navId);
+  const shellCached = await readCachedShell();
   let manifest: NavigateAssetManifest | null = null;
   try {
     const shellCache = await caches.open(NAVIGATE_SHELL_CACHE);
     const response = await shellCache.match(manifestKey.toString(), { ignoreVary: true });
     const parsed = response ? await response.json() : null;
-    if (validManifest(parsed, navId, shellUrl.origin)) manifest = parsed;
+    if (validManifest(parsed, shellUrl.origin)) manifest = parsed;
   } catch {
     manifest = null;
   }
@@ -249,15 +298,4 @@ export async function getNavigateOfflineStatus(navId: string): Promise<NavigateO
     filesReady,
     ready: filesReady && serviceWorkerControlled,
   };
-}
-
-export async function removeNavigateShell(navId: string): Promise<void> {
-  const shellUrl = navigateUrl(navId);
-  const manifestKey = manifestUrl(navId);
-  if (!shellUrl || !manifestKey || typeof caches === "undefined") return;
-  const shellCache = await caches.open(NAVIGATE_SHELL_CACHE);
-  await Promise.all([
-    shellCache.delete(shellUrl.toString(), { ignoreSearch: true }),
-    shellCache.delete(manifestKey.toString()),
-  ]);
 }

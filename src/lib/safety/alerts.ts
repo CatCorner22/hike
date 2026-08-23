@@ -1,3 +1,4 @@
+import { vibratePattern } from "@/lib/platform/haptics";
 export type OffTrailLevel = "ok" | "warn" | "critical" | "unknown";
 
 export function offTrailLevel(
@@ -31,8 +32,10 @@ const VIBRATION_PATTERNS: Record<OffTrailLevel, number[]> = {
 };
 
 export function vibrateOffTrail(level: OffTrailLevel) {
-  if (level === "ok" || typeof navigator === "undefined" || !navigator.vibrate) return;
-  navigator.vibrate(VIBRATION_PATTERNS[level]);
+  if (level === "ok") return;
+  // Through the platform seam: navigator.vibrate does not exist on iOS, where
+  // the Capacitor shell registers a haptics adapter walking the same patterns.
+  vibratePattern(VIBRATION_PATTERNS[level]);
 }
 
 export function shouldRepeatAlert(

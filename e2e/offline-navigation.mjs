@@ -284,7 +284,7 @@ async function run() {
     // Establish the owner cookie and same-origin context before creating data.
     await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
     const planId = await createPlan(page, GEOMETRY);
-    const navUrl = `${BASE}/navigate/plan-${planId}`;
+    const navUrl = `${BASE}/navigate?target=plan-${planId}`;
 
     const isolation = await assertOwnershipIsolation(browser, page, planId);
     log("A0 device-scoped ownership isolates", isolation.ok ? "PASS" : "FAIL", isolation.detail);
@@ -346,7 +346,7 @@ async function run() {
     const planId = await createPlan(page, GEOMETRY);
 
     // Visit the plan detail screen online and register the SW.
-    await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
     await waitForServiceWorker(page);
     await page.waitForTimeout(1200);
 
@@ -401,8 +401,8 @@ async function run() {
       return false;
     }
 
-    async function inspectPreparedOfflineFiles(url, id) {
-      return page.evaluate(async ({ target, navId }) => {
+    async function inspectPreparedOfflineFiles(url) {
+      return page.evaluate(async ({ target }) => {
         const marker = "hike-navigate-shell-v2";
         const result = {
           ok: false,
@@ -421,20 +421,23 @@ async function run() {
             return result;
           }
           const html = await shell.clone().text();
+          // One fixed, plan-agnostic shell: the document proves shell identity
+          // with the constant marker; the plan travels in ?target= and its data
+          // is the route pack in IndexedDB (checked by B2), not this document.
           result.shellValid =
             (shell.headers.get("x-hike-navigate-shell") === marker || html.includes(marker)) &&
-            html.includes(`data-hike-navigate-shell="${navId}"`) &&
+            html.includes('data-hike-navigate-shell="shell"') &&
             /<!doctype html|<html[\s>]/i.test(html);
-          const manifestUrl = new URL(`/__klandagi__/navigate-manifest/${encodeURIComponent(navId)}`, location.origin).toString();
+          const manifestUrl = new URL("/__klandagi__/navigate-manifest/shell", location.origin).toString();
           const manifestResponse = await shellCache.match(manifestUrl, { ignoreVary: true });
           const manifest = manifestResponse ? await manifestResponse.json().catch(() => null) : null;
           const unique = Array.isArray(manifest?.assetUrls) && new Set(manifest.assetUrls).size === manifest.assetUrls.length;
           result.manifestValid = Boolean(
             manifest &&
-            manifest.version === 1 &&
+            manifest.version === 2 &&
             manifest.marker === marker &&
-            manifest.navId === navId &&
-            new URL(manifest.shellUrl).pathname === `/navigate/${encodeURIComponent(navId)}` &&
+            manifest.routeId === "shell" &&
+            new URL(manifest.shellUrl).pathname === "/navigate" &&
             unique &&
             manifest.assetUrls.length > 0 &&
             manifest.assetUrls.every((asset) => {
@@ -464,11 +467,10 @@ async function run() {
           result.reason = String(error);
           return result;
         }
-      }, { target: url, navId: id });
+      }, { target: url });
     }
 
-    const navShellUrl = `${BASE}/navigate/plan-${planId}`;
-    const preparedNavId = `plan-${planId}`;
+    const navShellUrl = `${BASE}/navigate?target=plan-${planId}`;
     let shellCached = await waitForVerifiedShell(navShellUrl);
     if (!shellCached && prepared.via === "button") {
       log("B1 retry prepare", "....", "verified shell missing after save — warming again");
@@ -483,7 +485,7 @@ async function run() {
       );
       shellCached = await waitForVerifiedShell(navShellUrl);
     }
-    const cacheAudit = await inspectPreparedOfflineFiles(navShellUrl, preparedNavId);
+    const cacheAudit = await inspectPreparedOfflineFiles(navShellUrl);
     const cacheKeys = await page.evaluate(async () => {
       try {
         const cache = await caches.open("hike-navigate-shell");
@@ -573,7 +575,7 @@ async function run() {
         "setOffline did not cut the worker's network, so B3 below does not prove the cached shell was used. Run the CI job, or stop the server before the cold open, to test this for real.",
       );
     }
-    const navUrl = `${BASE}/navigate/plan-${planId}`;
+    const navUrl = `${BASE}/navigate?target=plan-${planId}`;
     async function coldNavigateOnce() {
       let navError = null;
       let navigationResponse = null;

@@ -7,7 +7,7 @@ vi.mock("@/lib/offline/official-alerts", async () => {
   return { ...actual, fetchOfficialRouteAlerts: fetchSnapshot };
 });
 
-import { POST } from "./route";
+import { POST } from "./route.api";
 
 beforeEach(() => {
   __resetRateLimitForTests();

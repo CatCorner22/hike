@@ -1,3 +1,4 @@
+import { getPlatformAdapters } from "@/lib/platform/adapters";
 import { gpxFromTrack } from "@/lib/geo";
 import { formatRangeAzimuth, rangeAzimuth, type RangeAzimuth } from "@/lib/safety/landnav";
 import type { IceProfile, SafetyWaypoint } from "@/lib/safety/profile";
@@ -244,6 +245,15 @@ export function breadcrumbGpx(
 }
 
 export function downloadTextFile(filename: string, text: string, mime = "application/gpx+xml") {
+  // Inside WKWebView an <a download> click is a dead end; the shell registers
+  // a save adapter (Filesystem write + iOS share sheet). Fire-and-forget by
+  // design: the share sheet IS the user-visible outcome, and the sync throw
+  // contract below stays web-only.
+  const saveAdapter = getPlatformAdapters().saveFile;
+  if (saveAdapter) {
+    void saveAdapter.saveText(filename, text, mime).catch(() => undefined);
+    return;
+  }
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

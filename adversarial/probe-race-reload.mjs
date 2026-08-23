@@ -32,7 +32,7 @@ try {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${BASE}/plan/${plan.body.id}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  await page.goto(`${BASE}/plan/detail?id=${plan.body.id}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
   const start = page.getByRole("button", { name: "Start recording" });
   await start.waitFor({ state: "visible", timeout: 20_000 });
   await start.click();

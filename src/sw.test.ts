@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
+import { NAVIGATE_SHELL_MARKER, NAVIGATE_SHELL_ROUTE_ID } from "@/lib/offline/navigate-shell-validation";
 
 vi.mock("@serwist/next/worker", () => ({ defaultCache: [] }));
 vi.mock("serwist", () => ({
@@ -18,8 +18,11 @@ const shellPuts = (put: ReturnType<typeof vi.fn>) =>
   put.mock.calls.filter((call) => String(call[0]).includes("nav-diag") === false);
 
 const NAV_ID = "plan-prepared";
-const NAV_URL = `https://example.test/navigate/${NAV_ID}`;
-const VALID_SHELL = `<!doctype html><html><body><main data-hike-navigate-shell="${NAV_ID}"><!--${NAVIGATE_SHELL_MARKER}--><script src="/_next/static/chunks/main.js"></script></main></body></html>`.padEnd(
+// The plan travels in ?target=; the document itself is the fixed, plan-agnostic
+// shell stamped with the constant route id.
+const NAV_URL = `https://example.test/navigate?target=${NAV_ID}`;
+const SHELL_ATTR = `data-hike-navigate-shell="${NAVIGATE_SHELL_ROUTE_ID}"`;
+const VALID_SHELL = `<!doctype html><html><body><main ${SHELL_ATTR}><!--${NAVIGATE_SHELL_MARKER}--><script src="/_next/static/chunks/main.js"></script></main></body></html>`.padEnd(
   600,
   " ",
 );
@@ -64,13 +67,15 @@ describe("navigate service-worker shell handler", () => {
 
     expect(result).not.toBe(timedOut);
     expect(result).toBeInstanceOf(Response);
-    expect(await (result as Response).text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await (result as Response).text()).toContain(SHELL_ATTR);
     expect(fetchNeverSettles).not.toHaveBeenCalled();
   });
 
-  it("refuses a prepared shell for a different route when the network is unavailable", async () => {
-    const wrongRouteShell = VALID_SHELL.replaceAll(NAV_ID, "plan-someone-else");
-    const prepared = new Response(wrongRouteShell, {
+  it("refuses a cached document that is not the navigate shell when the network is unavailable", async () => {
+    // A soft-error page or any other cached HTML must never masquerade as the
+    // shell: the constant marker is the proof-of-identity the validator demands.
+    const notTheShell = VALID_SHELL.replace(SHELL_ATTR, 'data-some-other-page="x"');
+    const prepared = new Response(notTheShell, {
       headers: {
         "content-type": "text/html; charset=utf-8",
         "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
@@ -93,7 +98,7 @@ describe("navigate service-worker shell handler", () => {
 
     expect(failedFetch).toHaveBeenCalledOnce();
     expect(body).toContain("Offline navigation is unavailable");
-    expect(body).not.toContain("plan-someone-else");
+    expect(body).not.toContain("data-some-other-page");
   });
 
   it("retries a transient Cache Storage read after the offline fetch fails", async () => {
@@ -119,7 +124,7 @@ describe("navigate service-worker shell handler", () => {
     const { navigateShellHandler } = await import("./sw");
     const result = await navigateShellHandler({ request: new Request(NAV_URL) });
 
-    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await result.text()).toContain(SHELL_ATTR);
     // Scoped to the shell cache: the handler also records its decision into a
     // separate diagnostic cache, which is not what this test constrains.
     expect(shellOpens(open)).toBe(2);
@@ -146,7 +151,7 @@ describe("navigate service-worker shell handler", () => {
     const { navigateShellHandler } = await import("./sw");
     const result = await navigateShellHandler({ request: new Request(NAV_URL) });
 
-    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await result.text()).toContain(SHELL_ATTR);
     expect(shellOpens(open)).toBe(2);
   });
 
@@ -192,7 +197,7 @@ describe("navigate service-worker shell handler", () => {
     const { navigateShellHandler } = await import("./sw");
     const result = await navigateShellHandler({ request: new Request(NAV_URL) });
 
-    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await result.text()).toContain(SHELL_ATTR);
   });
 
   it("stamps and sanitizes a valid live document before caching it", async () => {
@@ -272,7 +277,7 @@ describe("navigate service-worker shell handler", () => {
 
     expect(result.status).toBe(200);
     expect(captured.signal?.aborted).toBe(false);
-    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await result.text()).toContain(SHELL_ATTR);
     expect(shellPuts(cache.put as unknown as ReturnType<typeof vi.fn>)).toHaveLength(1);
   });
 
@@ -293,7 +298,7 @@ describe("navigate service-worker shell handler", () => {
     const result = await navigateShellHandler({ request: new Request(NAV_URL) });
 
     expect(result.status).toBe(200);
-    expect(await result.text()).toContain(`data-hike-navigate-shell="${NAV_ID}"`);
+    expect(await result.text()).toContain(SHELL_ATTR);
     expect(shellPuts(cache.put as unknown as ReturnType<typeof vi.fn>)).toHaveLength(1);
   });
 });

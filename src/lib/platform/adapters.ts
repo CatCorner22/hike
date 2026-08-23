@@ -40,6 +40,31 @@ export interface NotificationsAdapter {
   cancel(id: number): Promise<void>;
 }
 
+export interface WakeLockAdapter {
+  /** Resolves to whether the screen is actually being kept awake. */
+  acquire(): Promise<boolean>;
+  release(): Promise<void>;
+}
+
+export interface GeoWatcher {
+  stop(): void;
+}
+
+export interface GeolocationAdapter {
+  /**
+   * Continuous position watch. `background: true` asks the platform to keep
+   * delivering fixes with the screen locked (track recording); the web
+   * fallback cannot honor it and callers must not pretend otherwise.
+   * Callbacks receive GeolocationPosition/GeolocationPositionError-shaped
+   * objects so the existing watchdog/trust/stale logic runs unchanged.
+   */
+  watch(
+    onFix: (position: GeolocationPosition) => void,
+    onError: (error: GeolocationPositionError) => void,
+    options: { background: boolean },
+  ): GeoWatcher;
+}
+
 export interface PlatformAdapters {
   network?: NetworkAdapter;
   battery?: BatteryAdapter;
@@ -47,6 +72,8 @@ export interface PlatformAdapters {
   saveFile?: SaveFileAdapter;
   notifications?: NotificationsAdapter;
   heading?: import("@/lib/platform/heading").HeadingAdapter;
+  wakeLock?: WakeLockAdapter;
+  geolocation?: GeolocationAdapter;
 }
 
 let adapters: PlatformAdapters = {};

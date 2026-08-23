@@ -8,6 +8,7 @@ import {
   NAVIGATE_ASSETS_CACHE,
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
+  NAVIGATE_SHELL_ROUTE_ID,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
@@ -31,34 +32,37 @@ function offlineDocument(misses: string[] = []): Response {
   );
 }
 
-function navigateIdFromRequest(request: Request): string | null {
+/**
+ * The plan identity travels in ?target= now — one fixed shell document serves
+ * every plan, so the target is diagnostic context only. Validation checks the
+ * constant shell marker, never the target.
+ */
+function navigateTargetFromRequest(request: Request): string | null {
   try {
-    const match = new URL(request.url).pathname.match(/^\/navigate\/([^/]+)\/?$/);
-    if (!match) return null;
-    const navId = decodeURIComponent(match[1]);
-    return navId.length > 0 && navId.length <= 256 ? navId : null;
+    const target = new URL(request.url).searchParams.get("target");
+    return target && target.length > 0 && target.length <= 256 ? target : null;
   } catch {
     return null;
   }
 }
 
-async function isValidNavigateDocument(response: Response, navId: string): Promise<boolean> {
+async function isValidNavigateDocument(response: Response): Promise<boolean> {
   const contentType = response.headers.get("content-type") ?? "";
   const markerHeader = response.headers.get("x-hike-navigate-shell");
   try {
     const document = await response.clone().text();
-    return isValidNavigateShellDocument(document, contentType, markerHeader, navId);
+    return isValidNavigateShellDocument(document, contentType, markerHeader, NAVIGATE_SHELL_ROUTE_ID);
   } catch {
     return false;
   }
 }
 
-async function markNavigateDocument(response: Response, navId: string): Promise<Response | null> {
+async function markNavigateDocument(response: Response): Promise<Response | null> {
   const contentType = response.headers.get("content-type") ?? "";
   if (!response.ok || !contentType.toLowerCase().includes("text/html")) return null;
   try {
     const body = await response.clone().text();
-    if (!isValidNavigateShellDocument(body, contentType, null, navId)) return null;
+    if (!isValidNavigateShellDocument(body, contentType, null, NAVIGATE_SHELL_ROUTE_ID)) return null;
     const headers = headersForRewrittenNavigateDocument(response.headers);
     headers.set("x-hike-navigate-shell", NAVIGATE_SHELL_MARKER);
     return new Response(stampNavigateShellHtml(body), {
@@ -83,7 +87,7 @@ async function matchNavigateShell(cache: Cache, request: Request): Promise<Respo
   } catch {
     return undefined;
   }
-  if (!wanted.pathname.startsWith("/navigate/")) return undefined;
+  if (wanted.pathname !== "/navigate" && wanted.pathname !== "/navigate/") return undefined;
 
   for (const key of await cache.keys()) {
     const raw = typeof key === "string" ? key : key.url;
@@ -104,8 +108,8 @@ async function matchNavigateShell(cache: Cache, request: Request): Promise<Respo
   return undefined;
 }
 
-async function trustedCachedShell(response: Response, navId: string): Promise<Response | null> {
-  return (await isValidNavigateDocument(response, navId)) ? response : null;
+async function trustedCachedShell(response: Response): Promise<Response | null> {
+  return (await isValidNavigateDocument(response)) ? response : null;
 }
 
 /**
@@ -138,7 +142,6 @@ const READ_TIMED_OUT = Symbol("read-timed-out");
 
 async function readTrustedCachedShell(
   request: Request,
-  navId: string,
   timeoutMs: number,
   misses?: string[],
 ): Promise<Response | null> {
@@ -151,7 +154,7 @@ async function readTrustedCachedShell(
           misses?.push("miss");
           return null;
         }
-        const trusted = await trustedCachedShell(cached, navId);
+        const trusted = await trustedCachedShell(cached);
         if (!trusted) misses?.push("invalid");
         return trusted;
       } catch {
@@ -173,7 +176,6 @@ async function readTrustedCachedShell(
 
 async function retryTrustedCachedShell(
   request: Request,
-  navId: string,
   misses?: string[],
 ): Promise<Response | null> {
   // A prepared shell is life-safety data and has already passed validation.
@@ -181,7 +183,7 @@ async function retryTrustedCachedShell(
   // failed network fetch instead of immediately making a false missing claim.
   for (const delayMs of [0, 100, 300, 700]) {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    const cached = await readTrustedCachedShell(request, navId, CACHE_RETRY_READ_TIMEOUT_MS, misses);
+    const cached = await readTrustedCachedShell(request, CACHE_RETRY_READ_TIMEOUT_MS, misses);
     if (cached) return cached;
   }
   return null;
@@ -209,7 +211,6 @@ async function persistNavigateDocument(request: Request, marked: Response): Prom
 
 async function fetchNavigateDocument(
   request: Request,
-  navId: string,
 ): Promise<NetworkNavigateDocument | null> {
   const controller = new AbortController();
   const attempt = (async (): Promise<{
@@ -218,7 +219,7 @@ async function fetchNavigateDocument(
   } | null> => {
     try {
       const response = await fetch(request, { signal: controller.signal });
-      const marked = await markNavigateDocument(response, navId);
+      const marked = await markNavigateDocument(response);
       return { response, marked };
     } catch {
       return null;
@@ -295,8 +296,9 @@ function recordNavigateDecision(entry: Record<string, unknown>): void {
 
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   const startedAt = Date.now();
-  const navId = navigateIdFromRequest(request);
-  if (!navId) return offlineDocument(["no-nav-id"]);
+  // Diagnostic context only: the shell document is plan-agnostic, so a missing
+  // target must not block serving it — the page itself redirects when unset.
+  const navId = navigateTargetFromRequest(request) ?? "none";
   const misses: string[] = [];
   const done = (outcome: string, response: Response): Response => {
     recordNavigateDecision({
@@ -309,18 +311,18 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
     });
     return response;
   };
-  // A prepared shell has already been validated for this exact route and is
-  // the only launch path that does not depend on the radio. Prefer it before
-  // touching the network: a fetch can remain pending indefinitely under
-  // degraded connectivity instead of throwing an offline error.
-  const prepared = await readTrustedCachedShell(request, navId, COLD_START_READ_TIMEOUT_MS, misses);
+  // A prepared shell has already been validated and is the only launch path
+  // that does not depend on the radio. Prefer it before touching the network:
+  // a fetch can remain pending indefinitely under degraded connectivity
+  // instead of throwing an offline error.
+  const prepared = await readTrustedCachedShell(request, COLD_START_READ_TIMEOUT_MS, misses);
   if (prepared) return done("shell-cold", prepared);
 
   // Retry Cache Storage while the network is attempted. Neither source is
   // allowed to hold navigation open forever: a degraded radio can leave fetch
   // pending, and Cache Storage can briefly stall while a worker wakes.
-  const recovered = retryTrustedCachedShell(request, navId, misses);
-  const network = fetchNavigateDocument(request, navId);
+  const recovered = retryTrustedCachedShell(request, misses);
+  const network = fetchNavigateDocument(request);
   const usable = await firstNonNull<Response>([
     recovered,
     network.then((result) => (result?.trusted ? result.response : null)),
@@ -346,7 +348,8 @@ const serwist = new Serwist({
       matcher: ({ request }) => {
         if (request.mode !== "navigate") return false;
         try {
-          return !new URL(request.url).pathname.startsWith("/navigate/");
+          const pathname = new URL(request.url).pathname;
+          return pathname !== "/navigate" && pathname !== "/navigate/";
         } catch {
           return true;
         }

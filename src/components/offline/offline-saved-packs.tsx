@@ -9,12 +9,13 @@ import { parseRoutePackBackup, PACK_BACKUP_DISCLAIMER, serializeRoutePackBackup 
 import { deleteRoutePack, listRoutePacks, routePackStatus, type RoutePack } from "@/lib/offline/route-pack";
 import {
   getNavigateOfflineStatus,
-  removeNavigateShell,
   warmNavigateShell,
   type NavigateOfflineStatus,
 } from "@/lib/offline/navigate-shell";
 import { downloadTextFile, safeFilename } from "@/lib/safety/field";
 import { savedPackLaunchCopy, savedPackLaunchState } from "@/lib/offline/saved-pack-readiness";
+import { navigateHref } from "@/lib/routes";
+import { isOnline, subscribeNetworkStatus } from "@/lib/platform/network";
 
 export function OfflineSavedPacks() {
   const [packs, setPacks] = useState<RoutePack[] | null>(null);
@@ -34,10 +35,10 @@ export function OfflineSavedPacks() {
           if (cancelled) return;
           setPacks(next);
           setNavigation(Object.fromEntries(next.map((pack) => [pack.id, null])));
-          const statuses = await Promise.all(
-            next.map(async (pack) => [pack.id, await getNavigateOfflineStatus(pack.id)] as const),
-          );
-          if (!cancelled) setNavigation(Object.fromEntries(statuses));
+          // The navigate shell is app-level and shared: one status answers for
+          // every pack. Per-pack readiness is the route pack row itself.
+          const shellStatus = await getNavigateOfflineStatus();
+          if (!cancelled) setNavigation(Object.fromEntries(next.map((pack) => [pack.id, shellStatus])));
         })
         .catch(() => {
           if (!cancelled) {
@@ -46,17 +47,16 @@ export function OfflineSavedPacks() {
           }
         });
     };
-    const updateOnline = () => setOnline(navigator.onLine);
+    const updateOnline = () => setOnline(isOnline());
     updateOnline();
     readPacks();
     window.addEventListener("hike:offline-readiness-changed", readPacks);
-    window.addEventListener("online", updateOnline);
-    window.addEventListener("offline", updateOnline);
+    // Through the platform seam: navigator.onLine misreports inside WKWebView.
+    const unsubscribeNetwork = subscribeNetworkStatus(setOnline);
     return () => {
       cancelled = true;
       window.removeEventListener("hike:offline-readiness-changed", readPacks);
-      window.removeEventListener("online", updateOnline);
-      window.removeEventListener("offline", updateOnline);
+      unsubscribeNetwork();
     };
   }, []);
 
@@ -65,8 +65,8 @@ export function OfflineSavedPacks() {
     setRepairingId(pack.id);
     setMessage(null);
     try {
-      const result = await warmNavigateShell(pack.id);
-      const status = await getNavigateOfflineStatus(pack.id);
+      const result = await warmNavigateShell();
+      const status = await getNavigateOfflineStatus();
       setNavigation((current) => ({ ...current, [pack.id]: status }));
       setMessage(result.ok
         ? `“${pack.name}” is ready offline.`
@@ -112,12 +112,13 @@ export function OfflineSavedPacks() {
     setDeletingId(pack.id);
     try {
       const deleted = await deleteRoutePack(pack.id);
-      await Promise.all(pack.aliases.map((alias) => removeNavigateShell(alias)));
+      // The navigate shell stays: it is shared app UI, and deleting it here
+      // would silently break offline launch for every OTHER saved route.
       setPacks(await listRoutePacks());
       setConfirmDeleteId(null);
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       setMessage(deleted
-        ? `Removed “${pack.name}” and its saved offline launch screen from this device.`
+        ? `Removed “${pack.name}” from this device.`
         : `“${pack.name}” was already absent from this device.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not remove this saved route.");
@@ -173,7 +174,7 @@ export function OfflineSavedPacks() {
                 <div className="flex flex-wrap gap-2">
                   {ready && (
                     <Link
-                      href={`/navigate/${encodeURIComponent(pack.id)}`}
+                      href={navigateHref(pack.id)}
                       className={buttonVariants({ size: "sm" })}
                     >
                       <MapPinned className="mr-2 h-4 w-4" />

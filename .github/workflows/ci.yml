@@ -29,6 +29,25 @@ jobs:
       - name: Production build
         run: npm run build
 
+  shell-export:
+    name: Capacitor shell export
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Static export build
+        run: npm run build:cap
+      - name: Export contains the prerendered navigate shell
+        run: test -f out/navigate/index.html && grep -q 'data-hike-navigate-shell="shell"' out/navigate/index.html
+      - name: Working tree unchanged after the build
+        # The build script moves src/proxy.ts (and its test) aside and must
+        # always restore them — a dirty tree here means the restore broke.
+        run: git diff --exit-code --name-only
+
   offline-navigation:
     name: Offline navigation e2e
     runs-on: ubuntu-latest

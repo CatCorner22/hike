@@ -18,10 +18,10 @@ describe("trail refs", () => {
 
   it("prefers the OSM href so Overpass can resolve without a DB row", () => {
     expect(trailPageHref("550e8400-e29b-41d4-a716-446655440000", "relation", "123")).toBe(
-      "/trails/osm-relation-123",
+      "/trails/detail?id=osm-relation-123",
     );
     expect(trailPageHref("550e8400-e29b-41d4-a716-446655440000")).toBe(
-      "/trails/550e8400-e29b-41d4-a716-446655440000",
+      "/trails/detail?id=550e8400-e29b-41d4-a716-446655440000",
     );
   });
 });

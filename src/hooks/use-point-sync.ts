@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { flushPendingPoints, getPendingPointCount } from "@/lib/offline";
+import { subscribeNetworkStatus } from "@/lib/platform/network";
 
 export function usePointSync(intervalMs = 30_000) {
   const [pending, setPending] = useState(0);
@@ -32,13 +33,16 @@ export function usePointSync(intervalMs = 30_000) {
 
   useEffect(() => {
     const initialSync = window.setTimeout(() => void sync(), 0);
-    const onOnline = () => void sync();
     const onQueued = () => { refreshPending(); void sync(); };
-    window.addEventListener("online", onOnline);
+    // Through the platform seam: reconnect events from the shell's Network
+    // plugin are trustworthy where WKWebView's 'online' event is not.
+    const unsubscribeNetwork = subscribeNetworkStatus((online) => {
+      if (online) void sync();
+    });
     window.addEventListener("hike-points-queued", onQueued);
     const interval = window.setInterval(() => void sync(), intervalMs);
     return () => {
-      window.removeEventListener("online", onOnline);
+      unsubscribeNetwork();
       window.removeEventListener("hike-points-queued", onQueued);
       window.clearTimeout(initialSync);
       window.clearInterval(interval);

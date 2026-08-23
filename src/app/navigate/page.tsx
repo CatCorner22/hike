@@ -1,8 +1,8 @@
 "use client";
 import { apiFetch } from "@/lib/api/client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { AlertTriangle, ArrowLeft, Compass, MapPin, Moon, Mountain } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,8 @@ import {
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
+import { planDetailHref, trailDetailHref } from "@/lib/routes";
+import { isOnline } from "@/lib/platform/network";
 import {
   isLikelyOffline,
   loadCachedRoutePack,
@@ -113,8 +115,28 @@ function trailheadPoint(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) 
 }
 
 export default function NavigatePage() {
-  const params = useParams<{ planId: string }>();
-  const navId = params.planId;
+  // useSearchParams must sit under Suspense so the shell prerenders statically —
+  // the static build has no server to expand a dynamic segment, which is why the
+  // route identity travels as ?target= instead of a path parameter.
+  return (
+    <Suspense fallback={null}>
+      <NavigateTarget />
+    </Suspense>
+  );
+}
+
+function NavigateTarget() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const navId = searchParams.get("target");
+  useEffect(() => {
+    if (!navId) router.replace("/go");
+  }, [navId, router]);
+  if (!navId) return null;
+  return <NavigateScreen navId={navId} />;
+}
+
+function NavigateScreen({ navId }: { navId: string }) {
 
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
   const [progress, setProgress] = useState<TrailProgress | null>(null);
@@ -412,18 +434,18 @@ export default function NavigatePage() {
       }
       try {
         if (target.kind === "trail") {
-          const res = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${target.id}`, { signal }), 8000);
+          const res = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${encodeURIComponent(target.id)}`, { signal }), 8000);
           if (!res.ok) throw new Error("Trail not found on server");
           const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
           complete({ status: "ready", pack, source: "network" });
           return;
         }
-        const planRes = await withNetworkTimeout((signal) => apiFetch(`/api/plans/${target.id}`, { signal }), 8000);
+        const planRes = await withNetworkTimeout((signal) => apiFetch(`/api/plans/${encodeURIComponent(target.id)}`, { signal }), 8000);
         if (!planRes.ok) throw new Error("Plan not found on server");
         const plan = await planRes.json();
         let trail = null;
         if (plan.trailId) {
-          const trailRes = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          const trailRes = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${encodeURIComponent(plan.trailId)}`, { signal }), 8000);
           if (trailRes.ok) trail = await trailRes.json();
         }
         const built = packFromPlanApi(navId, plan, trail);
@@ -451,8 +473,8 @@ export default function NavigatePage() {
   // service worker has controlled the document. It is intentionally
   // best-effort; Prepare offline is the explicit pre-departure verification flow.
   useEffect(() => {
-    if (navigator.onLine) void warmNavigateShell(navId);
-  }, [navId]);
+    if (isOnline()) void warmNavigateShell();
+  }, []);
 
   useEffect(() => {
     void requestWakeLock();
@@ -540,7 +562,7 @@ export default function NavigatePage() {
     if (loadState.status !== "ready") return "/";
     const target = parseNavigateTarget(loadState.pack.id);
     if (!target) return "/";
-    return target.kind === "trail" ? `/trails/${target.id}` : `/plan/${target.id}`;
+    return target.kind === "trail" ? trailDetailHref(target.id) : planDetailHref(target.id);
   }, [loadState]);
 
   const bearingToStart = useMemo(() => {

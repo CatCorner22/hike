@@ -56,7 +56,7 @@ await page.route("**/api/activities**", async (route) => {
 });
 
 try {
-  await page.goto(`${BASE}/trails/pause-probe`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/trails/detail?id=pause-probe`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Start recording" }).waitFor({ timeout: 15_000 });
   await page.getByRole("button", { name: "Start recording" }).click();
   await page.getByRole("button", { name: "Pause" }).waitFor();

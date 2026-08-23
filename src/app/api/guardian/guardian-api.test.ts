@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { OWNER_COOKIE, newOwnerId, signOwnerToken } from "@/lib/auth/owner";
 import { __resetRateLimitForTests } from "@/lib/api/rate-limit";
 import { newGuardianToken } from "@/lib/guardian/status";
-import { POST as createGuardian } from "./route";
-import { GET as getGuardian, PATCH as patchGuardian } from "./[id]/route";
-import { POST as readPublicGuardian } from "./status/route";
+import { POST as createGuardian } from "./route.api";
+import { GET as getGuardian, PATCH as patchGuardian } from "./[id]/route.api";
+import { POST as readPublicGuardian } from "./status/route.api";
 
 let session: string;
 

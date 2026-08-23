@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { __resetRateLimitForTests } from "@/lib/api/rate-limit";
 import { OWNER_COOKIE, newOwnerId, signOwnerToken } from "@/lib/auth/owner";
-import { GET } from "./route";
+import { GET } from "./route.api";
 
 beforeEach(() => {
   __resetRateLimitForTests();

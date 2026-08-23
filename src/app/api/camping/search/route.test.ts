@@ -5,7 +5,7 @@ vi.mock("@/lib/osm/overpass", () => ({
   searchBackcountryCamps: vi.fn(async () => []),
 }));
 
-import { GET } from "./route";
+import { GET } from "./route.api";
 
 describe("camping search bbox handling", () => {
   it.each([

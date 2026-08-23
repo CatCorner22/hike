@@ -112,7 +112,17 @@ describe("session responses are not shareable", () => {
   it("keeps owner-scoped pages out of shared caches even with a session", async () => {
     vi.stubEnv("SESSION_SECRET", SECRET);
     const token = await signOwnerToken("owner-1", SECRET);
-    for (const path of ["/plan", "/plan/abc", "/activities", "/navigate/plan-abc"]) {
+    // The real page paths under query-param routing, plus legacy path shapes —
+    // the prefix rule must cover both so a stale bookmark still stays private.
+    for (const path of [
+      "/plan",
+      "/plan/detail?id=abc",
+      "/plan/abc",
+      "/activities",
+      "/activities/detail?id=abc",
+      "/navigate?target=plan-abc",
+      "/navigate/plan-abc",
+    ]) {
       const response = await proxy(
         request(path, {
           accept: "text/html",

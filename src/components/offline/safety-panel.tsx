@@ -190,6 +190,7 @@ import {
 import { verifyRegroup } from "@/lib/safety/verify";
 import { medicalOverrideFromAltitude } from "@/lib/safety/triage-priority";
 import { PositionQr } from "@/components/safety/position-qr";
+import { PartyTriangulation } from "@/components/safety/party-triangulation";
 import { buildSarHandoff } from "@/lib/qr/handoff";
 import {
   amsAssessment,
@@ -1163,6 +1164,12 @@ export function SafetyPanel({
                 />
               </div>
             )}
+            {/* The receiving half of the same loop: read a position off another
+                phone's screen, then work the party picture and cross-bearings
+                from it. */}
+            <div className="mt-3">
+              <PartyTriangulation lat={lat} lng={lng} headingTrue={heading} />
+            </div>
             {advancedWaypointStatus && (
               <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
                 {advancedWaypointStatus}

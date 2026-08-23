@@ -1,3 +1,5 @@
+import { trailDetailHref } from "@/lib/routes";
+
 export interface OsmTrailRef {
   osmType: "relation" | "way" | "node";
   osmId: string;
@@ -24,8 +26,8 @@ export function isStoredTrailRef(value: string): boolean {
 }
 
 export function trailPageHref(trailId: string, osmType?: string | null, osmId?: string | null): string {
-  if (osmType && osmId) return `/trails/${osmTrailId(osmType, osmId)}`;
-  return `/trails/${trailId}`;
+  if (osmType && osmId) return trailDetailHref(osmTrailId(osmType, osmId));
+  return trailDetailHref(trailId);
 }
 
 export function parseNavigateTarget(navId: string): {

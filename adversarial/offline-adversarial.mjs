@@ -99,12 +99,12 @@ async function openSeeded(planId, opts = {}) {
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   page.on("console", m => { if (m.type() === "error") errors.push(`console:${m.text()}`); });
-  const url = `${BASE}/navigate/plan-${planId}`;
+  const url = `${BASE}/navigate?target=plan-${planId}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await waitForController(page);
   await page.waitForTimeout(1200);
   if (opts.prepare) {
-    await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click({ timeout: 10_000 });
     await page.waitForTimeout(1500);
   }
@@ -263,7 +263,7 @@ try {
       };
       o.onerror = () => reject(o.error);
     }), { id: `plan-${planId}` });
-    await env.page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
+    await env.page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
     await env.page.addInitScript(() => {}); // intentional no-op: keep test source browser compatible
     const outcome = await env.page.evaluate(async () => {
       const original = IDBObjectStore.prototype.put;
@@ -312,7 +312,7 @@ try {
   // Two tabs concurrently prepare/navigate against the same IDB record.
   {
     const planId = await createPlan("two tabs"); const context = await newOwnedContext({ permissions: ["geolocation"], geolocation: GEO, serviceWorkers: "allow" }); const a = await context.newPage(), b = await context.newPage();
-    await Promise.all([a.goto(`${BASE}/plan/${planId}`), b.goto(`${BASE}/navigate/plan-${planId}`)]); await waitForController(a);
+    await Promise.all([a.goto(`${BASE}/plan/detail?id=${planId}`), b.goto(`${BASE}/navigate?target=plan-${planId}`)]); await waitForController(a);
     const button = a.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }); await button.click(); await b.waitForTimeout(1800);
     const first = await screen(b);
     if (!first.ready && !first.appError) {
