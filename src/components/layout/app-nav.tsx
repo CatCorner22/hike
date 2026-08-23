@@ -82,7 +82,7 @@ export function AppNav() {
         </div>
       </header>
 
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background md:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t bg-background pb-[env(safe-area-inset-bottom)] md:hidden">
         <div className="flex justify-around py-2">
           {mobileNavItems.map(({ href, label, icon: Icon, primary }) => {
             const active = pathname === href || pathname.startsWith(`${href}/`);

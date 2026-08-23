@@ -18,6 +18,34 @@ const DECL: number[][] = [
   [15, 20, 19, 16, 9, -3, -16, -21, -25],
 ];
 
+/**
+ * The grid above is a snapshot of a field that moves. WMM epochs run five years;
+ * past the validity window the secular drift (~0.1–0.2°/yr over CONUS, more toward
+ * the poles) accumulates silently — a bearing error nobody can see on the screen.
+ * This module must say so itself rather than trusting a release note.
+ */
+export const DECLINATION_MODEL_EPOCH = 2025.0;
+export const DECLINATION_MODEL_VALID_UNTIL = 2030.0;
+
+function fractionalYear(date: Date): number {
+  const year = date.getUTCFullYear();
+  const start = Date.UTC(year, 0, 1);
+  const end = Date.UTC(year + 1, 0, 1);
+  return year + (date.getTime() - start) / (end - start);
+}
+
+export function declinationModelStalenessWarning(now = new Date()): string | null {
+  const year = fractionalYear(now);
+  if (!Number.isFinite(year) || year < DECLINATION_MODEL_VALID_UNTIL) return null;
+  const yearsPastEpoch = year - DECLINATION_MODEL_EPOCH;
+  return (
+    `Declination model is ${DECLINATION_MODEL_EPOCH.toFixed(0)}-epoch and past its ` +
+    `${DECLINATION_MODEL_VALID_UNTIL.toFixed(0)} validity window (~${yearsPastEpoch.toFixed(0)} years of magnetic drift). ` +
+    "Bearings may be off by a degree or more. Verify declination against a current chart " +
+    "or NOAA calculator and update the app."
+  );
+}
+
 export function magneticDeclination(lat: number, lng: number): number | null {
   if (lat < LATS[0] || lat > LATS[LATS.length - 1]) return null;
   if (lng < LNGS[0] || lng > LNGS[LNGS.length - 1]) return null;
@@ -78,7 +106,7 @@ export function gridConvergence(lat: number, lng: number): number | null {
  * bearing uncorrected, or assuming zero declination. An explicit "unavailable"
  * is the honest answer.
  */
-export function gmAngleCard(lat: number, lng: number): {
+export function gmAngleCard(lat: number, lng: number, now = new Date()): {
   declination: number | null;
   convergence: number | null;
   gmAngle: number | null;
@@ -86,6 +114,7 @@ export function gmAngleCard(lat: number, lng: number): {
   gridToMagnetic: string;
   magneticToGrid: string;
   lars: string;
+  staleness: string | null;
 } {
   const lars =
     "LARS: Left Add, Right Subtract — when the G-M arrow is left/right of grid north.";
@@ -104,6 +133,7 @@ export function gmAngleCard(lat: number, lng: number): {
       gridToMagnetic: `${missing} — do not convert grid to magnetic from memory. Use a current chart or a GPS bearing.`,
       magneticToGrid: `${missing} — magnetic-to-grid conversion unavailable.`,
       lars,
+      staleness: declinationModelStalenessWarning(now),
     };
   }
   const gmAngle = declination - convergence;
@@ -120,6 +150,7 @@ export function gmAngleCard(lat: number, lng: number): {
       : `Grid → mag: add ${abs}° (west is best) (conv ${conv})`,
     magneticToGrid: east ? `Mag → grid: add ${abs}°` : `Mag → grid: subtract ${abs}°`,
     lars,
+    staleness: declinationModelStalenessWarning(now),
   };
 }
 

@@ -1,6 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
 import type { PaceTerrain } from "@/lib/safety/landnav";
 import { formatReport, reportField } from "@/lib/safety/report-field";
+import { roundBearing } from "@/lib/safety/astro";
 
 export interface NavLeg {
   id: string;
@@ -70,6 +71,10 @@ export async function listNavLegs(packId: string): Promise<NavLeg[]> {
 export function formatNavLog(legs: NavLeg[]): string {
   if (legs.length === 0) return "NAV LOG empty";
   const rounded = (value: number) => (Number.isFinite(value) ? String(Math.round(value)) : "UNKNOWN");
+  // Every rendered bearing lives in [0, 360): 359.7 is 0°, not 360°, and a negative
+  // azimuth renders as its compass equivalent rather than verbatim — the same rule the
+  // mils display and the shadow hint already follow.
+  const bearing = (value: number) => (Number.isFinite(value) ? String(roundBearing(value)) : "UNKNOWN");
   return formatReport([
     "NAV LOG",
     ...legs.map((leg, i) => {
@@ -77,7 +82,7 @@ export function formatNavLog(legs: NavLeg[]): string {
       const eta = leg.arrivedAt
         ? Number.isFinite(arrivedAtMs) ? `arrived ${new Date(arrivedAtMs).toISOString()}` : "arrival time UNKNOWN"
         : "open";
-      return `L${i + 1}  ${rounded(leg.azimuthTrue)}° / ${rounded(leg.distanceM)} m  ${reportField(leg.terrain, 40)}  ${reportField(eta, 60)}${leg.note ? `  ${reportField(leg.note)}` : ""}`;
+      return `L${i + 1}  ${bearing(leg.azimuthTrue)}° / ${rounded(leg.distanceM)} m  ${reportField(leg.terrain, 40)}  ${reportField(eta, 60)}${leg.note ? `  ${reportField(leg.note)}` : ""}`;
     }),
   ]);
 }

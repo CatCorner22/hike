@@ -98,14 +98,28 @@ export function workRestCycle(wbgtC: number, workRate: WorkRate): WorkRestCycle 
 export function estimateWbgtC(input: { tempC: number; rhPct: number; inSun: boolean }): number | null {
   const { tempC, rhPct, inSun } = input;
   if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || typeof inSun !== "boolean") return null;
-  if (tempC < -20 || tempC > 50 || rhPct < 5 || rhPct > 99) return null;
-  const wetBulbC =
-    tempC * Math.atan(0.151977 * Math.sqrt(rhPct + 8.313659)) +
-    Math.atan(tempC + rhPct) -
-    Math.atan(rhPct - 1.676331) +
-    0.00391838 * Math.pow(rhPct, 1.5) * Math.atan(0.023101 * rhPct) -
-    4.686035;
-  const globeC = tempC + (inSun ? 5 : 0);
+  if (tempC < -20 || tempC > 50 || rhPct < 5 || rhPct > 100) return null;
+  // Stull's fit is published for 5–99 % RH, excluding the combined cold-dry corner
+  // where it wobbles non-monotonically. At saturation no regression is needed — the
+  // wet bulb equals the dry bulb, and heat doctrine has no exemption for the most
+  // dangerous humidity, so RH 100 must not silently delete all guidance. In the
+  // cold-dry corner, clamping RH to the fit's floor removes the wobble; every value
+  // there is tens of degrees below the lowest heat category, so only monotonicity
+  // matters.
+  const fitRh = tempC < 10 ? Math.max(rhPct, 10) : rhPct;
+  const wetBulbC = rhPct > 99
+    ? tempC
+    : tempC * Math.atan(0.151977 * Math.sqrt(fitRh + 8.313659)) +
+      Math.atan(tempC + fitRh) -
+      Math.atan(fitRh - 1.676331) +
+      0.00391838 * Math.pow(fitRh, 1.5) * Math.atan(0.023101 * fitRh) -
+      4.686035;
+  // Black globes in full sun with light wind run 10–20 °C above air (Liljegren 2008);
+  // the old +5 °C put the sun increment at 1.0 °C WBGT, 1–2 full categories low in
+  // exactly the black-flag conditions this estimate exists to flag. +15 °C is the
+  // mid-range, giving a +3 °C WBGT sun-vs-shade difference consistent with published
+  // sun/shade deltas. Still an estimate; a real WBGT needs instruments.
+  const globeC = tempC + (inSun ? 15 : 0);
   // ISO 7243 outdoor form is 0.7*Tnwb + 0.2*Tg + 0.1*Ta; the globe and air weights were
   // transposed, which under-read WBGT in sun and could drop a heat category.
   return round1(0.7 * wetBulbC + (inSun ? 0.2 * globeC + 0.1 * tempC : 0.3 * tempC));
@@ -159,10 +173,13 @@ export function hypothermiaStage(input: {
   const shiveringStopped = coldExposed && !shivering;
   const moderate =
     !severe && (alteredMental || shiveringStopped || (coreTempC != null && coreTempC < 32));
+  // Active shivering is itself evidence of cold stress (ICAR HT1: conscious +
+  // shivering = mild) — it needs no coldExposed corroboration. Only STOPPED shivering
+  // is ambiguous, because on its own it also describes every warm, comfortable person.
   const mild =
     !severe &&
     !moderate &&
-    ((coldExposed && shivering) || (coreTempC != null && coreTempC < 35));
+    (shivering || (coreTempC != null && coreTempC < 35));
   if (severe) {
     return {
       stage: "severe",

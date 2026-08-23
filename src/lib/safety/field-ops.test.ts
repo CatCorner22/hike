@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   gpsAnomalyWarning,
   heatIndexC,
+  heatWarning,
   lightningRule,
   naismithMinutes,
   slopePercent,
   slopeWarning,
   windChillC,
+  windChillWarning,
 } from "./field-ops";
 
 describe("field weather / movement", () => {
@@ -88,5 +90,77 @@ describe("slopeWarning", () => {
     for (const grade of [5, 20, 24, 25, 26, 44, 45, 46, 80]) {
       expect(Boolean(slopeWarning(grade)), `${grade}%`).toBe(Boolean(slopeWarning(-grade)));
     }
+  });
+});
+
+/**
+ * NWS computes a heat index at ANY humidity — the low-RH adjustment exists precisely
+ * for dry air. The old RH>=40 gate meant desert heat produced no advisory at all, and
+ * independent 60°C/100% caps admitted physically impossible airmasses ("Heat index
+ * 339°C"). Reference values from the WPC heat-index equation.
+ */
+describe("heatIndexC across the full humidity range", () => {
+  it("warns in hot-dry air (the old gate returned null below RH 40)", () => {
+    expect(heatIndexC(43, 20)).toBeCloseTo(43.9, 0);
+    expect(heatIndexC(45, 25)).toBeCloseTo(50.5, 0);
+    expect(heatIndexC(38, 10)).toBeCloseTo(34.7, 0);
+    expect(heatWarning(43, 20)).toMatch(/Heat index/);
+  });
+
+  it("applies the NWS high-RH adjustment in humid heat", () => {
+    const hi = heatIndexC(27, 100);
+    expect(hi).not.toBeNull();
+    expect(hi!).toBeGreaterThanOrEqual(32);
+    expect(heatWarning(27, 100)).toMatch(/slow the pace/);
+  });
+
+  it("rejects jointly impossible hot-humid input instead of diverging", () => {
+    expect(heatIndexC(60, 60)).toBeNull();
+    expect(heatIndexC(55, 80)).toBeNull();
+    expect(heatIndexC(45, 25)).not.toBeNull();
+  });
+});
+
+/**
+ * ECCC applies its frostbite bands to the chill value, and in calm air the chill value
+ * is the air temperature. Returning null below the formula's 5 km/h floor made -35°C
+ * still air read as "no cold hazard" while frostbiteMinutes warned for the same input.
+ */
+describe("windChillWarning in calm air", () => {
+  it("falls back to ambient temperature below 5 km/h", () => {
+    expect(windChillWarning(-35, 0)).toMatch(/frostbite risk in minutes/);
+    expect(windChillWarning(-15, 2)).toMatch(/wind layer/);
+    expect(windChillWarning(-35, 0)).toMatch(/Air temperature/);
+  });
+
+  it("keeps the formula path and domain guards", () => {
+    expect(windChillWarning(-20, 30)).toMatch(/Wind chill/);
+    expect(windChillWarning(15, 0)).toBeNull();
+    expect(windChillWarning(Number.NaN, 10)).toBeNull();
+  });
+});
+
+/**
+ * The speed test normalizes by dt, so a longer gap only makes the inference safer —
+ * yet any teleport across a gap over 20 s used to be silently accepted.
+ */
+describe("gpsAnomalyWarning across long gaps", () => {
+  const base = 1_700_000_000_000;
+  it("flags a teleport across a one-minute gap", () => {
+    const warning = gpsAnomalyWarning([
+      { lat: 37.0, lng: -119.0, recordedAt: base },
+      { lat: 37.0001, lng: -119.0, recordedAt: base + 10_000 },
+      { lat: 41.5, lng: -119.0, recordedAt: base + 70_000 },
+    ]);
+    expect(warning).toMatch(/GPS jumped/);
+  });
+
+  it("accepts ordinary hiking progress across the same gap", () => {
+    const warning = gpsAnomalyWarning([
+      { lat: 37.0, lng: -119.0, recordedAt: base },
+      { lat: 37.0001, lng: -119.0, recordedAt: base + 10_000 },
+      { lat: 37.0009, lng: -119.0, recordedAt: base + 70_000 },
+    ]);
+    expect(warning).toBeNull();
   });
 });

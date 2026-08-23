@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -29,7 +30,7 @@ export default function ActivitiesPage() {
 
   const loadActivities = useCallback(async (signal?: AbortSignal) => {
     try {
-      const response = await fetch("/api/activities", { signal });
+      const response = await apiFetch("/api/activities", { signal });
       const data = await response.json() as { activities?: Activity[]; error?: string };
       if (!response.ok) throw new Error(data.error || "Recorded activities could not be loaded.");
       if (!Array.isArray(data.activities)) throw new Error("Recorded activities could not be read from the server response.");

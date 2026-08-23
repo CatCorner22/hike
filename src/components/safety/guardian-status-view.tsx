@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, ShieldX } from "lucide-react";
@@ -65,7 +66,7 @@ function statusCopy(data: GuardianPublicStatus, connectionFailed: boolean) {
 }
 
 async function fetchStatus(token: string): Promise<GuardianPublicStatus> {
-  const response = await fetch("/api/guardian/status", {
+  const response = await apiFetch("/api/guardian/status", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     cache: "no-store",

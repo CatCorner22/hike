@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -71,7 +72,7 @@ export default function ActivityDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch(`/api/activities/${encodeURIComponent(activityId)}`, { cache: "no-store" })
+    void apiFetch(`/api/activities/${encodeURIComponent(activityId)}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as {
           activity?: unknown;
@@ -166,7 +167,7 @@ export default function ActivityDetailPage() {
               setExporting(true);
               setExportError(null);
               try {
-                const response = await fetch(`/api/activities/${encodeURIComponent(activity.id)}/export`, {
+                const response = await apiFetch(`/api/activities/${encodeURIComponent(activity.id)}/export`, {
                   cache: "no-store",
                 });
                 const text = await response.text();

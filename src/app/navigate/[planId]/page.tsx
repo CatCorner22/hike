@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
@@ -396,18 +397,18 @@ export default function NavigatePage() {
       }
       try {
         if (target.kind === "trail") {
-          const res = await withNetworkTimeout((signal) => fetch(`/api/trails/${target.id}`, { signal }), 8000);
+          const res = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${target.id}`, { signal }), 8000);
           if (!res.ok) throw new Error("Trail not found on server");
           const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
           complete({ status: "ready", pack, source: "network" });
           return;
         }
-        const planRes = await withNetworkTimeout((signal) => fetch(`/api/plans/${target.id}`, { signal }), 8000);
+        const planRes = await withNetworkTimeout((signal) => apiFetch(`/api/plans/${target.id}`, { signal }), 8000);
         if (!planRes.ok) throw new Error("Plan not found on server");
         const plan = await planRes.json();
         let trail = null;
         if (plan.trailId) {
-          const trailRes = await withNetworkTimeout((signal) => fetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
+          const trailRes = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${plan.trailId}`, { signal }), 8000);
           if (trailRes.ok) trail = await trailRes.json();
         }
         const built = packFromPlanApi(navId, plan, trail);
@@ -629,8 +630,12 @@ export default function NavigatePage() {
             ? `Route altitude screen: profile crosses 3,000 m (maximum ${Math.round(altitude.maxElevationM)} m). Plan acclimatization and do not ascend with symptoms.`
             : `Route altitude screen: profile reaches ${Math.round(altitude.maxElevationM)} m, crossing 2,500 m. Watch for altitude symptoms and allow time to acclimatize.`,
       avalanche:
-        slopes != null && slopes.maxAngleDeg >= 30 && slopes.maxAngleDeg <= 45
-          ? `Avalanche-terrain screen: steepest sustained along-track gradient is ${slopes.maxAngleDeg}° near ${Math.round(slopes.atMeters)} m. This is in the 30–45° starting-slope band, but a route profile under-reads true avalanche terrain because it only measures along-track gradient.`
+        // No upper bound: terrain steeper than 45° must not read as safer than the
+        // 30–45° band it sits above — the warning used to vanish there entirely.
+        slopes != null && slopes.maxAngleDeg >= 30
+          ? slopes.maxAngleDeg <= 45
+            ? `Avalanche-terrain screen: steepest sustained along-track gradient is ${slopes.maxAngleDeg}° near ${Math.round(slopes.atMeters)} m. This is in the 30–45° starting-slope band, but a route profile under-reads true avalanche terrain because it only measures along-track gradient.`
+            : `Avalanche-terrain screen: steepest sustained along-track gradient is ${slopes.maxAngleDeg}° near ${Math.round(slopes.atMeters)} m — at or above the 30–45° starting-slope band. Slides from this or connected terrain carry high consequence, and a route profile under-reads true avalanche terrain because it only measures along-track gradient.`
           : null,
     };
   }, [loadState]);

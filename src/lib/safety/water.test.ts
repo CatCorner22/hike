@@ -64,8 +64,10 @@ describe("chemicalDoseWaitMinutes — cold water", () => {
   // Regression: sub-zero was rejected outright, so near-freezing meltwater — the case
   // that most needs the extended contact time — produced no guidance at all.
   it("answers for near-freezing meltwater", () => {
-    expect(chemicalDoseWaitMinutes({ method: "chlorine-dioxide", waterTempC: -1, cloudy: false })).toBe(360);
-    expect(chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 0, cloudy: false })).toBe(45);
+    // Cold doubles the contact time (CDC / halogen label doctrine), it does not 1.5x it:
+    // published Giardia CT for iodine roughly doubles to triples from 25 C to 5 C.
+    expect(chemicalDoseWaitMinutes({ method: "chlorine-dioxide", waterTempC: -1, cloudy: false })).toBe(480);
+    expect(chemicalDoseWaitMinutes({ method: "iodine", waterTempC: 0, cloudy: false })).toBe(60);
   });
 
   it("extends contact time as water gets colder or cloudier", () => {

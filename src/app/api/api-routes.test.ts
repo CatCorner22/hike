@@ -12,8 +12,9 @@ import { GET as listPlans, POST as createPlanRoute } from "./plans/route";
 import { GET as getPlan, DELETE as deletePlanRoute } from "./plans/[id]/route";
 import { GET as getActivity } from "./activities/[id]/route";
 import { POST as addPoints } from "./activities/[id]/points/route";
+import { POST as mintSessionRoute } from "./session/route";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
-import { OWNER_COOKIE, newOwnerId, signOwnerToken } from "@/lib/auth/owner";
+import { OWNER_COOKIE, newOwnerId, signOwnerToken, verifyOwnerToken } from "@/lib/auth/owner";
 
 let directory: string;
 
@@ -669,5 +670,61 @@ describe("Explore OSM trail ids", () => {
       ),
     );
     expect(badActivity.status).toBe(400);
+  });
+});
+
+
+describe("POST /api/session (native shell mint)", () => {
+  it("mints a verifiable owner token for a credential-less caller", async () => {
+    const response = await mintSessionRoute(new Request("http://x/api/session", { method: "POST" }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    const { token } = (await response.json()) as { token: string };
+    expect(await verifyOwnerToken(token)).toBeTruthy();
+  });
+
+  /** A re-mint with a still-valid credential must not abandon the caller's data. */
+  it("is idempotent for an authenticated caller — same owner comes back", async () => {
+    const ownerId = newOwnerId();
+    const existing = await signOwnerToken(ownerId);
+    const viaBearer = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${existing}` },
+      }),
+    );
+    const bearerBody = (await viaBearer.json()) as { token: string };
+    expect(await verifyOwnerToken(bearerBody.token)).toBe(ownerId);
+
+    const viaCookie = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { cookie: `${OWNER_COOKIE}=${existing}` },
+      }),
+    );
+    const cookieBody = (await viaCookie.json()) as { token: string };
+    expect(await verifyOwnerToken(cookieBody.token)).toBe(ownerId);
+  });
+
+  it("an invalid credential yields a FRESH owner, not an error", async () => {
+    const response = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${newOwnerId()}.forged-signature` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const { token } = (await response.json()) as { token: string };
+    const owner = await verifyOwnerToken(token);
+    expect(owner).toBeTruthy();
+  });
+
+  it("a bearer-authenticated request reaches an owner route", async () => {
+    const mint = await mintSessionRoute(new Request("http://x/api/session", { method: "POST" }));
+    const { token } = (await mint.json()) as { token: string };
+    const list = await listPlans(
+      new Request("http://x/api/plans", { headers: { authorization: `Bearer ${token}` } }),
+    );
+    expect(list.status).toBe(200);
   });
 });

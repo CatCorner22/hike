@@ -183,3 +183,29 @@ describe("START triage — respiratory rate", () => {
     expect(triageCategory({ walking: false, breathing: false, radialPulse: false, obeysCommands: false, respiratoryRate: 0 }).category).toBe("black");
   });
 });
+
+/**
+ * Display truth at the thresholds. Rounding 119.96 min up printed "120 min" beside
+ * "under 2 h" with the conversion window open, and rounding RR 30.4 down printed
+ * "30 ... is over 30" — both contradictions at the exact moment of decision.
+ */
+describe("threshold-consistent display", () => {
+  it("never shows 120 min while the conversion window is still open", () => {
+    const applied = 0;
+    const status = tourniquetStatus(applied, 119.96 * 60_000);
+    expect(status?.conversionWindow).toBe(true);
+    expect(status!.minutes).toBeLessThan(120);
+    const passed = tourniquetStatus(applied, 120.01 * 60_000);
+    expect(passed?.conversionWindow).toBe(false);
+    expect(passed!.minutes).toBe(120);
+  });
+
+  it("keeps a fractional respiratory rate on the correct side of 30 in the reasoning", () => {
+    const fractional = triageCategory({ walking: false, breathing: true, respiratoryRate: 30.4, radialPulse: true, obeysCommands: true });
+    expect(fractional.category).toBe("red");
+    expect(fractional.reasoning).toContain("30.4");
+    const wholeRate = triageCategory({ walking: false, breathing: true, respiratoryRate: 31.2, radialPulse: true, obeysCommands: true });
+    expect(wholeRate.reasoning).toContain("31");
+    expect(wholeRate.reasoning).not.toContain("31.2");
+  });
+});

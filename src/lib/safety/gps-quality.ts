@@ -1,8 +1,6 @@
 /** A live GPS fix is trusted for off-trail alerts and follow-mode. */
 export const TRUSTED_FIX_MS = 2 * 60 * 1000;
 
-/** A briefly dropped fix stays usable, but not for as long as a live one. */
-export const TRUSTED_STALE_FIX_MS = 60 * 1000;
 
 /** Older last-known positions may still be shown, but never as current location. */
 export const DISPLAY_FIX_MS = 24 * 60 * 60 * 1000;
@@ -60,6 +58,11 @@ export function fixAgeMs(recordedAt: number, now = Date.now()): number {
 
 /** Stale / last-known / storage-hydrated / clock-corrupt fixes are display-only. */
 export function isTrustedFix(recordedAt: number, stale: boolean, now = Date.now()): boolean {
+  // `stale` is deliberately absolute, with no age leash. The flag covers more than a
+  // brief stream dropout: it also marks fixes restored from a previous session and
+  // clock-suspect fixes whose broken timestamp was re-stamped to arrival time — the
+  // latter would read as fresh under any age check. Display-only is the one rule safe
+  // for all three; alerts and follow-mode require a live, clock-sane fix.
   if (!Number.isFinite(recordedAt) || !Number.isFinite(now) || recordedAt > now || stale) return false;
   return fixAgeMs(recordedAt, now) <= TRUSTED_FIX_MS;
 }

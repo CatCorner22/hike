@@ -5,6 +5,7 @@ import {
   beginActivity,
   finishActivity,
   flushActivityQueue,
+  flushPendingPoints as flushActivityPoints,
   getLocalActivity,
   listLocalActivities,
   loadOpenActivityRecovery,
@@ -555,5 +556,233 @@ describe("lossless finalization ordering", () => {
     await flushActivityQueue();
     expect(order.slice(-2)).toEqual(["point-accepted", "activity-finalized"]);
     expect(await getPendingPoints("remote-race")).toHaveLength(0);
+  });
+});
+
+/**
+ * An owner change (cleared cookies, rotated SESSION_SECRET) makes the server answer 404
+ * for every activity this device recorded — forever. Before re-homing existed, one
+ * stranded pending Stop then blocked recording on the device permanently while the UI
+ * said "reconnect and retry": a retry that could never succeed. These pin the escape
+ * hatch: forget the dead remote identity, rotate the idempotency key (the old one still
+ * names another owner's row, which the server answers with 409), and replay the whole
+ * recording — every queued point — under whoever the current owner is.
+ */
+describe("re-homing after the server forgets the activity", () => {
+  function rotatedWorld(options: { oldRemoteId: string; oldSyncIds: string[] }) {
+    const calls = { creates: [] as string[], oldIdRequests: 0, newPoints: [] as string[], patched: 0 };
+    const handler = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.startsWith(`/api/activities/${options.oldRemoteId}`)) {
+        calls.oldIdRequests += 1;
+        return json({ error: "Not found" }, 404);
+      }
+      if (url === "/api/activities" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientActivityId?: string };
+        calls.creates.push(body.clientActivityId ?? "");
+        if (options.oldSyncIds.includes(body.clientActivityId ?? "")) {
+          return json({ error: "Activity could not be started with that idempotency key" }, 409);
+        }
+        return json({ id: "remote-rehomed" });
+      }
+      if (url === "/api/activities/remote-rehomed/points" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientPointId: string };
+        calls.newPoints.push(body.clientPointId);
+        return json({});
+      }
+      if (url === "/api/activities/remote-rehomed" && init?.method === "PATCH") {
+        calls.patched += 1;
+        return json({ id: "remote-rehomed" });
+      }
+      if (url === "/api/activities" && !init?.method) {
+        return json({ openActivities: [] });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    });
+    vi.stubGlobal("fetch", handler);
+    return calls;
+  }
+
+  it("finishes under the current owner with every queued point preserved", async () => {
+    // Begun online: the server keys the activity by the client id, so remoteId === id.
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "/api/activities" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientActivityId: string };
+        return json({ id: body.clientActivityId });
+      }
+      throw new Error("offline");
+    }));
+    const started = await beginActivity({ trailId: "trail-rotate" });
+    expect(started.remoteId).toBe(started.id);
+    await saveActivityPoint(started.id, { lat: 37, lng: -119, recordedAt: new Date() });
+    await saveActivityPoint(started.id, { lat: 37.001, lng: -119, recordedAt: new Date() });
+    const queuedIds = (await getPendingPoints(started.id)).map((point) => point.id);
+    expect(queuedIds).toHaveLength(2);
+
+    const calls = rotatedWorld({ oldRemoteId: started.id, oldSyncIds: [started.id] });
+    const result = await finishActivity(started.id, STATS);
+
+    expect(result).toMatchObject({ synced: true, remoteId: "remote-rehomed", rejectedPoints: 0 });
+    expect(calls.newPoints.sort()).toEqual([...queuedIds].sort());
+    expect(calls.patched).toBe(1);
+    expect(calls.creates.filter((id) => id !== started.id)).toHaveLength(1);
+    expect(await getLocalActivity(started.id)).toMatchObject({
+      id: started.id,
+      remoteId: "remote-rehomed",
+      pendingStop: false,
+    });
+    expect(await getPendingPoints("remote-rehomed")).toHaveLength(0);
+    expect(await getPendingPoints(started.id)).toHaveLength(0);
+  });
+
+  it("unblocks reload recovery for a pending Stop stranded by the rotation", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "/api/activities" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientActivityId: string };
+        return json({ id: body.clientActivityId });
+      }
+      throw new Error("offline after begin");
+    }));
+    const started = await beginActivity({ trailId: "trail-rotate" });
+    await expect(finishActivity(started.id, STATS)).resolves.toMatchObject({ synced: false });
+
+    await __resetActivitySyncForTests();
+    rotatedWorld({ oldRemoteId: started.id, oldSyncIds: [started.id] });
+
+    await expect(loadOpenActivityRecovery({ trailId: "trail-rotate" })).resolves.toEqual({
+      status: "none",
+    });
+    expect(await getLocalActivity(started.id)).toMatchObject({
+      remoteId: "remote-rehomed",
+      pendingStop: false,
+    });
+  });
+
+  it("reports the unreachable activity from a flush without discarding a single point", async () => {
+    const requests = vi.fn(async () => json({ error: "Not found" }, 404));
+    vi.stubGlobal("fetch", requests);
+    for (let index = 0; index < 3; index += 1) {
+      await saveActivityPoint("remote-dead", {
+        lat: 37 + index / 1000,
+        lng: -119,
+        recordedAt: new Date(),
+      });
+    }
+    requests.mockClear();
+
+    const result = await flushActivityPoints("remote-dead");
+    expect(result).toMatchObject({ activityUnreachable: true, rejectedFinalized: 0, pending: 3 });
+    expect(requests).toHaveBeenCalledTimes(1);
+    expect(await getPendingPoints("remote-dead")).toHaveLength(3);
+  });
+
+  it("heals a live recording mid-hike so later fixes keep syncing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "/api/activities" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientActivityId: string };
+        return json({ id: body.clientActivityId });
+      }
+      throw new Error("offline");
+    }));
+    const started = await beginActivity({ trailId: "trail-live" });
+
+    const calls = rotatedWorld({ oldRemoteId: started.id, oldSyncIds: [started.id] });
+    const result = await saveActivityPoint(started.id, {
+      lat: 37,
+      lng: -119,
+      recordedAt: new Date(),
+    });
+
+    expect(result).toBe("synced");
+    expect(calls.newPoints).toHaveLength(1);
+    expect(await getLocalActivity(started.id)).toMatchObject({ remoteId: "remote-rehomed" });
+    expect(await getPendingPoints(started.id)).toHaveLength(0);
+    expect(await getPendingPoints("remote-rehomed")).toHaveLength(0);
+  });
+
+  it("deletes a fabricated row for an unknown server ID instead of blocking recovery forever", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Not found" }, 404)));
+    await expect(finishActivity("ghost-activity-id", STATS)).resolves.toMatchObject({
+      synced: false,
+    });
+    expect(await listLocalActivities()).toHaveLength(0);
+
+    vi.stubGlobal("fetch", vi.fn(async () => json({ openActivities: [] })));
+    await expect(loadOpenActivityRecovery({})).resolves.toEqual({ status: "none" });
+  });
+});
+
+/**
+ * The other side of the same coin: the open-activity list no longer names the local
+ * recording. That can mean "finished elsewhere" (block or adopt) or "gone for this
+ * owner" (re-home) — only a direct lookup distinguishes them, and before it existed the
+ * conflict branch blocked recording forever in the rotation case.
+ */
+describe("recovery conflict disambiguation", () => {
+  async function openLocalRow(remoteId: string) {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input) === "/api/activities" && init?.method === "POST") {
+        return json({ id: remoteId });
+      }
+      throw new Error("offline");
+    }));
+    const started = await beginActivity({ trailId: "trail-conflict" });
+    await __resetActivitySyncForTests();
+    return started;
+  }
+
+  it("re-homes when the direct lookup answers 404", async () => {
+    const started = await openLocalRow("remote-conflict");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/activities" && !init?.method) return json({ openActivities: [] });
+      if (url === "/api/activities/remote-conflict") return json({ error: "Not found" }, 404);
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    }));
+
+    const recovery = await loadOpenActivityRecovery({ trailId: "trail-conflict" });
+    expect(recovery.status).toBe("recovered");
+    expect(await getLocalActivity(started.id)).toMatchObject({ remoteId: undefined });
+  });
+
+  it("adopts a finish made on another device when nothing is queued locally", async () => {
+    const started = await openLocalRow("remote-conflict");
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/activities" && !init?.method) return json({ openActivities: [] });
+      if (url === "/api/activities/remote-conflict") {
+        return json({ activity: { id: "remote-conflict", endedAt: "2026-08-21T10:00:00.000Z" } });
+      }
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    }));
+
+    await expect(loadOpenActivityRecovery({ trailId: "trail-conflict" })).resolves.toEqual({
+      status: "none",
+    });
+    expect(await getLocalActivity(started.id)).toMatchObject({
+      endedAt: "2026-08-21T10:00:00.000Z",
+      pendingStop: false,
+    });
+  });
+
+  it("keeps the protective block while queued points would be lost by adopting the finish", async () => {
+    const started = await openLocalRow("remote-conflict");
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("offline");
+    }));
+    await saveActivityPoint(started.id, { lat: 37, lng: -119, recordedAt: new Date() });
+
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/activities" && !init?.method) return json({ openActivities: [] });
+      if (url === "/api/activities/remote-conflict") {
+        return json({ activity: { id: "remote-conflict", endedAt: "2026-08-21T10:00:00.000Z" } });
+      }
+      if (url === "/api/activities/remote-conflict/points") return json({ error: "conflict" }, 409);
+      throw new Error(`Unexpected request: ${init?.method ?? "GET"} ${url}`);
+    }));
+
+    const recovery = await loadOpenActivityRecovery({ trailId: "trail-conflict" });
+    expect(recovery.status).toBe("blocked");
   });
 });

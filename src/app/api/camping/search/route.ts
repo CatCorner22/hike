@@ -10,6 +10,7 @@ import { fetchAllStateCampgrounds, stateCampgroundToRecord } from "@/lib/state-p
 import { searchBackcountryCamps } from "@/lib/osm/overpass";
 import { filterSeedCampgrounds } from "@/lib/camping/seed";
 import { rateLimit } from "@/lib/api/rate-limit";
+import { requireOwner } from "@/lib/auth/owner";
 import {
   CAMP_PERMIT_STATUSES,
   permitRequiredCompatibility,
@@ -125,7 +126,12 @@ export async function GET(request: Request) {
   const bbox = parseBbox(bboxParam);
   const sync = searchParams.get("sync") === "true";
   if (sync) {
-    const limited = rateLimit(request, "camping-sync", 4);
+    // The sync branch fans out to NPS/RIDB/ArcGIS/OSM and WRITES the results into the
+    // shared campgrounds table. Anonymous callers could burn upstream quota and seed
+    // the database; a session costs nothing to a real user and stops drive-by abuse.
+    const owner = await requireOwner(request);
+    if (!owner.ok) return owner.response;
+    const limited = rateLimit(request, `camping-sync:${owner.ownerId}`, 4);
     if (limited) return limited;
   } else if (bbox) {
     const limited = rateLimit(request, "camping-nearby", 20);

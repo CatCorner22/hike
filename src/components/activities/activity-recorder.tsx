@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -111,7 +112,7 @@ export function ActivityRecorder({
     try {
       const remoteId = await saveLocalActivitySnapshot(id, current);
       if (!remoteId) return;
-      await fetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
+      await apiFetch(`/api/activities/${encodeURIComponent(remoteId)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ stats: current }),

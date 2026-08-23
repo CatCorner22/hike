@@ -1415,6 +1415,88 @@ is thinner than it looks.
 
 ---
 
+## Eighteenth pass — the field-decision modules, by adversarial swarm
+
+Twenty-three agents (7 finders, 14 refuters, 2 tie-breakers) executed every export of
+`altitude`, `tccc`, `avalanche`, `decision-support`/`field-ops`, `thermal`, `water`,
+`load`/`gps-quality`, and `checkin`/`navlog` across hostile and realistic ranges.
+39 findings raised; 14 refuted under a default-refute discipline (each finding survived
+only if two independent refuters failed to kill it); 25 confirmed and fixed. Every fix
+carries a regression test, and reverting a sampled fix fails its test (verified by
+mutation). Highlights, worst first:
+
+- **ALPTRUTh "A" asked the wrong question** (`avalanche.ts`, S1): "Is a danger posted?"
+  double-counted "R" (Rating) and dropped McCammon's actual A — recent avalanches in the
+  past 48 h, the single strongest observable clue.
+- **No heat advisory in dry heat** (`field-ops.ts`, S1): `heatIndexC` rejected every
+  RH < 40 %, so 43 °C desert air produced no advisory at all. Now full NWS treatment:
+  the low- and high-RH adjustments, plus a joint dewpoint bound so impossible hot-humid
+  input can no longer render "Heat index 339 °C".
+- **Cold-water chemical wait was 1.5×, not the doubled contact time** (`water.ts`, S1):
+  CDC and halogen labels double the 30-min wait in cold water — 60 min, not 45.
+- **A future-dated or corrupt check-in reference silenced the overdue monitor**
+  (`checkin.ts`, S1 ×2): clock skew delayed the alarm by exactly the error (or forever),
+  a NaN interval disarmed it permanently, and one corrupt `recordedAt` row threw
+  `RangeError` through the panel render and the SAR dossier. All fail closed now; a
+  stale check-in from a previous outing no longer beats a fresh `armedAt`, re-arming
+  stamps a fresh session start (while keeping the readiness gate's byte-for-byte
+  round-trip), and `logCheckin` reports whether the write actually landed.
+- **The navigate screen's avalanche warning vanished above 45°** and
+  `slopeAnglesFromProfile` missed every end-aligned window — a 60 m headwall in the
+  last 80 m of a route read as 0°. Steeper-than-band terrain now warns, and the window
+  sweep evaluates both sample- and end-aligned starts (the maximum of a piecewise-linear
+  window average can occur only at those alignments).
+- `spo2Warning` silently dropped every warning below sea level; the sea-level
+  expectation is the conservative floor there (Badwater, Dead Sea, coastal GPS noise).
+- `estimateWbgtC`: RH 100 % no longer deletes all heat guidance (wet bulb = dry bulb at
+  saturation); full sun now adds ~3 °C WBGT (globe = air + 15 °C per Liljegren
+  mid-range) instead of 1 °C — 1–2 whole flag categories in exactly black-flag
+  conditions; the Stull cold-dry corner is clamped monotone.
+- `hypothermiaStage` staged an actively shivering patient as "no signs supplied" unless
+  a separate `coldExposed` flag was set — ICAR HT1 is conscious + shivering = mild, and
+  only *stopped* shivering needs corroboration.
+- `windChillWarning` went silent below 5 km/h wind at any temperature (calm -35 °C air
+  read as no cold hazard, contradicting `frostbiteMinutes`); it now falls back to
+  ambient temperature, which is what the ECCC bands apply in calm air.
+- `gpsAnomalyWarning` accepted any teleport across a gap longer than 20 s; the speed
+  test normalizes by dt, so only non-positive gaps are excluded now.
+- `tourniquetStatus` could display "120 min" beside "under 2 h" with the conversion
+  window open (display now floors); START red-tag reasoning no longer rounds RR 30.4
+  into "30 … is over 30"; nav-log bearings render in [0, 360); the phantom
+  `TRUSTED_STALE_FIX_MS` constant was removed rather than weakening `isTrustedFix`'s
+  deliberate display-only rule for stale fixes.
+
+Also fixed in this pass, from direct review of the PR #52 merge: an owner rotation
+(cleared cookies, rotated `SESSION_SECRET`) permanently disabled recording — the
+pending-stop reconciliation loop 404-ed forever with GPS held off, and the 30-second
+background flush treated the same 404 as permanent and destroyed the queued track, up
+to 100 points per batch. Recordings now re-home: the dead remote identity is forgotten,
+the idempotency key rotates, queued points move back under the stable local ID, and the
+whole recording replays under the current owner. `e2e/offline-navigation.mjs` also
+diagnoses a stuck service-worker install by naming the unservable precache URLs.
+
+## Nineteenth pass — survival-content accuracy vs public doctrine
+
+Inline claims audit of the static content cards against public standards (FCC Part
+95/97, USCG, NOAA SARSAT, ITU-R M.1677, the peacetime 9-line, WMS/AHA lay-rescuer
+guidance, NPS/IGBC wildlife doctrine, SAR litter-carry teaching). Verified sound:
+`comms.ts` (every frequency, licensing and SARSAT claim), `strobe.ts` (Morse unit
+ratios exact; the letter-gapped SOS is the decodable practical form), `sar-advanced.ts`
+(LZ ≤ 8° with walk-it hedge; 6/12 carriers at ~1 mph), `field.ts`, and the wildlife
+SOPs (including the deliberately contrasted run-from-moose vs never-run-from-bears).
+
+Fixed:
+- `sere.ts` — the downstream-travel line read **inverted** ("follow downstream only if
+  cliffs and waterfalls are likely"), recommending exactly the terrain that traps lost
+  hikers; and "treat MARCH" now names the app's canonical MARCH-PAWS sequence.
+- `medevac.ts` — the 9-line mixed wartime and peacetime forms: L6 rendered the wartime
+  "Security" line (meaningless to a civilian SAR dispatcher) while L9 already used the
+  peacetime terrain form. L6 is now the peacetime form — number and type of injuries —
+  absorbing the redundant MEDICAL trailer.
+- `wilderness.ts` — the first-aid card's C line opened with "start CPR now",
+  unconditioned on a card of standalone one-liners; CPR is now explicitly conditioned
+  on unresponsive + not breathing normally, with the contraindication stated.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

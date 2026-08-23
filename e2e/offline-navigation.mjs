@@ -100,11 +100,47 @@ async function assertOwnershipIsolation(browser, page, planId) {
 }
 
 async function waitForServiceWorker(page) {
-  await page.waitForFunction(
-    () => navigator.serviceWorker?.controller != null,
-    null,
-    { timeout: 30_000 },
-  );
+  try {
+    await page.waitForFunction(
+      () => navigator.serviceWorker?.controller != null,
+      null,
+      { timeout: 30_000 },
+    );
+  } catch (error) {
+    // A worker stuck in "installing" is almost always a precache entry the
+    // server cannot serve (for example a `next start` that predates the last
+    // build, so sw.js references assets the running server 404s). Serwist's
+    // install then never settles and the bare timeout says nothing — probe the
+    // manifest and name the broken URLs so the failure is diagnosable.
+    const diagnosis = await page.evaluate(async () => {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      const state = {
+        installing: registration?.installing?.state ?? null,
+        waiting: registration?.waiting?.state ?? null,
+        active: registration?.active?.state ?? null,
+      };
+      const swSource = await fetch("/sw.js").then((r) => r.text()).catch(() => "");
+      const urls = [...swSource.matchAll(/'url':'([^']+)'/g)].map((m) => m[1]);
+      const broken = [];
+      for (const url of urls) {
+        const status = await fetch(url, { cache: "no-store" })
+          .then((r) => r.status)
+          .catch(() => "network-error");
+        if (status !== 200) broken.push(`${url} -> ${status}`);
+      }
+      return { state, precacheEntries: urls.length, broken };
+    }).catch(() => null);
+    if (diagnosis) {
+      error.message += `\nservice worker state: ${JSON.stringify(diagnosis.state)}`
+        + `\nprecache entries: ${diagnosis.precacheEntries}, unservable: ${diagnosis.broken.length}`
+        + (diagnosis.broken.length
+          ? `\n${diagnosis.broken.slice(0, 10).join("\n")}`
+            + "\nsw.js was built from a different build than the running server is serving —"
+            + " rebuild, then restart `next start` so both come from the same build."
+          : "");
+    }
+    throw error;
+  }
 }
 
 /**

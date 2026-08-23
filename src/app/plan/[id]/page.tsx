@@ -1,4 +1,5 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -188,7 +189,7 @@ export default function PlanDetailPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void fetch(`/api/plans/${encodeURIComponent(planId)}`, { cache: "no-store" })
+    void apiFetch(`/api/plans/${encodeURIComponent(planId)}`, { cache: "no-store" })
       .then(async (response) => {
         const body = await jsonBody(response);
         if (!response.ok) throw new Error(responseMessage(response, body, "Plan could not be loaded"));
@@ -196,7 +197,7 @@ export default function PlanDetailPage() {
 
         let loadedTrail: TrailData | null = null;
         if (body.trailId) {
-          const trailResponse = await fetch(`/api/trails/${encodeURIComponent(body.trailId)}`, {
+          const trailResponse = await apiFetch(`/api/trails/${encodeURIComponent(body.trailId)}`, {
             cache: "no-store",
           });
           const trailBody = await jsonBody(trailResponse);
@@ -259,7 +260,7 @@ export default function PlanDetailPage() {
       .then(async () => {
         const requestBase = planRef.current;
         if (!requestBase) throw new Error("The plan is not loaded.");
-        const response = await fetch(`/api/plans/${encodeURIComponent(planId)}`, {
+        const response = await apiFetch(`/api/plans/${encodeURIComponent(planId)}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...updates, updatedAt: requestBase.updatedAt }),
@@ -309,7 +310,7 @@ export default function PlanDetailPage() {
     setDeleting(true);
     setActionError(null);
     try {
-      const response = await fetch(`/api/plans/${encodeURIComponent(planId)}`, { method: "DELETE" });
+      const response = await apiFetch(`/api/plans/${encodeURIComponent(planId)}`, { method: "DELETE" });
       const body = await jsonBody(response);
       if (!response.ok) throw new Error(responseMessage(response, body, "Plan was not deleted"));
       router.push("/plan");
@@ -327,7 +328,7 @@ export default function PlanDetailPage() {
     setImporting(true);
     setActionError(null);
     try {
-      const response = await fetch("/api/sync/offline", {
+      const response = await apiFetch("/api/sync/offline", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gpx: pending.gpx, name: pending.fileName }),
@@ -607,7 +608,7 @@ export default function PlanDetailPage() {
               setCampSearching(true);
               setCampError(null);
               try {
-                const res = await fetch(`/api/camping/search?q=${encodeURIComponent(campQuery.trim())}`);
+                const res = await apiFetch(`/api/camping/search?q=${encodeURIComponent(campQuery.trim())}`);
                 const data = await res.json() as { campgrounds?: CampHit[]; error?: string };
                 if (!res.ok) throw new Error(data.error || `Camping search failed (${res.status}).`);
                 setCampHits(data.campgrounds ?? []);

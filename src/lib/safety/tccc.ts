@@ -142,7 +142,11 @@ export function tourniquetStatus(appliedAtMs: number, now = Date.now()): Tourniq
     return null;
   }
   const rawMinutes = (now - appliedAtMs) / 60_000;
-  const minutes = Math.round(rawMinutes * 10) / 10;
+  // Truncate rather than round: at 119.96 min, rounding displayed "120 min" beside the
+  // "under 2 h" message with the conversion window still open — a contradiction at the
+  // exact moment the 2 h decision is being made. Flooring keeps the displayed elapsed
+  // time on the same side of the threshold as the branch that produced the message.
+  const minutes = Math.floor(rawMinutes * 10) / 10;
   if (rawMinutes < 120) {
     return {
       minutes,
@@ -360,12 +364,17 @@ export function triageCategory(input: {
     input.respiratoryRate != null &&
     Number.isFinite(input.respiratoryRate) &&
     input.respiratoryRate > 30;
+  // A fractional rate just over the line (30.4) must not round down into "30 ... is
+  // over 30" — keep one decimal whenever rounding would land on the threshold itself.
+  const shownRate = fastBreathing && Math.round(input.respiratoryRate!) <= 30
+    ? input.respiratoryRate!.toFixed(1)
+    : String(Math.round(input.respiratoryRate ?? 0));
   if (fastBreathing || !input.radialPulse || !input.obeysCommands) {
     return {
       category: "red",
       label: "Immediate",
       reasoning: fastBreathing
-        ? `A respiratory rate of ${Math.round(input.respiratoryRate!)} breaths/min is over 30, which is categorized red in START.`
+        ? `A respiratory rate of ${shownRate} breaths/min is over 30, which is categorized red in START.`
         : !input.radialPulse
           ? "A breathing casualty without a radial pulse is categorized red in START."
           : "A breathing casualty who cannot obey simple commands is categorized red in START.",

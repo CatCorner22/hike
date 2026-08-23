@@ -20,9 +20,13 @@ declare global {
 declare const self: WorkerGlobalScope & { __SW_MANIFEST: (PrecacheEntry | string)[] | undefined };
 export { NAVIGATE_ASSETS_CACHE, NAVIGATE_SHELL_CACHE, NAVIGATE_SHELL_MARKER } from "@/lib/offline/navigate-shell-validation";
 
-function offlineDocument(): Response {
+function offlineDocument(misses: string[] = []): Response {
+  // The miss trail is diagnostic gold when this page appears wrongly: it says whether
+  // each cache attempt missed, failed validation, errored, or timed out. Machine- and
+  // human-readable via a data attribute; invisible to the hiker.
+  const trail = misses.join("|").slice(0, 400).replace(/[^a-zA-Z0-9|>:_-]/g, "");
   return new Response(
-    "<!doctype html><html><head><meta charset=\"utf-8\"><title>Offline navigation</title></head><body><main><h1>Offline navigation is unavailable</h1><p>This navigation screen was not saved before service was lost. Reconnect, then prepare the matching route while you have signal.</p></main></body></html>",
+    `<!doctype html><html><head><meta charset="utf-8"><title>Offline navigation</title></head><body data-shell-miss="${trail}"><main><h1>Offline navigation is unavailable</h1><p>This navigation screen was not saved before service was lost. Reconnect, then prepare the matching route while you have signal.</p></main></body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
 }
@@ -104,7 +108,17 @@ async function trustedCachedShell(response: Response, navId: string): Promise<Re
   return (await isValidNavigateDocument(response, navId)) ? response : null;
 }
 
-const CACHE_READ_TIMEOUT_MS = 500;
+/**
+ * The cold-start read gets a generous bound: on a slow phone (or a loaded CI runner)
+ * `caches.open` plus a full-body read and validation can take well over half a second,
+ * and a timeout here serves the "not saved before service was lost" dead end DESPITE a
+ * valid prepared shell sitting in the cache — the exact failure this screen exists to
+ * prevent. A hiker would rather wait a few seconds and navigate. The retry reads stay
+ * short: they only exist to catch Cache Storage waking up, and the total budget must
+ * keep the screen from hanging forever.
+ */
+const COLD_START_READ_TIMEOUT_MS = 4_000;
+const CACHE_RETRY_READ_TIMEOUT_MS = 750;
 const CACHE_WRITE_TIMEOUT_MS = 500;
 const NETWORK_TIMEOUT_MS = 5_000;
 
@@ -120,31 +134,54 @@ async function resolveWithin<T>(promise: Promise<T>, timeoutMs: number, fallback
   }
 }
 
-async function readTrustedCachedShell(request: Request, navId: string): Promise<Response | null> {
-  return resolveWithin(
+const READ_TIMED_OUT = Symbol("read-timed-out");
+
+async function readTrustedCachedShell(
+  request: Request,
+  navId: string,
+  timeoutMs: number,
+  misses?: string[],
+): Promise<Response | null> {
+  const result = await resolveWithin<Response | null | typeof READ_TIMED_OUT>(
     (async () => {
       try {
         const cache = await caches.open(NAVIGATE_SHELL_CACHE);
         const cached = await matchNavigateShell(cache, request);
-        return cached ? trustedCachedShell(cached, navId) : null;
+        if (!cached) {
+          misses?.push("miss");
+          return null;
+        }
+        const trusted = await trustedCachedShell(cached, navId);
+        if (!trusted) misses?.push("invalid");
+        return trusted;
       } catch {
         // Cache Storage can be briefly unavailable while a worker wakes or the
         // browser switches network state. Callers decide whether to retry.
+        misses?.push("error");
         return null;
       }
     })(),
-    CACHE_READ_TIMEOUT_MS,
-    null,
+    timeoutMs,
+    READ_TIMED_OUT,
   );
+  if (result === READ_TIMED_OUT) {
+    misses?.push(`timeout>${timeoutMs}ms`);
+    return null;
+  }
+  return result;
 }
 
-async function retryTrustedCachedShell(request: Request, navId: string): Promise<Response | null> {
+async function retryTrustedCachedShell(
+  request: Request,
+  navId: string,
+  misses?: string[],
+): Promise<Response | null> {
   // A prepared shell is life-safety data and has already passed validation.
-  // Give Cache Storage a short bounded chance to become visible again after a
+  // Give Cache Storage a bounded chance to become visible again after a
   // failed network fetch instead of immediately making a false missing claim.
-  for (const delayMs of [0, 25, 75, 150]) {
+  for (const delayMs of [0, 100, 300, 700]) {
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-    const cached = await readTrustedCachedShell(request, navId);
+    const cached = await readTrustedCachedShell(request, navId, CACHE_RETRY_READ_TIMEOUT_MS, misses);
     if (cached) return cached;
   }
   return null;
@@ -235,18 +272,19 @@ function firstNonNull<T>(attempts: Array<Promise<T | null>>): Promise<T | null> 
 
 const navigateShellHandler = async ({ request }: { request: Request }) => {
   const navId = navigateIdFromRequest(request);
-  if (!navId) return offlineDocument();
+  if (!navId) return offlineDocument(["no-nav-id"]);
+  const misses: string[] = [];
   // A prepared shell has already been validated for this exact route and is
   // the only launch path that does not depend on the radio. Prefer it before
   // touching the network: a fetch can remain pending indefinitely under
   // degraded connectivity instead of throwing an offline error.
-  const prepared = await readTrustedCachedShell(request, navId);
+  const prepared = await readTrustedCachedShell(request, navId, COLD_START_READ_TIMEOUT_MS, misses);
   if (prepared) return prepared;
 
   // Retry Cache Storage while the network is attempted. Neither source is
   // allowed to hold navigation open forever: a degraded radio can leave fetch
   // pending, and Cache Storage can briefly stall while a worker wakes.
-  const recovered = retryTrustedCachedShell(request, navId);
+  const recovered = retryTrustedCachedShell(request, navId, misses);
   const network = fetchNavigateDocument(request, navId);
   const usable = await firstNonNull<Response>([
     recovered,
@@ -255,7 +293,9 @@ const navigateShellHandler = async ({ request }: { request: Request }) => {
   if (usable) return usable;
 
   const attempted = await network;
-  return attempted?.response ?? offlineDocument();
+  if (attempted?.response) return attempted.response;
+  misses.push("network-failed");
+  return offlineDocument(misses);
 };
 
 export { navigateShellHandler };
