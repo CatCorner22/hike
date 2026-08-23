@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build --webpack",
+    "build:cap": "node scripts/build-capacitor.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

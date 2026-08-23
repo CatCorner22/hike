@@ -13,8 +13,28 @@ const withSerwist = withSerwistInit({
   disable: process.env.NODE_ENV === "development",
 });
 
-const nextConfig: NextConfig = {
+/**
+ * One codebase, two build outputs.
+ *
+ * The web build is the deployed PWA: Serwist service worker, cookie minting in
+ * src/proxy.ts, security headers, API route handlers. BUILD_TARGET=capacitor
+ * produces the static shell the iOS app bundles: `output: "export"`, no server
+ * pieces. Server-only files are excluded by extension — API route handlers are
+ * named route.api.ts, which only the web build's pageExtensions recognize.
+ * (The proxy CANNOT use that trick: Next's proxy detection compares
+ * `path.parse(file).name === "proxy"`, and a compound extension makes the name
+ * "proxy.api" — so proxy.ts keeps its name and the capacitor build script
+ * moves it aside for the duration of the export instead.)
+ */
+const isCapacitorBuild = process.env.BUILD_TARGET === "capacitor";
+
+const sharedConfig: NextConfig = {
   transpilePackages: ["maplibre-gl"],
+};
+
+const webConfig: NextConfig = {
+  ...sharedConfig,
+  pageExtensions: ["api.ts", "api.tsx", "ts", "tsx"],
   async headers() {
     const contentSecurityPolicy = [
       "default-src 'self'",
@@ -49,4 +69,18 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSerwist(nextConfig);
+const capacitorConfig: NextConfig = {
+  ...sharedConfig,
+  // No "api.ts": route handlers do not exist for the static shell. The app
+  // talks to the deployed API over HTTPS with a bearer token instead.
+  pageExtensions: ["ts", "tsx"],
+  output: "export",
+  trailingSlash: true,
+  images: { unoptimized: true },
+  // No headers(): a static export has no server to send them. The shell's CSP
+  // ships as a <meta http-equiv> tag in the layout for capacitor builds.
+};
+
+// No Serwist for the native shell: assets are bundled with the app, and a web
+// service worker inside WKWebView would only fight the bundle.
+export default isCapacitorBuild ? capacitorConfig : withSerwist(webConfig);

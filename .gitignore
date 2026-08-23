@@ -51,3 +51,7 @@ next-env.d.ts
 # Probe scratch output
 adversarial/scratch-*
 adversarial/perf-results.json
+
+# Capacitor static export + build-time aside
+out/
+.cap-build-aside/

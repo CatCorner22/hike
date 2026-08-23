@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ searchTrailsWithCache: vi.fn(async () => []) }));
 vi.mock("@/lib/trails/service", () => ({ searchTrailsWithCache: mocks.searchTrailsWithCache }));
 
-import { GET } from "./route";
+import { GET } from "./route.api";
 
 describe("trail discovery search", () => {
   it("allows a nearby bounding-box search without inventing a text query", async () => {

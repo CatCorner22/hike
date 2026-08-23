@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { __resetRateLimitForTests } from "@/lib/api/rate-limit";
-import { POST } from "./route";
+import { POST } from "./route.api";
 
 beforeEach(() => {
   __resetRateLimitForTests();
