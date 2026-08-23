@@ -1,6 +1,7 @@
 "use client";
 
 import { APP_NAME } from "@/lib/brand";
+import { requestOverduePermission, syncOverdueNotification } from "@/lib/platform/overdue-notification";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -126,6 +127,19 @@ export function ReadinessGate({
       checkin: { enabled: checkinOn, intervalMin: checkinMin },
     });
     setSaving(false);
+    /**
+     * Ask for the notification permission here, not at the moment the alarm is
+     * scheduled.
+     *
+     * The prompt used to appear inside the scheduling call, which fires from a
+     * datetime picker's onChange — a system dialog arriving mid-interaction,
+     * where a reflexive "Don't Allow" costs the whole trip's alarm and nothing
+     * ever says so. Here the hiker has just entered the time they want to be
+     * warned about, which is the one moment the question makes sense.
+     */
+    void requestOverduePermission()
+      .then(() => syncOverdueNotification(resolved?.kind === "resolved" ? resolved.value.instant : null))
+      .catch(() => undefined);
     if (!stored.ok) {
       setSaveError(stored.message);
       return;

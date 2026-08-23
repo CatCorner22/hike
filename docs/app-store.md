@@ -45,9 +45,10 @@ moment you need help is the moment you have no bars.
 - Record your track with the screen locked. The breadcrumb you follow home lives
   on the phone and works with no signal; finished tracks upload to Klandagi's own
   server when you are back in range, so losing the phone does not lose the hike.
-- A return-time alarm fires on the phone itself, even with the app closed —
-  if you allow notifications. Decline, and the app says so and falls back to the
-  in-app overdue warning.
+- A return-time alarm fires on the phone itself, even with the app closed, and
+  it is marked time-sensitive so a Focus mode does not hold it until morning —
+  if you allow notifications. Decline, and the app says so, offers a way back to
+  Settings, and falls back to the in-app overdue warning.
 - The SOS screen is honest: a strobe and tone to be seen and heard, plus a
   pre-filled message for your emergency contact. It does not contact 911,
   search and rescue, or transmit anything by itself.

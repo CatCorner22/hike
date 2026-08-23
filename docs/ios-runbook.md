@@ -79,6 +79,23 @@ real hike. Nothing advances to TestFlight or App Store staging without every box
       minutes — points kept appending (background location indicator visible).
 - [ ] **Overdue alarm fires locked**: set a check-in interval, background the app,
       let it lapse — the local notification fires with the phone locked.
+- [ ] **Overdue alarm breaks through Focus**: turn on Sleep Focus (or any Focus
+      that does not allow Klandagi), then let a return time lapse. The alarm must
+      arrive immediately, not in the next Scheduled Summary. This is what
+      `OverduePlugin.swift`'s `.timeSensitive` level plus the
+      `com.apple.developer.usernotifications.time-sensitive` entitlement buy, and
+      it is the box that proves the signing identity actually granted the
+      entitlement — a build signed without it schedules and fires exactly the
+      same way right up until a Focus mode is on.
+- [ ] **Refused-alarm copy is honest**: deny notifications in Settings, then open
+      the safety panel. It must say the alarm cannot wake you and offer "Open
+      notification settings"; granting them and re-saving the return time must
+      clear the warning.
+- [ ] **No orphaned location watchers**: start navigating, force a
+      content-process kill (below), and let it reload — then check
+      Settings ▸ Privacy ▸ Location Services ▸ Klandagi. There must be one
+      active use, not one per kill. The watcher ids are persisted in Preferences
+      and reclaimed at bootstrap for exactly this.
 - [ ] **SOS audible on mute**: flip the mute switch ON, start the sound & flash
       locator — the tone still plays (AVAudioSession playback category).
 - [ ] **`sms:` handoff**: the ICE text button opens Messages with body prefilled.
@@ -103,6 +120,12 @@ enrollment, TestFlight replaces this — builds last 90 days and update over the
   `npm run build:cap && npx cap sync ios`.
 - **API calls fail** → check `NEXT_PUBLIC_API_BASE` in `.env.local` at build time
   (it is baked into the export), and that the deployment's smoke workflow is green.
+- **Signing fails on "Time Sensitive Notifications"** → a signing identity that
+  cannot grant `com.apple.developer.usernotifications.time-sensitive` will refuse
+  the build. Delete that key from `ios/App/App/App.entitlements` and re-run: the
+  overdue alarm still schedules and still fires, it just no longer breaks through
+  a Focus mode. Add it back once the app is on a team that can grant it, and
+  re-run the Focus box in the checklist above.
 - **Location never prompts** → Info.plist must contain both
   `NSLocationWhenInUseUsageDescription` and
   `NSLocationAlwaysAndWhenInUseUsageDescription` (scaffold W5 adds them).

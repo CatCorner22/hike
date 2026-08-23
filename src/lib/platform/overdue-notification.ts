@@ -20,6 +20,10 @@ export type OverdueNotificationSync =
   | { status: "scheduled"; atMs: number }
   | { status: "cleared" }
   | { status: "unsupported" }
+  /** The phone can raise this alarm and has been told not to. Reversible in Settings. */
+  | { status: "denied" }
+  /** Nobody has been asked yet, so no alarm exists and one tap would create it. */
+  | { status: "needs-permission" }
   | { status: "failed" };
 
 /**
@@ -122,8 +126,48 @@ async function runOverdueSync(
       "Return time reached",
       "You are past your planned return time. Check in as OK, or start your emergency steps.",
     );
-    return scheduled ? { status: "scheduled", atMs } : { status: "failed" };
+    if (scheduled) return { status: "scheduled", atMs };
+    // A refusal has a cause the hiker can act on, and the two causes need
+    // different words: one is a button, the other is a trip to Settings.
+    const permission = await adapter.permission?.().catch(() => undefined);
+    if (permission === "denied") return { status: "denied" };
+    if (permission === "prompt") return { status: "needs-permission" };
+    return { status: "failed" };
   } catch {
     return { status: "failed" };
+  }
+}
+
+
+/**
+ * Ask for notification permission at a moment when the answer still matters --
+ * the pre-hike checklist, where the hiker is setting the return time -- rather
+ * than at the moment the alarm is being scheduled, where a prompt competes with
+ * whatever else is happening and a reflexive "Don't Allow" silently removes the
+ * alarm for the whole trip.
+ *
+ * Returns the settled state. On the web there is no adapter and nothing to ask,
+ * which is "unsupported" rather than a failure.
+ */
+export async function requestOverduePermission(): Promise<
+  "granted" | "denied" | "prompt" | "unsupported"
+> {
+  const adapter = getPlatformAdapters().notifications;
+  if (!adapter?.requestPermission) return "unsupported";
+  try {
+    return await adapter.requestPermission();
+  } catch {
+    return "prompt";
+  }
+}
+
+/** Open the OS notification settings for this app. False when there is nowhere to go. */
+export async function openOverdueNotificationSettings(): Promise<boolean> {
+  const adapter = getPlatformAdapters().notifications;
+  if (!adapter?.openSettings) return false;
+  try {
+    return await adapter.openSettings();
+  } catch {
+    return false;
   }
 }

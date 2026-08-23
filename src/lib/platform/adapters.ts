@@ -34,10 +34,23 @@ export interface SaveFileAdapter {
   saveText(filename: string, text: string, mime: string): Promise<boolean>;
 }
 
+/** What the operating system currently allows, distinguished from what it was never asked. */
+export type NotificationPermission = "granted" | "denied" | "prompt";
+
 export interface NotificationsAdapter {
   /** Idempotent: scheduling an id that is already scheduled replaces it. */
   scheduleAt(id: number, atMs: number, title: string, body: string): Promise<boolean>;
   cancel(id: number): Promise<void>;
+  /**
+   * The settled state, without prompting. "denied" and "prompt" both mean no
+   * alarm will fire, and they need different words on screen: one asks the
+   * hiker to tap a button, the other to open Settings.
+   */
+  permission?(): Promise<NotificationPermission>;
+  /** Prompts only when the answer is still "prompt"; otherwise reports the settled state. */
+  requestPermission?(): Promise<NotificationPermission>;
+  /** Opens the OS notification settings for this app, where a denial can be reversed. */
+  openSettings?(): Promise<boolean>;
 }
 
 export interface WakeLockAdapter {

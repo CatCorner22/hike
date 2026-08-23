@@ -48,7 +48,11 @@ import { breadcrumbGpx, isIceFilled, nearestWaypoint, safeFilename, safetySelfCh
 import { saveTextFile } from "@/lib/platform/save-file";
 import {
   lastOverdueNotificationSync,
+  openOverdueNotificationSettings,
+  requestOverduePermission,
   subscribeOverdueNotification,
+  syncOverdueNotification,
+  type OverdueNotificationSync,
 } from "@/lib/platform/overdue-notification";
 import { gainLastHourM } from "@/lib/safety/backtrack";
 import { buildSafetyDossier } from "@/lib/safety/dossier";
@@ -717,13 +721,17 @@ export function SafetyPanel({
    * steady state on the web, where the in-app banner has always been the whole
    * mechanism.
    */
-  const [alarmRefused, setAlarmRefused] = useState(
-    () => lastOverdueNotificationSync().status === "failed",
+  const [alarmState, setAlarmState] = useState<OverdueNotificationSync["status"]>(
+    () => lastOverdueNotificationSync().status,
   );
-  useEffect(
-    () => subscribeOverdueNotification((sync) => setAlarmRefused(sync.status === "failed")),
-    [],
-  );
+  useEffect(() => subscribeOverdueNotification((sync) => setAlarmState(sync.status)), []);
+  // "unsupported" is the honest steady state on the web, where the in-app banner
+  // has always been the whole mechanism; the other three each have a different
+  // thing the hiker can do about them.
+  const alarmProblem =
+    alarmState === "failed" || alarmState === "denied" || alarmState === "needs-permission"
+      ? alarmState
+      : null;
 
   // The deadline message used to be written before the store was awaited, so a phone
   // that refused the write left an alarm that read as armed and did nothing.
@@ -2566,13 +2574,42 @@ export function SafetyPanel({
             <p className="text-xs text-muted-foreground">
               {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
-            {alarmRefused && (
-              <p className="text-xs font-medium text-destructive">
-                This phone refused the return-time alarm, so nothing will wake you
-                with the screen locked. Turn on Notifications for Klandagi in
-                Settings. The in-app OVERDUE warning still works whenever the app
-                is open.
-              </p>
+            {alarmProblem && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-destructive">
+                  {alarmProblem === "needs-permission"
+                    ? "This phone has not been asked to raise the return-time alarm yet, so nothing will wake you with the screen locked."
+                    : alarmProblem === "denied"
+                      ? "Notifications are turned off for Klandagi, so the return-time alarm cannot wake you with the screen locked."
+                      : "This phone refused the return-time alarm, so nothing will wake you with the screen locked."}{" "}
+                  The in-app OVERDUE warning still works whenever the app is open.
+                </p>
+                {alarmProblem === "needs-permission" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void (async () => {
+                        await requestOverduePermission();
+                        // Re-arm against the deadline already stored, so a granted
+                        // permission takes effect without re-entering the time.
+                        const alarm = await getOverdueAlarm();
+                        await syncOverdueNotification(alarm?.returnAt ?? null);
+                      })();
+                    }}
+                  >
+                    Allow the return-time alarm
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void openOverdueNotificationSettings()}
+                  >
+                    Open notification settings
+                  </Button>
+                )}
+              </div>
             )}
           </div>
 

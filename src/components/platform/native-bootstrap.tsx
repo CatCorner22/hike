@@ -21,10 +21,24 @@ export function NativeBootstrap() {
     let cancelled = false;
     void (async () => {
       try {
-        const [{ buildCapacitorAdapters }, { Preferences }] = await Promise.all([
-          import("@/lib/platform/capacitor/register"),
-          import("@capacitor/preferences"),
-        ]);
+        const [{ buildCapacitorAdapters, reclaimOrphanedGeoWatchers }, { Preferences }] =
+          await Promise.all([
+            import("@/lib/platform/capacitor/register"),
+            import("@capacitor/preferences"),
+          ]);
+        if (cancelled) return;
+        /**
+         * Before this page opens any location watcher, close the ones the last
+         * page left running.
+         *
+         * WKWebView's content process is killed under memory pressure and
+         * Capacitor reloads the page; the JS that held the watcher id dies, the
+         * native CLLocationManager does not. Reclaiming first — and awaiting it
+         * before the adapters are published, so nothing can start a watcher in
+         * between — is what stops one orphan accumulating per kill on the
+         * battery a hiker is depending on.
+         */
+        await reclaimOrphanedGeoWatchers().catch(() => 0);
         if (cancelled) return;
         setPlatformAdapters(buildCapacitorAdapters());
         setTokenStore({

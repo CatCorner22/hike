@@ -15,6 +15,7 @@ import { Directory, Encoding, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import { LocalNotifications } from "@capacitor/local-notifications";
 import { KeepAwake } from "@capacitor-community/keep-awake";
+import { Preferences } from "@capacitor/preferences";
 
 /**
  * Metres of movement between GNSS fixes. See the comment at the watcher below:
@@ -28,6 +29,7 @@ import type {
 } from "@capacitor-community/background-geolocation";
 import type {
   BatteryAdapter,
+  NotificationPermission,
   GeolocationAdapter,
   HapticsAdapter,
   NetworkAdapter,
@@ -39,6 +41,95 @@ import type {
 
 const BackgroundGeolocation =
   registerPlugin<BackgroundGeolocationPlugin>("BackgroundGeolocation");
+
+/**
+ * The app-local overdue plugin (ios/App/App/OverduePlugin.swift). It exists for
+ * one reason `@capacitor/local-notifications` cannot serve: setting the
+ * notification's interruption level to `.timeSensitive`, so a phone in a Focus
+ * mode still raises the alarm that says somebody is late back.
+ */
+interface OverdueAlarmPlugin {
+  permission(): Promise<{ status: NotificationPermission }>;
+  requestPermission(): Promise<{ status: NotificationPermission }>;
+  schedule(options: { id: number; at: number; title: string; body: string }): Promise<{
+    scheduled: boolean;
+    reason?: string;
+  }>;
+  cancel(options: { id: number }): Promise<void>;
+  openSettings(): Promise<void>;
+}
+
+const OverdueAlarm = registerPlugin<OverdueAlarmPlugin>("OverdueAlarm");
+
+/**
+ * Every background-geolocation watcher this page has open.
+ *
+ * The watcher id used to live only in the JS closure that created it. WKWebView
+ * kills its content process under memory pressure — a rendered map plus a live
+ * GPS watch on a long hike is the load that provokes it — and Capacitor answers
+ * with `webView.reload()`. The page and the closure die; the native
+ * CLLocationManager does not. The reloaded page then adds another watcher, and
+ * the orphan keeps running at navigation accuracy, draining the battery that
+ * decides whether the hiker walks out.
+ *
+ * So the ids outlive the page, in Preferences, and a fresh page start removes
+ * every id it finds before adding any of its own. A list rather than a single
+ * key because two watchers are legitimately live at once: the navigate screen's
+ * foreground fix and the activity recorder's background track.
+ */
+const WATCHER_IDS_KEY = "klandagi-geo-watchers";
+
+async function storedWatcherIds(): Promise<string[]> {
+  try {
+    const { value } = await Preferences.get({ key: WATCHER_IDS_KEY });
+    if (!value) return [];
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+async function rememberWatcher(id: string): Promise<void> {
+  try {
+    const ids = await storedWatcherIds();
+    if (ids.includes(id)) return;
+    await Preferences.set({ key: WATCHER_IDS_KEY, value: JSON.stringify([...ids, id]) });
+  } catch {
+    // A watcher that cannot be recorded still works; it just cannot be reclaimed
+    // after a content-process kill, which is the state we were already in.
+  }
+}
+
+async function forgetWatcher(id: string): Promise<void> {
+  try {
+    const ids = (await storedWatcherIds()).filter((stored) => stored !== id);
+    await Preferences.set({ key: WATCHER_IDS_KEY, value: JSON.stringify(ids) });
+  } catch {
+    /* see rememberWatcher */
+  }
+}
+
+/**
+ * Remove every watcher a previous page left running, before this page starts
+ * any of its own. Called once from the native bootstrap.
+ *
+ * Ids from a previous app launch are already gone as far as the plugin is
+ * concerned, so removing them fails harmlessly; the point is the ids from a
+ * page the content-process killer took out from under us in this same launch.
+ */
+export async function reclaimOrphanedGeoWatchers(): Promise<number> {
+  const ids = await storedWatcherIds();
+  await Promise.all(
+    ids.map((id) => BackgroundGeolocation.removeWatcher({ id }).catch(() => undefined)),
+  );
+  try {
+    await Preferences.remove({ key: WATCHER_IDS_KEY });
+  } catch {
+    /* nothing to do; the next reclaim retries */
+  }
+  return ids.length;
+}
 
 interface HeadingEventData {
   magneticHeading: number;
@@ -167,8 +258,31 @@ function buildSaveFileAdapter(): SaveFileAdapter {
 }
 
 function buildNotificationsAdapter(): NotificationsAdapter {
+  /**
+   * The app-local plugin first, `@capacitor/local-notifications` second.
+   *
+   * Only the former can mark the alarm time-sensitive, and that is the whole
+   * difference between an alarm that wakes a phone in Sleep Focus and one that
+   * waits politely until morning. The fallback keeps the alarm working if the
+   * plugin ever fails to register — degraded, and still an alarm.
+   */
+  async function nativePermission(): Promise<NotificationPermission | null> {
+    try {
+      const { status } = await OverdueAlarm.permission();
+      return status;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     async scheduleAt(id, atMs, title, body) {
+      try {
+        const { scheduled } = await OverdueAlarm.schedule({ id, at: atMs, title, body });
+        return scheduled;
+      } catch {
+        // Plugin unavailable: fall through to the packaged one.
+      }
       try {
         const permission = await LocalNotifications.requestPermissions();
         if (permission.display !== "granted") return false;
@@ -184,7 +298,40 @@ function buildNotificationsAdapter(): NotificationsAdapter {
       }
     },
     async cancel(id) {
+      await OverdueAlarm.cancel({ id }).catch(() => undefined);
       await LocalNotifications.cancel({ notifications: [{ id }] }).catch(() => undefined);
+    },
+    async permission() {
+      const native = await nativePermission();
+      if (native) return native;
+      try {
+        const { display } = await LocalNotifications.checkPermissions();
+        return display === "granted" ? "granted" : display === "denied" ? "denied" : "prompt";
+      } catch {
+        return "prompt";
+      }
+    },
+    async requestPermission() {
+      try {
+        const { status } = await OverdueAlarm.requestPermission();
+        return status;
+      } catch {
+        // fall through
+      }
+      try {
+        const { display } = await LocalNotifications.requestPermissions();
+        return display === "granted" ? "granted" : display === "denied" ? "denied" : "prompt";
+      } catch {
+        return "prompt";
+      }
+    },
+    async openSettings() {
+      try {
+        await OverdueAlarm.openSettings();
+        return true;
+      } catch {
+        return false;
+      }
     },
   };
 }
@@ -276,8 +423,15 @@ function buildGeolocationAdapter(): GeolocationAdapter {
       )
         .then((id) => {
           watcherId = id;
+          // Recorded before the stop check, so an id that arrives during teardown
+          // is still reclaimable if the removal below loses the race.
+          void rememberWatcher(id);
           // Stopped before the id resolved: remove immediately.
-          if (removed) void BackgroundGeolocation.removeWatcher({ id }).catch(() => undefined);
+          if (removed) {
+            void BackgroundGeolocation.removeWatcher({ id })
+              .catch(() => undefined)
+              .then(() => forgetWatcher(id));
+          }
         })
         .catch((error: unknown) => {
           if (!removed) {
@@ -291,7 +445,12 @@ function buildGeolocationAdapter(): GeolocationAdapter {
       return {
         stop() {
           removed = true;
-          if (watcherId) void BackgroundGeolocation.removeWatcher({ id: watcherId }).catch(() => undefined);
+          const id = watcherId;
+          if (id) {
+            void BackgroundGeolocation.removeWatcher({ id })
+              .catch(() => undefined)
+              .then(() => forgetWatcher(id));
+          }
         },
       };
     },
