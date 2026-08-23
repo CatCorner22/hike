@@ -21,7 +21,11 @@ import {
   type GuardianMessageKind,
 } from "@/lib/safety/guardian-message";
 import type { PositionSource } from "@/lib/safety/emergency";
-import type { GuardianStatusPayload } from "@/lib/guardian/status";
+import {
+  GUARDIAN_MAX_SHARE_HOURS,
+  GUARDIAN_SHARE_MARGIN_HOURS,
+  type GuardianStatusPayload,
+} from "@/lib/guardian/status";
 
 type GuardianShareProps = {
   trailName: string;
@@ -119,7 +123,25 @@ export function GuardianShare({
   const publishInFlight = useRef(false);
   const linkExpiresAt = linkClock + expiresInHours * 60 * 60 * 1000;
   const returnAtMs = returnAt ? Date.parse(returnAt) : null;
-  const expiresBeforeReturn = returnAtMs != null && Number.isFinite(returnAtMs) && returnAtMs > linkExpiresAt;
+  const haveReturn = returnAtMs != null && Number.isFinite(returnAtMs);
+  /**
+   * The duration that covers the trip: from now to the return time, plus a
+   * margin so a party running late is still visible on the link. Rounded up to
+   * the hour because the API takes whole hours, and clamped to the ceiling.
+   */
+  const coverReturnHours = haveReturn
+    ? Math.min(
+        GUARDIAN_MAX_SHARE_HOURS,
+        Math.max(
+          1,
+          Math.ceil((returnAtMs - linkClock) / 3_600_000) + GUARDIAN_SHARE_MARGIN_HOURS,
+        ),
+      )
+    : null;
+  /** A trip so long that even the ceiling cannot cover it. Rare, and said plainly rather than hidden behind a disabled button. */
+  const returnBeyondCeiling =
+    haveReturn && returnAtMs > linkClock + GUARDIAN_MAX_SHARE_HOURS * 3_600_000;
+  const expiresBeforeReturn = haveReturn && returnAtMs > linkExpiresAt;
 
   function flash(message: string) {
     setStatus(message);
@@ -507,6 +529,19 @@ export function GuardianShare({
                 </span>
               </label>
               <div className="flex flex-wrap gap-2">
+                {coverReturnHours != null && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={expiresInHours === coverReturnHours ? "default" : "outline"}
+                    onClick={() => {
+                      setExpiresInHours(coverReturnHours);
+                      setLinkClock(Date.now());
+                    }}
+                  >
+                    Through my return time
+                  </Button>
+                )}
                 {[12, 24, 48, 72].map((hours) => (
                   <Button
                     key={hours}
@@ -522,16 +557,35 @@ export function GuardianShare({
                   </Button>
                 ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Stops updating {new Date(linkExpiresAt).toLocaleString()}.
+              </p>
+              {/*
+                Never disabled on the duration alone. This button used to be
+                switched off whenever the return time fell past the link expiry,
+                under "Choose a longer link" — and with a 72 h ceiling, any trip
+                longer than three days had no longer link to choose. The warning
+                now carries the fix instead of the block.
+              */}
               <Button
                 type="button"
-                disabled={!linkConsent || linkBusy || expiresBeforeReturn}
+                disabled={!linkConsent || linkBusy}
                 onClick={() => void createPrivateLink()}
               >
                 {linkBusy ? "Saving link…" : "Create and copy private link"}
               </Button>
-              {expiresBeforeReturn && (
+              {expiresBeforeReturn && !returnBeyondCeiling && coverReturnHours != null && (
                 <p className="text-xs text-amber-700 dark:text-amber-300">
-                  Choose a longer link. It must remain active through the agreed overdue time.
+                  This link stops updating before your return time. Tap &ldquo;Through my return
+                  time&rdquo; so it is still live at the hour someone would start worrying.
+                </p>
+              )}
+              {returnBeyondCeiling && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">
+                  Your return time is more than {GUARDIAN_MAX_SHARE_HOURS / 24} days out, which is
+                  longer than any link lives. Create one now for the first stretch and tell your
+                  contact the date it stops updating — then make a new one when you are next in
+                  range.
                 </p>
               )}
             </>

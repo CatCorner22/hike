@@ -46,7 +46,35 @@ export function declinationModelStalenessWarning(now = new Date()): string | nul
   );
 }
 
-export function magneticDeclination(lat: number, lng: number): number | null {
+/**
+ * How wrong this model can be, in degrees, at its own epoch.
+ *
+ * The table above is whole degrees sampled on ten-degree cells. Bilinear
+ * interpolation across a cell whose corners differ by up to six degrees carries
+ * an error of the same order as the curvature it is smoothing over, and the
+ * error is measurable: at Yosemite Valley (37.75N, 119.6W) this model returns
+ * 13.4 degrees where the published field is about 12.4. So the value is good to
+ * a degree or two, and printing it to a tenth — which this module did, and which
+ * fed a "subtract 15.0 degrees" instruction on the navigate screen — claimed
+ * about twenty times the precision the source supports.
+ *
+ * A degree of bearing error is roughly 17 metres of cross-track per kilometre
+ * walked. Two degrees, over five kilometres, is far enough off a saddle to miss
+ * it. Which is a reason to state the uncertainty, not to hide it.
+ */
+export const DECLINATION_UNCERTAINTY_DEG = 2;
+
+/** Degrees per year the field drifts over this model's coverage; used to grow the uncertainty with age. */
+const DECLINATION_DRIFT_DEG_PER_YEAR = 0.2;
+
+export interface DeclinationEstimate {
+  /** Whole degrees, east-positive. The table cannot support a tenth and will not pretend to. */
+  degrees: number;
+  /** Plus or minus, at the given date: the model's own error plus accumulated drift. */
+  uncertaintyDeg: number;
+}
+
+function interpolateDeclination(lat: number, lng: number): number | null {
   if (lat < LATS[0] || lat > LATS[LATS.length - 1]) return null;
   if (lng < LNGS[0] || lng > LNGS[LNGS.length - 1]) return null;
 
@@ -60,6 +88,30 @@ export function magneticDeclination(lat: number, lng: number): number | null {
   const a = DECL[i][j] * (1 - t) + DECL[i + 1][j] * t;
   const b = DECL[i][j + 1] * (1 - t) + DECL[i + 1][j + 1] * t;
   return a * (1 - u) + b * u;
+}
+
+/** Rounded declination plus how far off it may be. Null outside the model's coverage. */
+export function magneticDeclinationEstimate(
+  lat: number,
+  lng: number,
+  now = new Date(),
+): DeclinationEstimate | null {
+  const raw = interpolateDeclination(lat, lng);
+  if (raw == null) return null;
+  const year = fractionalYear(now);
+  const drift = Number.isFinite(year)
+    ? Math.max(0, Math.round((year - DECLINATION_MODEL_EPOCH) * DECLINATION_DRIFT_DEG_PER_YEAR))
+    : 0;
+  return {
+    // Rounding here rather than at each render site: a value that leaves this
+    // module with a fraction attached will eventually be printed with one.
+    degrees: Math.round(raw),
+    uncertaintyDeg: DECLINATION_UNCERTAINTY_DEG + drift,
+  };
+}
+
+export function magneticDeclination(lat: number, lng: number): number | null {
+  return magneticDeclinationEstimate(lat, lng)?.degrees ?? null;
 }
 
 export function toMagneticBearing(trueBearing: number, declination: number): number {
@@ -110,17 +162,23 @@ export function gmAngleCard(lat: number, lng: number, now = new Date()): {
   declination: number | null;
   convergence: number | null;
   gmAngle: number | null;
+  /** Plus or minus, from the declination model. Null when no angle could be computed. */
+  uncertaintyDeg: number | null;
   east: boolean | null;
   gridToMagnetic: string;
   magneticToGrid: string;
   lars: string;
   staleness: string | null;
 } {
+  // LARS converts a GRID azimuth to a MAGNETIC one. Stated without that
+  // direction it is a coin flip at the moment somebody is standing over a map
+  // with a compass, which is the only moment it gets read.
   const lars =
-    "LARS: Left Add, Right Subtract — when the G-M arrow is left/right of grid north.";
-  const declination = magneticDeclination(lat, lng);
+    "LARS: going grid → magnetic, Left Add, Right Subtract — when the G-M arrow is left/right of grid north.";
+  const estimate = magneticDeclinationEstimate(lat, lng, now);
+  const declination = estimate?.degrees ?? null;
   const convergence = gridConvergence(lat, lng);
-  if (declination == null || convergence == null) {
+  if (declination == null || estimate == null || convergence == null) {
     const missing =
       declination == null
         ? "Magnetic declination is unavailable here (outside the built-in model)"
@@ -129,6 +187,7 @@ export function gmAngleCard(lat: number, lng: number, now = new Date()): {
       declination,
       convergence,
       gmAngle: null,
+      uncertaintyDeg: null,
       east: null,
       gridToMagnetic: `${missing} — do not convert grid to magnetic from memory. Use a current chart or a GPS bearing.`,
       magneticToGrid: `${missing} — magnetic-to-grid conversion unavailable.`,
@@ -138,17 +197,24 @@ export function gmAngleCard(lat: number, lng: number, now = new Date()): {
   }
   const gmAngle = declination - convergence;
   const east = gmAngle >= 0;
-  const abs = Math.abs(gmAngle).toFixed(1);
-  const conv = `${convergence >= 0 ? "+" : ""}${convergence.toFixed(1)}°`;
+  // Whole degrees, with the model's own error stated beside them. A tenth of a
+  // degree here was an interpolation artifact of a whole-degree table, and it
+  // read on screen as a surveyed figure.
+  const abs = Math.round(Math.abs(gmAngle));
+  const plusMinus = `±${estimate.uncertaintyDeg}°`;
+  const conv = `${convergence >= 0 ? "+" : ""}${Math.round(convergence)}°`;
   return {
     declination,
     convergence,
     gmAngle,
+    uncertaintyDeg: estimate.uncertaintyDeg,
     east,
     gridToMagnetic: east
-      ? `Grid → mag: subtract ${abs}° (east is least) (conv ${conv})`
-      : `Grid → mag: add ${abs}° (west is best) (conv ${conv})`,
-    magneticToGrid: east ? `Mag → grid: add ${abs}°` : `Mag → grid: subtract ${abs}°`,
+      ? `Grid → mag: subtract ${abs}° ${plusMinus} (east is least) (conv ${conv})`
+      : `Grid → mag: add ${abs}° ${plusMinus} (west is best) (conv ${conv})`,
+    magneticToGrid: east
+      ? `Mag → grid: add ${abs}° ${plusMinus}`
+      : `Mag → grid: subtract ${abs}° ${plusMinus}`,
     lars,
     staleness: declinationModelStalenessWarning(now),
   };
@@ -160,9 +226,10 @@ export function formatWalkBearing(trueBearing: number, lat?: number, lng?: numbe
   const heading = ((trueBearing % 360) + 360) % 360;
   const trueLabel = `${Math.round(heading) % 360}° true`;
   if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) return trueLabel;
-  const dec = magneticDeclination(lat, lng);
-  if (dec == null) return trueLabel;
-  return `${trueLabel} / ${Math.round(toMagneticBearing(heading, dec)) % 360}° magnetic`;
+  const estimate = magneticDeclinationEstimate(lat, lng);
+  if (estimate == null) return trueLabel;
+  const magnetic = Math.round(toMagneticBearing(heading, estimate.degrees)) % 360;
+  return `${trueLabel} / ${magnetic}° ±${estimate.uncertaintyDeg}° magnetic`;
 }
 
 export function isFixNearRouteBbox(

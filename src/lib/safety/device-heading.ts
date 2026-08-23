@@ -184,7 +184,22 @@ export function headingAngularDifference(a: number, b: number): number {
   return Math.abs(((na - nb + 540) % 360) - 180);
 }
 
-const DEFAULT_HEADING_DISAGREEMENT_DEG = 45;
+/**
+ * How far the phone's compass and the GPS course may differ before the app says
+ * so.
+ *
+ * It was 45 degrees, which is a quadrant. The failure this gate exists to catch
+ * is a declination sign error — reading east as west, or a compass held near a
+ * belt buckle — and a sign error over the western United States produces a
+ * discrepancy of roughly 12 to 27 degrees. Every one of those passed silently
+ * under a 45-degree threshold, which is to say the gate did not catch the thing
+ * it was built for.
+ *
+ * Twenty degrees sits above the honest sources of disagreement — GPS course
+ * noise at walking pace, and this app's own two-degree declination model — and
+ * below the smallest sign error the terrain can produce.
+ */
+const DEFAULT_HEADING_DISAGREEMENT_DEG = 20;
 
 /** Warn when phone compass and GPS course diverge — common near metal, steep terrain, or slow travel. */
 export function headingDisagreement(input: {

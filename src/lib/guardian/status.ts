@@ -1,5 +1,33 @@
 export const GUARDIAN_LIVE_WINDOW_MS = 5 * 60 * 1000;
-export const GUARDIAN_MAX_SHARE_HOURS = 72;
+
+/**
+ * The longest a share link may live: fourteen days.
+ *
+ * It was 72 hours, and the share dialog disabled its own create button whenever
+ * the return time fell past the link's expiry — so on any trip longer than three
+ * days the button could never be enabled, under a message reading "Choose a
+ * longer link", which was an instruction nobody could follow. A cap exists to
+ * stop a link outliving the trip it was made for, and a number that makes the
+ * feature impossible on a four-day hike is not serving that purpose.
+ *
+ * Fourteen days covers essentially every trip this app plans while remaining a
+ * real ceiling, and the link is still scoped to the trip: the picker offers the
+ * return time plus a margin and defaults to it.
+ */
+export const GUARDIAN_MAX_SHARE_HOURS = 14 * 24;
+
+/** Hours past the return time a link stays alive, so a late party is still visible. */
+export const GUARDIAN_SHARE_MARGIN_HOURS = 12;
+
+/**
+ * How far ahead a pace-derived ETA may reach before it stops being an estimate.
+ *
+ * Separate from the link ceiling, which it used to share. They are different
+ * claims: a link may reasonably cover a two-week expedition, while an ETA
+ * projected two weeks out from an hour of observed walking is not an estimate,
+ * it is arithmetic on noise.
+ */
+export const GUARDIAN_MAX_ETA_HOURS = 72;
 export const GUARDIAN_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 export type GuardianStatusPayload = {
@@ -119,7 +147,7 @@ export function estimateGuardianEta(input: {
   const speedMetersPerSecond = traveledMeters / elapsedSeconds;
   if (speedMetersPerSecond < 0.15 || speedMetersPerSecond > 4.5) return null;
   const remainingSeconds = remainingMeters / speedMetersPerSecond;
-  if (!Number.isFinite(remainingSeconds) || remainingSeconds > GUARDIAN_MAX_SHARE_HOURS * 3600) {
+  if (!Number.isFinite(remainingSeconds) || remainingSeconds > GUARDIAN_MAX_ETA_HOURS * 3600) {
     return null;
   }
   return new Date(nowMs + remainingSeconds * 1000).toISOString();
