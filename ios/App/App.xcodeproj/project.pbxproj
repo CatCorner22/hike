@@ -11,7 +11,7 @@
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
 		AA10C0FFEE00000000000004 /* HeadingPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10C0FFEE00000000000003 /* HeadingPlugin.swift */; };
-		AA10C0FFEE00000000000006 /* OverduePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10C0FFEE00000000000005 /* OverduePlugin.swift */; };
+		AA10C0FFEE00000000000202 /* OverduePlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10C0FFEE00000000000201 /* OverduePlugin.swift */; };
 		AA10C0FFEE00000000000006 /* MainViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA10C0FFEE00000000000005 /* MainViewController.swift */; };
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
@@ -27,8 +27,8 @@
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		AA10C0FFEE00000000000003 /* HeadingPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeadingPlugin.swift; sourceTree = "<group>"; };
-		AA10C0FFEE00000000000005 /* OverduePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverduePlugin.swift; sourceTree = "<group>"; };
-		AA10C0FFEE00000000000007 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
+		AA10C0FFEE00000000000201 /* OverduePlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverduePlugin.swift; sourceTree = "<group>"; };
+		AA10C0FFEE00000000000203 /* App.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = App.entitlements; sourceTree = "<group>"; };
 		AA10C0FFEE00000000000005 /* MainViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainViewController.swift; sourceTree = "<group>"; };
 		504EC30C1FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -85,8 +85,8 @@
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				AA10C0FFEE00000000000003 /* HeadingPlugin.swift */,
-				AA10C0FFEE00000000000005 /* OverduePlugin.swift */,
-				AA10C0FFEE00000000000007 /* App.entitlements */,
+				AA10C0FFEE00000000000201 /* OverduePlugin.swift */,
+				AA10C0FFEE00000000000203 /* App.entitlements */,
 				AA10C0FFEE00000000000005 /* MainViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -226,7 +226,7 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				AA10C0FFEE00000000000004 /* HeadingPlugin.swift in Sources */,
-				AA10C0FFEE00000000000006 /* OverduePlugin.swift in Sources */,
+				AA10C0FFEE00000000000202 /* OverduePlugin.swift in Sources */,
 				AA10C0FFEE00000000000006 /* MainViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
