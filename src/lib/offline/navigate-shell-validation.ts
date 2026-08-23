@@ -86,6 +86,16 @@ export function isValidNavigateShellDocument(
   contentType: string,
   markerHeader: string | null,
   expectedNavId?: string,
+  /**
+   * Demand the version marker. The final check used to be
+   * `isMarkedNavigateShell(...) || looksLikeNavigateHtml(...)`, and the second
+   * disjunct is always true by the time it runs — so the marker requirement was
+   * a tautology and the version kill-switch did nothing. Writers legitimately
+   * validate an UNMARKED live document before stamping it, so the requirement
+   * belongs only on the paths that decide whether to TRUST something already in
+   * the cache.
+   */
+  requireMarker = false,
 ): boolean {
   if (!looksLikeNavigateHtml(html)) return false;
   if (expectedNavId && !containsNavigateRouteMarker(html, expectedNavId)) return false;
@@ -96,8 +106,16 @@ export function isValidNavigateShellDocument(
   ) {
     return false;
   }
-  return isMarkedNavigateShell(html, markerHeader) || looksLikeNavigateHtml(html);
+  return requireMarker ? isMarkedNavigateShell(html, markerHeader) : true;
 }
+
+/**
+ * How long a cached `/_next/static/` asset may be served. The service worker
+ * enforces this through its expiration plugin; readiness verification MUST use
+ * the same number, or it reports a route trip-ready whose assets the worker
+ * will already refuse to serve.
+ */
+export const NAVIGATE_ASSET_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 export function stampNavigateShellHtml(html: string): string {
   return html.includes(NAVIGATE_SHELL_MARKER)

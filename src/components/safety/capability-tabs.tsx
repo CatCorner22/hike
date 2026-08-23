@@ -1,18 +1,31 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AltitudeSection } from "@/components/safety/altitude-section";
+import { AvalancheSection } from "@/components/safety/avalanche-section";
+import { CommsSection } from "@/components/safety/comms-section";
+import { LoadSection } from "@/components/safety/load-section";
+import { TcccSection } from "@/components/safety/tccc-section";
+import { ThermalSection } from "@/components/safety/thermal-section";
+import { WaterSection } from "@/components/safety/water-section";
+import { WildlifeSection } from "@/components/safety/wildlife-section";
 
-const Deferred = () => <p className="py-3 text-xs text-muted-foreground">Loading safety tool…</p>;
-const AltitudeSection = dynamic(() => import("@/components/safety/altitude-section").then((mod) => mod.AltitudeSection), { ssr: false, loading: Deferred });
-const AvalancheSection = dynamic(() => import("@/components/safety/avalanche-section").then((mod) => mod.AvalancheSection), { ssr: false, loading: Deferred });
-const CommsSection = dynamic(() => import("@/components/safety/comms-section").then((mod) => mod.CommsSection), { ssr: false, loading: Deferred });
-const LoadSection = dynamic(() => import("@/components/safety/load-section").then((mod) => mod.LoadSection), { ssr: false, loading: Deferred });
-const TcccSection = dynamic(() => import("@/components/safety/tccc-section").then((mod) => mod.TcccSection), { ssr: false, loading: Deferred });
-const ThermalSection = dynamic(() => import("@/components/safety/thermal-section").then((mod) => mod.ThermalSection), { ssr: false, loading: Deferred });
-const WaterSection = dynamic(() => import("@/components/safety/water-section").then((mod) => mod.WaterSection), { ssr: false, loading: Deferred });
-const WildlifeSection = dynamic(() => import("@/components/safety/wildlife-section").then((mod) => mod.WildlifeSection), { ssr: false, loading: Deferred });
+/**
+ * Statically imported, deliberately.
+ *
+ * These eight panels are the offline field references — tourniquet and triage,
+ * altitude illness, hypothermia and heat, avalanche, wildlife, water, load,
+ * comms. They used to be `next/dynamic` chunks, which meant their code was NOT
+ * referenced by the navigate document, so offline preparation never saw them,
+ * never cached them, and never verified them. A hiker who had not happened to
+ * open the tab while online got a chunk-load failure instead of the medical
+ * reference, at the moment they needed it.
+ *
+ * Bundling them into the shell costs some first-load weight on a screen that is
+ * already prepared ahead of time, and buys the guarantee that the content is on
+ * the phone whenever the navigate screen is.
+ */
 
 type Tab = "medical" | "hazard" | "plan" | "comms";
 export function CapabilityTabs({ altitudeM, elevationProfile }: { altitudeM?: number; elevationProfile?: Array<{ distanceMeters: number; elevation: number }> }) {

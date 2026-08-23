@@ -71,6 +71,65 @@ describe("navigate service-worker shell handler", () => {
     expect(fetchNeverSettles).not.toHaveBeenCalled();
   });
 
+  /**
+   * Regression: the handler served cache-first unconditionally, so the explicit
+   * no-store fetch that preparation uses was answered from the cache too. A
+   * device that had prepared once could never take a newer shell — every later
+   * deploy, INCLUDING safety fixes, was invisible to it forever.
+   */
+  it("goes to the network first when preparation explicitly asks for a fresh shell", async () => {
+    const stale = VALID_SHELL.replace("main.js", "stale.js");
+    const cache = {
+      match: vi.fn(async () => new Response(stale, {
+        headers: {
+          "content-type": "text/html; charset=utf-8",
+          "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
+        },
+      })),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    const network = vi.fn(async () => new Response(VALID_SHELL, {
+      headers: { "content-type": "text/html; charset=utf-8" },
+    }));
+    vi.stubGlobal("fetch", network);
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({
+      request: new Request(NAV_URL, { cache: "no-store" }),
+    });
+
+    expect(network).toHaveBeenCalled();
+    expect(await result.text()).toContain("main.js");
+  });
+
+  /** A revalidation whose network leg fails must still launch from the cache. */
+  it("falls back to the prepared shell when a revalidating fetch fails", async () => {
+    const prepared = new Response(VALID_SHELL, {
+      headers: {
+        "content-type": "text/html; charset=utf-8",
+        "x-hike-navigate-shell": NAVIGATE_SHELL_MARKER,
+      },
+    });
+    const cache = {
+      match: vi.fn(async () => prepared.clone()),
+      keys: vi.fn(async () => []),
+      put: vi.fn(async () => undefined),
+    } as unknown as Cache;
+    vi.stubGlobal("caches", { open: vi.fn(async () => cache) });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new TypeError("network unavailable");
+    }));
+
+    const { navigateShellHandler } = await import("./sw");
+    const result = await navigateShellHandler({
+      request: new Request(NAV_URL, { cache: "no-store" }),
+    });
+
+    expect(await result.text()).toContain(SHELL_ATTR);
+  });
+
   it("refuses a cached document that is not the navigate shell when the network is unavailable", async () => {
     // A soft-error page or any other cached HTML must never masquerade as the
     // shell: the constant marker is the proof-of-identity the validator demands.

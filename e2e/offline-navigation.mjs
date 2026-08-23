@@ -369,14 +369,11 @@ async function run() {
     }, GEOMETRY);
 
     if (prepared.via === "button") {
-      await page.waitForFunction(
-        () =>
-          /Route saved|Route and navigation screen saved|Could not save|Navigation screen could not/i.test(
-            document.body.innerText,
-          ),
-        null,
-        { timeout: 35_000 },
-      );
+      // Wait on the stable attribute the component emits for BOTH outcomes,
+      // not on copy. Matching message text meant a real prepare failure whose
+      // wording had changed timed out and crashed the probe instead of failing
+      // it with the reason on screen.
+      await page.waitForSelector('[data-offline-result="complete"]', { timeout: 35_000 });
     }
 
     async function waitForVerifiedShell(url) {
@@ -475,14 +472,11 @@ async function run() {
     if (!shellCached && prepared.via === "button") {
       log("B1 retry prepare", "....", "verified shell missing after save — warming again");
       await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click();
-      await page.waitForFunction(
-        () =>
-          /Route saved|Route and navigation screen saved|Could not save|Navigation screen could not/i.test(
-            document.body.innerText,
-          ),
-        null,
-        { timeout: 35_000 },
-      );
+      // Wait on the stable attribute the component emits for BOTH outcomes,
+      // not on copy. Matching message text meant a real prepare failure whose
+      // wording had changed timed out and crashed the probe instead of failing
+      // it with the reason on screen.
+      await page.waitForSelector('[data-offline-result="complete"]', { timeout: 35_000 });
       shellCached = await waitForVerifiedShell(navShellUrl);
     }
     const cacheAudit = await inspectPreparedOfflineFiles(navShellUrl);

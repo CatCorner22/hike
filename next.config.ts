@@ -1,14 +1,25 @@
 import type { NextConfig } from "next";
 import withSerwistInit from "@serwist/next";
 
+/**
+ * A per-build revision for the precached APP ROUTES below. With `revision: null`
+ * Serwist keys them by URL alone and never refetches them, so both pages stayed
+ * frozen at whatever the first service-worker install captured — their script
+ * tags kept naming chunks that later deploys had already rotated away, and the
+ * offline recovery surface (including the saved-routes list) went dead exactly
+ * when it was needed. Any value that changes per build fixes it.
+ */
+const APP_ROUTE_REVISION =
+  process.env.VERCEL_GIT_COMMIT_SHA ?? process.env.BUILD_ID ?? Date.now().toString(36);
+
 const withSerwist = withSerwistInit({
   swSrc: "src/sw.ts",
   swDest: "public/sw.js",
   // These are app routes, not webpack static assets. Precache both the genuine
   // failure fallback and the neutral device-saved-routes destination.
   additionalPrecacheEntries: [
-    { url: "/offline", revision: null },
-    { url: "/saved", revision: null },
+    { url: "/offline", revision: APP_ROUTE_REVISION },
+    { url: "/saved", revision: APP_ROUTE_REVISION },
   ],
   disable: process.env.NODE_ENV === "development",
 });
