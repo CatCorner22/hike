@@ -232,6 +232,15 @@ export function formatLeaveBehindCard(input: {
     LEAVE_BEHIND_DISCLAIMER,
     "",
     "--- IF THEY ARE OVERDUE ---",
+    // Who to call comes first, because it is the one thing a frightened person
+    // at 3am cannot look up quickly and the hiker could answer in advance. When
+    // it was not asked for, the card said "call the responsible county sheriff,
+    // park dispatch, or 911" — accurate, and an hour of someone's evening.
+    input.profile.responderAgency || input.profile.responderPhone
+      ? `CALL FIRST: ${reportField(
+          [input.profile.responderAgency, input.profile.responderPhone].filter(Boolean).join(" — "),
+        )}`
+      : "CALL FIRST: (not recorded — ask the hiker before they leave which agency covers this route)",
     ...missedCheckInPolicy().map((line) => `· ${line}`),
     "",
     "--- ITINERARY ---",

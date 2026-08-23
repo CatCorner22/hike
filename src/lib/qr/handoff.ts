@@ -1,5 +1,5 @@
 import { formatZulu } from "@/lib/safety/landnav";
-import { formatUsng } from "@/lib/safety/usng";
+import { formatUsng, GRID_DATUM, gridDigitsForAccuracy } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
 import type { PositionSource } from "@/lib/safety/emergency";
 import { reportField } from "@/lib/safety/report-field";
@@ -23,6 +23,7 @@ export function buildSarHandoff(input: {
   lng?: number | null;
   recordedAt?: number | string | null;
   positionSource?: PositionSource | null;
+  accuracyM?: number | null;
   stale?: boolean;
   returnAtIso?: string | null;
   profile?: IceProfile | null;
@@ -39,9 +40,16 @@ export function buildSarHandoff(input: {
   if (input.trailName) lines.push(reportField(input.trailName, 60));
 
   if (hasFix) {
-    const grid = formatUsng(input.lat!, input.lng!, 5);
+    // Five digits is one metre. This payload is scanned off another phone and
+    // read to a rescuer, so the digits have to be earned: scale them to the
+    // reported accuracy, and never let a dead-reckoned estimate claim metres.
+    const digits =
+      input.positionSource === "deadReckon"
+        ? Math.min(3, gridDigitsForAccuracy(input.accuracyM))
+        : gridDigitsForAccuracy(input.accuracyM);
+    const grid = formatUsng(input.lat!, input.lng!, digits);
     const decimal = `${input.lat!.toFixed(5)}, ${input.lng!.toFixed(5)}`;
-    lines.push(grid ? `${grid} / ${decimal}` : decimal);
+    lines.push(grid ? `${grid} (${10 ** (5 - digits)} m ${GRID_DATUM}) / ${decimal}` : decimal);
     const recordedMs =
       typeof input.recordedAt === "number"
         ? input.recordedAt

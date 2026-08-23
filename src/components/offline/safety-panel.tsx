@@ -214,6 +214,8 @@ import {
   formatUsng,
   formatUtm,
   parseUsng,
+  GRID_DATUM,
+  gridDigitsForAccuracy,
 } from "@/lib/safety/usng";
 
 interface SafetyPanelProps {
@@ -950,8 +952,16 @@ export function SafetyPanel({
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
                 {formatUsng(lat, lng) ? (
                   <>
-                    <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
-                    <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    {/* Digits are a precision claim, so they follow the reported
+                        accuracy; and a grid without a datum is not a position —
+                        WGS 84 and NAD 27 differ by about 200 m across CONUS. */}
+                    <p className="mt-1 font-mono text-xs">
+                      USNG {formatUsng(lat, lng, gridDigitsForAccuracy(accuracyM))}
+                    </p>
+                    {gridDigitsForAccuracy(accuracyM) === 5 && (
+                      <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">Datum {GRID_DATUM}</p>
                   </>
                 ) : (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
@@ -960,7 +970,11 @@ export function SafetyPanel({
                 )}
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
-                {formatUtm(lat, lng) && <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>}
+                {formatUtm(lat, lng) && (
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {formatUtm(lat, lng, 10 ** (5 - gridDigitsForAccuracy(accuracyM)))}
+                  </p>
+                )}
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
@@ -1193,6 +1207,7 @@ export function SafetyPanel({
                     trailName,
                     lat,
                     lng,
+                    accuracyM,
                     recordedAt,
                     positionSource,
                     stale,
@@ -2577,6 +2592,28 @@ export function SafetyPanel({
               value={profile.icePhone}
               onChange={(e) => void persistProfile({ ...profile, icePhone: e.target.value })}
             />
+            {/* The card had a field for the license plate and none for the
+                agency that would actually run a search. This is the one fact a
+                contact cannot look up quickly at 3am. */}
+            <Label htmlFor="responder-agency">Who covers this route (sheriff / park dispatch)</Label>
+            <Input
+              id="responder-agency"
+              value={profile.responderAgency ?? ""}
+              placeholder="e.g. Mariposa County Sheriff"
+              onChange={(e) => void persistProfile({ ...profile, responderAgency: e.target.value })}
+            />
+            <Label htmlFor="responder-phone">Their non-emergency number</Label>
+            <Input
+              id="responder-phone"
+              type="tel"
+              value={profile.responderPhone ?? ""}
+              onChange={(e) => void persistProfile({ ...profile, responderPhone: e.target.value })}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Printed first under &ldquo;if they are overdue&rdquo; on the leave-behind card. Look it
+              up now, while you have signal — it is the hour your contact would otherwise spend
+              finding it.
+            </p>
             <Label htmlFor="party">Party size</Label>
             <Input
               id="party"

@@ -11,6 +11,17 @@ export interface IceProfile {
   bloodType?: string;
   challenge?: string;
   password?: string;
+  /**
+   * Who has jurisdiction where this trip is, and the number to reach them.
+   *
+   * The leave-behind card had a field for the vehicle's license plate and none
+   * for the agency that would run the search. "Call the responsible county
+   * sheriff, park dispatch, or 911" is a sentence a hiker can answer in advance
+   * and a frightened contact at 3am cannot — and the hour they spend finding
+   * out is the first hour of the search.
+   */
+  responderAgency?: string;
+  responderPhone?: string;
 }
 
 export interface SafetyWaypoint {

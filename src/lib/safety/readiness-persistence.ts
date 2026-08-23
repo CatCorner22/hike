@@ -50,6 +50,8 @@ const PROFILE_FIELDS = [
   "bloodType",
   "challenge",
   "password",
+  "responderAgency",
+  "responderPhone",
 ] as const satisfies ReadonlyArray<keyof IceProfile>;
 
 function sameProfile(expected: IceProfile, actual: IceProfile): boolean {

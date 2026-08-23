@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/sheet";
 import { copyEmergencyInfo, emergencyMessage, formatCoords, type PositionSource } from "@/lib/safety/emergency";
 import { formatFixAge } from "@/lib/safety/gps-quality";
-import { formatDdm, formatMgrs10, formatUsng } from "@/lib/safety/usng";
+import { formatDdm, formatMgrs10, formatUsng, GRID_DATUM, gridDigitsForAccuracy } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
 
 export interface RescueCardProps {
@@ -55,15 +55,19 @@ export function RescueCard({
 
   const gridLines = useMemo(() => {
     if (lat == null || lng == null) return [] as string[];
-    const usng = formatUsng(lat, lng);
-    const mgrs = formatMgrs10(lat, lng);
+    // The card is read aloud to a rescuer, so the digits have to mean what they
+    // say: scale them to the accuracy, and never omit the datum.
+    const digits = gridDigitsForAccuracy(accuracyM);
+    const usng = formatUsng(lat, lng, digits);
+    const mgrs = digits === 5 ? formatMgrs10(lat, lng) : null;
     const ddm = formatDdm(lat, lng);
     return [
-      usng ? `USNG: ${usng}` : null,
+      usng ? `USNG: ${usng} (${10 ** (5 - digits)} m)` : null,
       mgrs ? `MGRS: ${mgrs}` : null,
       ddm ? `DDM: ${ddm}` : null,
+      usng || ddm ? `Datum: ${GRID_DATUM}` : null,
     ].filter((line): line is string => Boolean(line));
-  }, [lat, lng]);
+  }, [lat, lng, accuracyM]);
 
   const fixLabel = useMemo(() => {
     switch (positionSource) {
