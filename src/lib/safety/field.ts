@@ -82,7 +82,10 @@ export function waterReminder(
   intervalMs = 30 * 60_000,
 ): string | null {
   const baseline = lastDrinkAt ?? startedAt;
-  if (baseline == null) return null;
+  // A corrupt stored timestamp (Date.parse of a mangled breadcrumb is NaN) used to
+  // sail past the interval check — NaN compares false — and render a permanent
+  // "No water logged for NaN min" banner. An unreadable baseline is no baseline.
+  if (baseline == null || !Number.isFinite(baseline) || !Number.isFinite(now)) return null;
   const elapsed = now - baseline;
   if (elapsed < intervalMs) return null;
   return `No water logged for ${Math.round(elapsed / 60_000)} min. Sip now — dehydration hits before thirst in dry air.`;
