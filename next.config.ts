@@ -85,7 +85,15 @@ const webConfig: NextConfig = {
           { key: "Content-Security-Policy", value: contentSecurityPolicy },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-          { key: "Permissions-Policy", value: "geolocation=(self), camera=(), microphone=(), payment=(), usb=()" },
+          // camera=(self), not camera=(): the position-scan feature reads a QR
+          // code off another hiker's screen to exchange coordinates with no
+          // signal, and an empty allowlist denies the app's own origin too — so
+          // getUserMedia failed with NotAllowedError no matter what the user
+          // granted. Everything else stays denied, third-party frames included.
+          {
+            key: "Permissions-Policy",
+            value: "geolocation=(self), camera=(self), microphone=(), payment=(), usb=()",
+          },
         ],
       },
       {
