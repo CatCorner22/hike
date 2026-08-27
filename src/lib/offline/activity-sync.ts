@@ -487,7 +487,7 @@ export async function beginActivity(input: {
   trailId?: string;
   planId?: string;
   name?: string;
-}): Promise<{ id: string; remoteId?: string; offline: boolean }> {
+}): Promise<{ id: string; remoteId?: string; offline: boolean; serverError?: string }> {
   const startedAt = new Date().toISOString();
   const localId = crypto.randomUUID();
   const local: LocalActivity = {
@@ -511,14 +511,18 @@ export async function beginActivity(input: {
         startedAt,
       }),
     });
-    if (res.ok) {
-      const data = (await res.json()) as { id?: string };
-      if (data.id) {
-        local.remoteId = data.id;
-        await putLocalActivity(local);
-        return { id: localId, remoteId: data.id, offline: false };
-      }
+    const data = (await res.json().catch(() => null)) as { id?: string; error?: string } | null;
+    if (res.ok && data?.id) {
+      local.remoteId = data.id;
+      await putLocalActivity(local);
+      return { id: localId, remoteId: data.id, offline: false };
     }
+    const serverError =
+      typeof data?.error === "string" && data.error.trim()
+        ? data.error.trim()
+        : `The server did not start this activity (${res.status}).`;
+    await putLocalActivity(local);
+    return { id: localId, offline: true, serverError };
   } catch {
     /* offline */
   }

@@ -50,12 +50,12 @@ export default function GuidePage() {
               Explore
             </Link>{" "}
             finds real trails by name or by map area. Open one to see its length, climb,
-            and elevation profile, and press <strong>Research</strong> for an AI summary of
-            seasons, hazards, parking, and permits — double-check anything important
-            against the park&apos;s own site.
+            and elevation profile. Research loads on its own; use <strong>Refresh</strong>{" "}
+            to update the AI summary of seasons, hazards, parking, and permits — double-check
+            anything important against the park&apos;s own site.
           </p>
           <p>
-            Press <strong>Create plan</strong> on a trail (or{" "}
+            Press <strong>Add to plan</strong> on a trail (or{" "}
             <Link href="/plan" className="font-medium text-primary hover:underline">
               Plans → New plan
             </Link>{" "}
@@ -249,11 +249,11 @@ export default function GuidePage() {
               research need a connection.
             </p>
             <p className="mt-1">
-              <strong>Activity recording is different:</strong> you have to press{" "}
-              <strong>Start recording</strong> while you still have signal. Once it has
-              started it keeps recording with no signal and uploads the track when you get
-              back in range. If you are already out of range, use Navigate — its
-              breadcrumbs are saved on the phone and need no connection at all.
+              <strong>Activity recording can start offline.</strong> Press{" "}
+              <strong>Start recording</strong> even without signal — points queue on this
+              phone and upload when you are back in range. If the server rejects the start
+              while you still have signal, the app says so instead of pretending you are
+              offline.
             </p>
           </div>
           <div>

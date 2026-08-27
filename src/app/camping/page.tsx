@@ -12,7 +12,7 @@ import {
   type CampingFiltersState,
 } from "@/components/camping/camping-filters";
 import { CAMPING_TYPE_COLORS, CAMPING_TYPE_LABELS } from "@/lib/constants";
-import { httpsUrl } from "@/lib/urls";
+import { campOfficialUrl } from "@/lib/camping/official-url";
 import { nearbyCampingBbox } from "@/lib/camping/us-coverage";
 import type { Bbox } from "@/lib/camping/bbox";
 import type { CampAccessStatus, CampPermitStatus } from "@/lib/camping/evidence";
@@ -34,6 +34,7 @@ interface Campground {
   campingType: string;
   description: string | null;
   reservationUrl: string | null;
+  metadata?: unknown;
   permitRequired: boolean | null;
   accessStatus: CampAccessStatus;
   permitStatus: CampPermitStatus;
@@ -295,17 +296,21 @@ export default function CampingPage() {
                     ? `App record retrieved ${new Date(camp.cachedAt).toLocaleDateString()}; this is not a guarantee that rules are unchanged.`
                     : "Starter reference; source freshness is unknown until refreshed."}
                 </p>
-                {httpsUrl(camp.reservationUrl) && (
-                  <a
-                    href={httpsUrl(camp.reservationUrl)!}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-flex items-center text-primary hover:underline"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    Official details <ExternalLink className="ml-1 h-3 w-3" />
-                  </a>
-                )}
+                {(() => {
+                  const official = campOfficialUrl(camp);
+                  if (!official) return null;
+                  return (
+                    <a
+                      href={official}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-2 inline-flex items-center text-primary hover:underline"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {camp.reservationUrl ? "Official details" : "View on OpenStreetMap"} <ExternalLink className="ml-1 h-3 w-3" />
+                    </a>
+                  );
+                })()}
               </CardContent>
             </Card>
           ))}

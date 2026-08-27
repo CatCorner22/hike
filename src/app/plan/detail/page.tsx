@@ -18,6 +18,7 @@ import { enrichRoutePack, packFromPlanApi, persistRoutePack } from "@/lib/offlin
 import { getRoutePack } from "@/lib/offline/route-pack";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { trailPageHref } from "@/lib/ids";
+import { campOfficialUrl } from "@/lib/camping/official-url";
 import { httpsUrl } from "@/lib/urls";
 import { npsParkCodeFromTags } from "@/lib/nps/park-code";
 import { LocateFixed, Search, Trash2 } from "lucide-react";
@@ -64,6 +65,7 @@ interface CampHit {
   latitude: number;
   longitude: number;
   reservationUrl?: string | null;
+  metadata?: unknown;
   permitStatus?: "required" | "not_required" | "seasonal" | "unknown";
   accessStatus?: "allowed" | "restricted" | "private" | "unknown";
 }
@@ -205,6 +207,7 @@ function PlanDetail({ planId }: { planId: string }) {
   const [wpLng, setWpLng] = useState("");
   const [wpKind, setWpKind] = useState<NonNullable<PlanWaypoint["kind"]>>("note");
   const [wpLocationStatus, setWpLocationStatus] = useState<string | null>(null);
+  const [trailWarning, setTrailWarning] = useState<string | null>(null);
   const offlineReadiness = useOfflinePackReady(plan ? `plan-${planId}` : null);
 
   useEffect(() => {
@@ -216,16 +219,19 @@ function PlanDetail({ planId }: { planId: string }) {
         if (!isPlanPayload(body)) throw new Error("The plan response was incomplete or invalid.");
 
         let loadedTrail: TrailData | null = null;
+        let nextTrailWarning: string | null = null;
         if (body.trailId) {
           const trailResponse = await apiFetch(`/api/trails/${encodeURIComponent(body.trailId)}`, {
             cache: "no-store",
           });
           const trailBody = await jsonBody(trailResponse);
-          if (!trailResponse.ok) {
+          if (trailResponse.ok && isTrailPayload(trailBody)) {
+            loadedTrail = trailBody;
+          } else if (body.customGeometry) {
+            nextTrailWarning = "Trail details could not be loaded. The saved route on this plan is still here.";
+          } else {
             throw new Error(responseMessage(trailResponse, trailBody, "The plan loaded, but its route could not be loaded"));
           }
-          if (!isTrailPayload(trailBody)) throw new Error("The plan route response was incomplete or invalid.");
-          loadedTrail = trailBody;
         }
 
         const built = loadedTrail
@@ -246,6 +252,7 @@ function PlanDetail({ planId }: { planId: string }) {
         planRef.current = body;
         setPlan(body);
         setTrail(loadedTrail);
+        setTrailWarning(nextTrailWarning);
         setLoadError(null);
       })
       .catch((error) => {
@@ -570,6 +577,7 @@ function PlanDetail({ planId }: { planId: string }) {
       {trail && (
         <p className="text-sm text-muted-foreground">Trail: <Link href={trailPageHref(plan.trailId ?? trail.id ?? "", trail.osmType, trail.osmId)} className="text-primary hover:underline">{trail.name}</Link></p>
       )}
+      {trailWarning && <p role="status" className="text-sm text-amber-800 dark:text-amber-300">{trailWarning}</p>}
 
       {geometry && (
         <>
@@ -670,7 +678,7 @@ function PlanDetail({ planId }: { planId: string }) {
           </ul>
         )}
         {campHits.map((hit) => {
-          const reserve = httpsUrl(hit.reservationUrl);
+          const reserve = campOfficialUrl(hit);
           const added = (plan.campgroundIds ?? []).includes(hit.id);
           return (
             <div key={hit.id} className="flex items-center justify-between gap-2 rounded-lg border p-2 text-sm">
@@ -680,7 +688,7 @@ function PlanDetail({ planId }: { planId: string }) {
                   Permit: {hit.permitStatus === "required" ? "required" : hit.permitStatus === "seasonal" ? "seasonal / conditional" : hit.permitStatus === "not_required" ? "source reports not required" : "unknown"}
                   {" · "}Access: {hit.accessStatus === "allowed" ? "reported allowed" : hit.accessStatus === "restricted" ? "restricted" : "unknown"}
                 </p>
-                {reserve && <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">Official details</a>}
+                {reserve && <a href={reserve} target="_blank" rel="noopener noreferrer" className="text-xs text-primary">{hit.reservationUrl ? "Official details" : "View on OpenStreetMap"}</a>}
               </div>
               <Button
                 variant="outline"
@@ -745,8 +753,10 @@ function PlanDetail({ planId }: { planId: string }) {
             onClick={async () => {
               const lat = Number(wpLat);
               const lng = Number(wpLng);
-              if (!wpName.trim() || !Number.isFinite(lat) || !Number.isFinite(lng)) return;
-              if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+              if (!wpName.trim() || !Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+                setWpLocationStatus("Enter a waypoint name and valid latitude/longitude.");
+                return;
+              }
               const saved = await save({
                 waypoints: [
                   ...(planRef.current?.waypoints ?? []),
