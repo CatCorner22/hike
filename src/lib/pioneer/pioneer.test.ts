@@ -400,6 +400,20 @@ describe("observation rails", () => {
     })).toBe(false);
   });
 
+  it("scopes negation to the clause that matches the pack claim", () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, packReady: true, corridorReady: false },
+    };
+    expect(suggestionContradictsSnapshot(snapshot, {
+      kind: "pack",
+      say: "The offline route pack is loaded, but it doesn't include corridor context.",
+      why: "Corridor context is still missing from the prepared pack.",
+      question: "Has corridor context been stored in the offline pack?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(false);
+  });
+
   it("keeps a pack-gap question that matches the snapshot", async () => {
     const snapshot: PioneerSnapshot = {
       ...BASE_SNAPSHOT,

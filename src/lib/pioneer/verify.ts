@@ -37,13 +37,21 @@ function sentencesOf(text: string): string[] {
   return text.split(/[.!?;\n]+/).map((part) => part.trim()).filter(Boolean);
 }
 
-function sentencePolarity(
-  sentence: string,
+/** Split a sentence so negation in one clause does not poison another. */
+function clausesOf(sentence: string): string[] {
+  return sentence
+    .split(/\s*(?:[,;]|(?:\s+)(?:but|and|yet|while|although|though|however)\s+)\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function clausePolarity(
+  clause: string,
   topic: RegExp,
   cue: RegExp,
 ): "pos" | "neg" | null {
-  if (!topic.test(sentence) || !cue.test(sentence)) return null;
-  return NEGATION_RE.test(sentence) ? "neg" : "pos";
+  if (!topic.test(clause) || !cue.test(clause)) return null;
+  return NEGATION_RE.test(clause) ? "neg" : "pos";
 }
 
 const INTERROGATIVE_RE = /^(?:is|are|has|have|can|could|does|do|was|were|should)\b/i;
@@ -56,7 +64,9 @@ function anyAssertedPolarity(
 ): boolean {
   for (const sentence of sentencesOf(text)) {
     if (INTERROGATIVE_RE.test(sentence)) continue;
-    if (sentencePolarity(sentence, topic, cue) === polarity) return true;
+    for (const clause of clausesOf(sentence)) {
+      if (clausePolarity(clause, topic, cue) === polarity) return true;
+    }
   }
   return false;
 }
