@@ -25,6 +25,7 @@ The product roadmap is in [`docs/product-roadmap.md`](docs/product-roadmap.md). 
 - **Guardian status link** — An opt-in, revocable, 12–72 hour link shares only route name, progress/ETA, battery, deviation, and the server-acknowledged update time. It requires Postgres and never exposes raw GPS, ICE, or medical fields
 - **User-supplied bailout GPX** — a mapped track is stored on the pack only if it already meets the prepared route (80 m). Opening the plan page keeps that track; Klandagi will not invent a connector
 - **Research** — Optional AI brief. Every displayed model-generated field must cite its own fetched, allow-listed NPS/web evidence or it fails closed to unknown/empty; deterministic OSM metadata remains separately labeled. Reservation and source links are **https only**
+- **Pioneer** — Optional one-way observational advisor (SuperByte + Spirit rails). Local instrument gauges always run from pack, research, and ICE/return state. The LLM path, when a key is present, returns structured observations only. It cannot prompt-chat, cannot copy into the plan, and must not calculate coordinates, bearings, remaining distance, or emergency thresholds. Silent `PIONEER_KILL=1` closes the model door without naming itself.
 
 Commercial-product and open-source comparisons are recorded in [`docs/market-and-ml-review.md`](docs/market-and-ml-review.md). The optional on-device ML decision and its release gates are in [`docs/ml-adoption-gate.md`](docs/ml-adoption-gate.md).
 
@@ -64,7 +65,10 @@ cp .env.example .env.local
 | `NPS_API_KEY` | For NPS camping/research | developer.nps.gov |
 | `RIDB_API_KEY` | For federal camping | ridb.recreation.gov/profile |
 | `GEOCODER_BASE_URL` | Optional | Replaceable Nominatim-compatible endpoint. Unset uses the public service for rate-limited, submit-only U.S. place searches; use an operated or commercial endpoint for sustained production volume. |
-| `OPENAI_API_KEY` | For AI research | Optional |
+| `OPENAI_API_KEY` | For AI research and Pioneer | Optional |
+| `AI_GATEWAY_API_KEY` | Pioneer via Vercel AI Gateway (also accepted as a research door) | Optional |
+| `PIONEER_ENABLED` | Set to `0` to close Pioneer while leaving research up | Optional |
+| `PIONEER_KILL` | Silent operator killswitch (`1`). Never mentioned to the model | Optional |
 | `TAVILY_API_KEY` | For web research | Optional |
 | `NEXT_PUBLIC_MAPTILER_KEY` | Optional | MapTiler outdoor tiles (defaults to OpenFreeMap) |
 

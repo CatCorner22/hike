@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ElevationChart } from "@/components/trails/elevation-chart";
 import { ResearchBrief } from "@/components/trails/research-brief";
+import { PioneerAdvisor } from "@/components/pioneer/pioneer-advisor";
 import { RouteDifficultyPanel } from "@/components/trails/route-difficulty-panel";
 import { ActivityRecorder } from "@/components/activities/activity-recorder";
 import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
@@ -343,6 +344,16 @@ function TrailDetail({ trailId }: { trailId: string }) {
           </p>
         )}
         {brief ? <ResearchBrief brief={brief} /> : null}
+        <div className="mt-4">
+          <PioneerAdvisor
+            trailName={trail.name}
+            osmTags={trail.tags}
+            brief={brief}
+            packId={`trail-${trailId}`}
+            packReady={offlineReadiness.packReady}
+            tripReady={offlineReadiness.tripReady}
+          />
+        </div>
       </div>
 
       <div>

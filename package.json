@@ -22,6 +22,7 @@
     "test:concurrency": "node adversarial/retest-concurrency.mjs"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4.0.67",
     "@ai-sdk/openai": "^4.0.43",
     "@base-ui/react": "^1.7.0",
     "@capacitor-community/background-geolocation": "1.2.26",

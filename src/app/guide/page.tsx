@@ -52,7 +52,11 @@ export default function GuidePage() {
             finds real trails by name or by map area. Open one to see its length, climb,
             and elevation profile. Research loads on its own; use <strong>Refresh</strong>{" "}
             to update the AI summary of seasons, hazards, parking, and permits — double-check
-            anything important against the park&apos;s own site.
+            anything important against the park&apos;s own site.{" "}
+            <strong>Pioneer</strong> watches the same prep (offline pack, research freshness,
+            ICE, return time) and speaks only as observations. You cannot chat with it.
+            Local gauges still run when the model is dark. It never calculates a coordinate
+            or a bearing.
           </p>
           <p>
             Press <strong>Add to plan</strong> on a trail (or{" "}

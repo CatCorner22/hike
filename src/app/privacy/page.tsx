@@ -58,6 +58,14 @@ export default function PrivacyPage() {
             <strong>Anything you choose to send.</strong> An emergency text, a Trip Guardian
             link, a shared GPX file. These go where you send them, when you send them.
           </li>
+          <li>
+            <strong>Pioneer observations, when a model key is configured.</strong> The
+            server sends a de-identified prep snapshot — trail name, allow-listed OSM
+            tags, research unknowns, pack/readiness flags — to the model provider. It
+            does not send GPS coordinates, ICE names or phone numbers, plan-note text,
+            or medical fields. When no key is set, Pioneer stays on-device as local
+            gauges.
+          </li>
         </ul>
       </section>
 

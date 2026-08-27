@@ -30,6 +30,7 @@ Klandagi should compete as a safety-first wilderness decision-support and contin
 | Printable leave-behind | Delivered baseline | A print-ready or downloadable trip card carries the route, return deadline, ICE information, route endpoints when geometry is available, and the explicit silence-is-not-distress disclaimer. |
 | Field waypoints | Delivered text/photo baseline | Durable source-labeled marks, privacy-scrubbed bounded photos, edit/delete/undo, and GeoJSON export ship. Voice notes remain behind the ML adoption gate. |
 | Activity recording and export | Delivered baseline | Fixes are queued before upload, local/server identity is stable, Stop drains pending saves, hard-reload recovery is explicitly paused, and finished activities/navigation tracks export as GPX. |
+| Pioneer observational advisor | Delivered baseline | SuperByte/Spirit rails: one-way observations, local instrument gauges, silent kill, multi-read consensus. AI must not calculate coordinates, bearings, remaining distance, or emergency thresholds. Not mounted on the live navigate HUD. |
 | Optional accounts/sync, complete terrain tiles, smoke/AQI, 3D/native/watch | Planned | These require separate product, licensing, operational, and physical-device validation; they are not represented as completed. |
 
 ### P0 — current tranche

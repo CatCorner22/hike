@@ -61,7 +61,8 @@ describe("a deployment says whether it can do its job", () => {
       (check) => check.name === "optional-keys",
     )?.detail;
     expect(detail).toMatch(/NPS_API_KEY/);
-    expect(detail).toMatch(/OPENAI_API_KEY \(the trail research brief\)/);
+    expect(detail).toMatch(/OPENAI_API_KEY \(the trail research brief and Pioneer observations\)/);
+    expect(detail).toMatch(/AI_GATEWAY_API_KEY \(Pioneer observations through Vercel AI Gateway\)/);
   });
 });
 
