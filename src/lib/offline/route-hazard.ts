@@ -1,3 +1,5 @@
+import { haversineMeters as sharedHaversineMeters, isFinitePosition } from "@/lib/geo/coords";
+
 export interface RouteSamplePoint {
   distanceMeters: number;
   lat: number;
@@ -15,27 +17,7 @@ export interface HazardObservation {
 }
 
 function haversineMeters(a: [number, number], b: [number, number]): number {
-  const r = 6_371_000;
-  const toRad = Math.PI / 180;
-  const dLat = (b[1] - a[1]) * toRad;
-  const dLng = (b[0] - a[0]) * toRad;
-  const lat1 = a[1] * toRad;
-  const lat2 = b[1] * toRad;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * r * Math.asin(Math.sqrt(h));
-}
-
-function isFinitePosition(position: unknown): position is GeoJSON.Position {
-  return (
-    Array.isArray(position) &&
-    position.length >= 2 &&
-    Number.isFinite(position[0]) &&
-    Number.isFinite(position[1]) &&
-    (position[1] as number) >= -90 &&
-    (position[1] as number) <= 90 &&
-    (position[0] as number) >= -180 &&
-    (position[0] as number) <= 180
-  );
+  return sharedHaversineMeters({ lat: a[1], lng: a[0] }, { lat: b[1], lng: b[0] });
 }
 
 /**

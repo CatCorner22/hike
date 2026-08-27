@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
-import { isValidCoordinate } from "@/lib/geo/coords";
+import { isFinitePosition, isValidCoordinate } from "@/lib/geo/coords";
 
 /** Elevation is an enhancement, not a blocker: fail fast and cache an empty profile. */
 const ELEVATION_TIMEOUT_MS = 8_000;
@@ -21,17 +21,6 @@ function geometrySegments(
     (line): line is GeoJSON.Position[] =>
       Array.isArray(line) && line.length >= 2 && line.every(isFinitePosition),
   );
-}
-
-function isFinitePosition(position: unknown): position is GeoJSON.Position {
-  return Array.isArray(position) &&
-    position.length >= 2 &&
-    Number.isFinite(position[0]) &&
-    Number.isFinite(position[1]) &&
-    (position[0] as number) >= -180 &&
-    (position[0] as number) <= 180 &&
-    (position[1] as number) >= -90 &&
-    (position[1] as number) <= 90;
 }
 
 export function lineLengthMeters(

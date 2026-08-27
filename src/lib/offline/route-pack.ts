@@ -1,5 +1,6 @@
 import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
+import { haversineMeters } from "@/lib/geo/coords";
 import { createIdbOpener } from "@/lib/offline/idb-open";
 import type { PackWeather } from "@/lib/offline/pack-weather";
 import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
@@ -199,13 +200,10 @@ function validGeometry(geometry: unknown): geometry is GeoJSON.LineString | GeoJ
 }
 
 function distanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
-  const radians = Math.PI / 180;
-  const dLat = (Number(b[1]) - Number(a[1])) * radians;
-  const dLng = (Number(b[0]) - Number(a[0])) * radians;
-  const latA = Number(a[1]) * radians;
-  const latB = Number(b[1]) * radians;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6_371_000 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return haversineMeters(
+    { lat: Number(a[1]), lng: Number(a[0]) },
+    { lat: Number(b[1]), lng: Number(b[0]) },
+  );
 }
 
 export function cumulativeDistancesForGeometry(

@@ -1,4 +1,5 @@
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+import { haversineMeters } from "@/lib/geo/coords";
 import { isLongitudeInInterval } from "@/lib/geo/antimeridian";
 import type { BboxLngLat } from "@/lib/geo/bbox";
 import { heatIndexC, windChillC } from "@/lib/safety/field-ops";
@@ -103,17 +104,6 @@ interface OpenMeteoForecast {
     sunrise?: unknown;
     sunset?: unknown;
   };
-}
-
-function haversineMeters(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
-  const r = 6_371_000;
-  const toRad = Math.PI / 180;
-  const dLat = (b.lat - a.lat) * toRad;
-  const dLng = (b.lng - a.lng) * toRad;
-  const lat1 = a.lat * toRad;
-  const lat2 = b.lat * toRad;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
-  return 2 * r * Math.asin(Math.sqrt(h));
 }
 
 function optionalNumber(value: unknown): number | null {

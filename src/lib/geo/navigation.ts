@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
 import { bboxFromGeometry } from "@/lib/geo";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
-import { isValidCoordinate } from "@/lib/geo/coords";
+import { isFinitePosition, isValidCoordinate } from "@/lib/geo/coords";
 
 export interface LatLng {
   lat: number;
@@ -493,19 +493,6 @@ export function safeBbox(
     interval.maxLng + 0.004,
     Math.max(...latitudes) + 0.004,
   ];
-}
-
-function isFinitePosition(pos: unknown): pos is GeoJSON.Position {
-  return (
-    Array.isArray(pos) &&
-    pos.length >= 2 &&
-    Number.isFinite(pos[0]) &&
-    Number.isFinite(pos[1]) &&
-    (pos[0] as number) >= -180 &&
-    (pos[0] as number) <= 180 &&
-    (pos[1] as number) >= -90 &&
-    (pos[1] as number) <= 90
-  );
 }
 
 function isValidLatLng(point: unknown): point is LatLng {
