@@ -1,4 +1,5 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import type { DBSchema, IDBPDatabase } from "idb";
+import { createIdbOpener, IdbOpenBlockedError } from "@/lib/offline/idb-open";
 
 const NAV_TRACK_DB_NAME = "hike-nav-tracks";
 export const NAV_TRACK_DB_VERSION = 2;
@@ -131,8 +132,6 @@ export interface NavTrackExport {
   points: NavTrackPoint[];
 }
 
-let dbPromise: Promise<IDBPDatabase<NavTrackDB>> | null = null;
-
 /**
  * Serializes operations made by this document. IndexedDB serializes write
  * transactions across tabs; this queue additionally preserves JavaScript call
@@ -253,48 +252,36 @@ function migrateV1Sessions(event: IDBVersionChangeEvent) {
   };
 }
 
-function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<NavTrackDB>(NAV_TRACK_DB_NAME, NAV_TRACK_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction, event) {
-        const sessions =
-          oldVersion === 0
-            ? db.createObjectStore("sessions", { keyPath: "id" })
-            : transaction.objectStore("sessions");
-        if (!sessions.indexNames.contains("by-pack")) {
-          sessions.createIndex("by-pack", "packId");
-        }
-        if (!sessions.indexNames.contains("by-started-at")) {
-          sessions.createIndex("by-started-at", "startedAt");
-        }
+const navTrackDb = createIdbOpener<NavTrackDB>(NAV_TRACK_DB_NAME, NAV_TRACK_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction, event) {
+    const sessions =
+      oldVersion === 0
+        ? db.createObjectStore("sessions", { keyPath: "id" })
+        : transaction.objectStore("sessions");
+    if (!sessions.indexNames.contains("by-pack")) {
+      sessions.createIndex("by-pack", "packId");
+    }
+    if (!sessions.indexNames.contains("by-started-at")) {
+      sessions.createIndex("by-started-at", "startedAt");
+    }
 
-        if (oldVersion < 2) {
-          const points = db.createObjectStore("points", {
-            keyPath: ["sessionId", "sequence"],
-          });
-          points.createIndex("by-session", "sessionId");
-          points.createIndex("by-point-id", "pointId", { unique: true });
-          points.createIndex("by-session-source", ["sessionId", "sourceKey"], {
-            unique: true,
-          });
-          db.createObjectStore("activeSessions", { keyPath: "packId" });
-          if (oldVersion === 1) migrateV1Sessions(event);
-        }
-      },
-      blocking() {
-        const opening = dbPromise;
-        void opening?.then((db) => {
-          db.close();
-          if (dbPromise === opening) dbPromise = null;
-        });
-      },
-      terminated() {
-        dbPromise = null;
-      },
-    });
-  }
-  return dbPromise;
+    if (oldVersion < 2) {
+      const points = db.createObjectStore("points", {
+        keyPath: ["sessionId", "sequence"],
+      });
+      points.createIndex("by-session", "sessionId");
+      points.createIndex("by-point-id", "pointId", { unique: true });
+      points.createIndex("by-session-source", ["sessionId", "sourceKey"], {
+        unique: true,
+      });
+      db.createObjectStore("activeSessions", { keyPath: "packId" });
+      if (oldVersion === 1) migrateV1Sessions(event);
+    }
+  },
+});
+
+function getDb() {
+  return navTrackDb.getDb();
 }
 
 async function requireDb(): Promise<IDBPDatabase<NavTrackDB>> {
@@ -308,7 +295,9 @@ async function requireDb(): Promise<IDBPDatabase<NavTrackDB>> {
   try {
     return await opening;
   } catch (error) {
-    if (dbPromise === opening) dbPromise = null;
+    if (error instanceof IdbOpenBlockedError) {
+      throw new NavTrackStorageError("open-failed", error.message, { cause: error });
+    }
     throw new NavTrackStorageError(
       "open-failed",
       "Offline track storage could not be opened.",
@@ -455,11 +444,6 @@ export async function resumeOrStartNavSession(
   } catch (error) {
     throw storageWriteError(error);
   }
-}
-
-/** Backward-compatible id-only wrapper. It resumes an existing active session. */
-export async function startNavSession(packId: string, name: string): Promise<string> {
-  return (await resumeOrStartNavSession(packId, name)).sessionId;
 }
 
 export async function appendNavPoint(
@@ -668,13 +652,6 @@ export function formatNavTrackStorageError(error: unknown): string {
 
 /** Test-only connection reset so fake IndexedDB databases can be recreated. */
 export async function resetNavTrackDbForTests(): Promise<void> {
-  const opening = dbPromise;
-  dbPromise = null;
   operationQueue.clear();
-  if (!opening) return;
-  try {
-    (await opening).close();
-  } catch {
-    // A rejected open has no live connection to close.
-  }
+  await navTrackDb.reset();
 }

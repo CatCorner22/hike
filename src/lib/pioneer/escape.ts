@@ -73,6 +73,3 @@ export function detectEscape(text: string): EscapeHit[] {
   }
   return hits;
 }
-
-/** Model-originated escapes only. */
-export const MODEL_ESCAPE_ORIGIN = "origin=model";

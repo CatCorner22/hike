@@ -2,6 +2,21 @@ import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const renameControl = vi.hoisted(() => ({ failNext: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    async rename(from: Parameters<typeof actual.rename>[0], to: Parameters<typeof actual.rename>[1]) {
+      if (renameControl.failNext) {
+        renameControl.failNext = false;
+        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+      }
+      return actual.rename(from, to);
+    },
+  };
+});
 import {
   ActivityIdCollisionError,
   addActivityPoint,
@@ -31,11 +46,23 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  renameControl.failNext = false;
   delete process.env.LOCAL_STORE_PATH;
   await rm(directory, { recursive: true, force: true });
 });
 
 describe("local store durability", () => {
+  it("does not serve an in-memory mutation after the write fails", async () => {
+    // mutateStore used to edit the cached object in place and leave it there
+    // when writeFile/rename threw, so later reads returned phantom rows whose
+    // revision no longer matched the file — OCC then 409'd forever.
+    const plan = await createPlan({ ownerId: OWNER, name: "Original" });
+    renameControl.failNext = true;
+    await expect(updatePlan(plan.id, OWNER, { name: "Phantom" })).rejects.toMatchObject({ code: "ENOSPC" });
+    const reread = await getPlan(plan.id, OWNER);
+    expect(reread?.name).toBe("Original");
+  });
+
   it("does not lose concurrent plan writes", async () => {
     const count = 40;
     await Promise.all(

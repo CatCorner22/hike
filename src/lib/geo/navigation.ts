@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
-import { bboxFromGeometry, formatDistance } from "@/lib/geo";
+import { bboxFromGeometry } from "@/lib/geo";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
-import { isValidCoordinate } from "@/lib/geo/coords";
+import { isFinitePosition, isValidCoordinate } from "@/lib/geo/coords";
 
 export interface LatLng {
   lat: number;
@@ -35,15 +35,6 @@ export interface TrailProgress {
 
 export interface SnapHint {
   traveledMeters: number;
-}
-
-/** First usable segment only — never flatten MultiLineString (that invents connectors). */
-export function toLineString(
-  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
-): GeoJSON.LineString {
-  if (geometry.type === "LineString") return geometry;
-  const first = geometry.coordinates.find((line) => line.length >= 2) ?? [];
-  return { type: "LineString", coordinates: first };
 }
 
 export function trailLengthMeters(
@@ -479,10 +470,6 @@ export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
   return `GPS ±${meters} m (poor — canyon/trees)`;
 }
 
-export function formatRemaining(meters: number): string {
-  return formatDistance(meters);
-}
-
 export function safeBbox(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   extra?: LatLng,
@@ -506,19 +493,6 @@ export function safeBbox(
     interval.maxLng + 0.004,
     Math.max(...latitudes) + 0.004,
   ];
-}
-
-function isFinitePosition(pos: unknown): pos is GeoJSON.Position {
-  return (
-    Array.isArray(pos) &&
-    pos.length >= 2 &&
-    Number.isFinite(pos[0]) &&
-    Number.isFinite(pos[1]) &&
-    (pos[0] as number) >= -180 &&
-    (pos[0] as number) <= 180 &&
-    (pos[1] as number) >= -90 &&
-    (pos[1] as number) <= 90
-  );
 }
 
 function isValidLatLng(point: unknown): point is LatLng {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { haversineMeters as sharedHaversineMeters } from "@/lib/geo/coords";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
 import { startGeoWatch } from "@/lib/platform/geolocation";
 import { geoWatchTuning, type PowerMode } from "@/lib/safety/power-reserve";
@@ -268,15 +269,7 @@ export function useGps(mode: PowerMode = "full") {
 }
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const r = 6371000;
-  const p1 = (lat1 * Math.PI) / 180;
-  const p2 = (lat2 * Math.PI) / 180;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
-  return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return sharedHaversineMeters({ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 });
 }
 
 function bearingDegrees(lat1: number, lng1: number, lat2: number, lng2: number): number {

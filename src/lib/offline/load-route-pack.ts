@@ -4,6 +4,7 @@ import {
   getRoutePackStatus,
   packCandidateIds,
   saveRoutePack,
+  validPackTerrain,
   validPackWeather,
   type RoutePack,
 } from "@/lib/offline/route-pack";
@@ -55,6 +56,10 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
     snapshot && validOfficialAlertSnapshot(snapshot, base.id) ? snapshot : undefined;
   const keepBailouts = (routes: RoutePack["bailoutRoutes"]) =>
     routes && validBailoutRoutes(routes, base.id, base.geometry) ? routes : undefined;
+  // The relief-shading grid survives a rebuild only while it still covers the
+  // (possibly new) route bounds; a grid for the wrong hillside is worse than none.
+  const keepTerrain = (terrain: RoutePack["terrain"]) =>
+    terrain && validPackTerrain(terrain, base.bbox) ? terrain : undefined;
   return buildRoutePack({
     id: base.id,
     aliases: base.aliases,
@@ -68,6 +73,7 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
     hazardBrief: keepBrief(base.hazardBrief) ?? keepBrief(existing.hazardBrief),
     officialAlerts: keepOfficialAlerts(base.officialAlerts) ?? keepOfficialAlerts(existing.officialAlerts),
     bailoutRoutes: keepBailouts(base.bailoutRoutes) ?? keepBailouts(existing.bailoutRoutes),
+    terrain: keepTerrain(base.terrain) ?? keepTerrain(existing.terrain),
   });
 }
 

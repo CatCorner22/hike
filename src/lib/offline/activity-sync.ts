@@ -456,13 +456,6 @@ async function resolveLocalActivity(id: string): Promise<LocalActivity | null> {
   return rows.find((row) => row.remoteId === id) ?? rows.find((row) => row.id === id) ?? null;
 }
 
-/** Server ID for direct API calls; null means this local session has not synced yet. */
-export async function resolveRemoteActivityId(id: string): Promise<string | null> {
-  const local = await resolveLocalActivity(id);
-  // An ID with no local row is a legacy caller passing a server activity ID.
-  return local ? local.remoteId ?? null : id;
-}
-
 /**
  * Persist live totals locally before an optional server snapshot write.
  *

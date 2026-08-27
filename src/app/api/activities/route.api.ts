@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, hasDatabase } from "@/lib/db";
-import { activities } from "@/lib/db/schema";
+import { activities, hikePlans } from "@/lib/db/schema";
 import { errorResponse } from "@/lib/api/errors";
 import { isoDatetimeSchema, parseJsonBody, trailRefSchema } from "@/lib/api/validation";
 import { requireOwner } from "@/lib/auth/owner";
 import {
   ActivityIdCollisionError,
   createActivity,
+  getPlan,
   listActivities,
   replayActivityCreate,
 } from "@/lib/store/local";
@@ -86,6 +87,19 @@ export async function POST(request: Request) {
     }
 
     const trailId = await resolveStoredTrailId(body.trailId ?? null);
+    if (body.planId) {
+      // A missing or foreign plan used to 500 on the Postgres FK (or store
+      // silently on the JSON fallback). Ownership is required: accepting
+      // another owner's plan id would also leak whether that id exists.
+      const owned = hasDatabase()
+        ? await getDb().query.hikePlans.findFirst({
+            where: and(eq(hikePlans.id, body.planId), eq(hikePlans.ownerId, owner.ownerId)),
+          })
+        : await getPlan(body.planId, owner.ownerId);
+      if (!owned) {
+        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+      }
+    }
     if (hasDatabase()) {
       const db = getDb();
       const values = {

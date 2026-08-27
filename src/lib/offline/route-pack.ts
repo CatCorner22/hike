@@ -1,5 +1,7 @@
-import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
+import { haversineMeters } from "@/lib/geo/coords";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import type { PackWeather } from "@/lib/offline/pack-weather";
 import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
 import {
@@ -131,10 +133,12 @@ export interface RoutePackLookup {
   strippedExtras?: RoutePackExtraField[];
 }
 
-let dbPromise: Promise<IDBPDatabase<RoutePackDB>> | null = null;
-
 function canonicalIdForLegacyPack(pack: RoutePack): string {
   return pack.canonicalId || pack.aliases?.[0] || pack.id;
+}
+
+function legacyCachedAt(pack: RoutePack): string {
+  return typeof pack.cachedAt === "string" ? pack.cachedAt : "";
 }
 
 function validId(value: unknown): value is string {
@@ -196,13 +200,10 @@ function validGeometry(geometry: unknown): geometry is GeoJSON.LineString | GeoJ
 }
 
 function distanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
-  const radians = Math.PI / 180;
-  const dLat = (Number(b[1]) - Number(a[1])) * radians;
-  const dLng = (Number(b[0]) - Number(a[0])) * radians;
-  const latA = Number(a[1]) * radians;
-  const latB = Number(b[1]) * radians;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6_371_000 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return haversineMeters(
+    { lat: Number(a[1]), lng: Number(a[0]) },
+    { lat: Number(b[1]), lng: Number(b[0]) },
+  );
 }
 
 export function cumulativeDistancesForGeometry(
@@ -306,7 +307,7 @@ function validationError(pack: RoutePack | null | undefined): string | null {
  * corridor. A grid from a different route would shade the wrong hillside under
  * the right line, which is worse than shading nothing.
  */
-function validPackTerrain(
+export function validPackTerrain(
   terrain: unknown,
   packBbox: [number, number, number, number] | undefined,
 ): terrain is TerrainGrid {
@@ -410,7 +411,8 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   const packs: RoutePack[] = [];
   const aliases: RoutePackAlias[] = [];
   for (const [canonicalId, group] of groups) {
-    const source = group.find((record) => record.id === canonicalId) ?? [...group].sort((a, b) => b.cachedAt.localeCompare(a.cachedAt))[0];
+    const source = group.find((record) => record.id === canonicalId) ??
+      [...group].sort((a, b) => legacyCachedAt(b).localeCompare(legacyCachedAt(a)))[0];
     const aliasesForPack = uniqueAliases(canonicalId, group.flatMap((record) => [...(record.aliases ?? []), record.id]));
     const pack: RoutePack = { ...source, id: canonicalId, canonicalId, aliases: aliasesForPack };
     packs.push(pack);
@@ -419,41 +421,66 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   return { packs, aliases };
 }
 
-function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
-        if (!db.objectStoreNames.contains("aliases")) {
-          const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
-          aliases.createIndex("by-canonical", "canonicalId");
-        }
-        if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
-        if (oldVersion <= 0) return;
+/**
+ * A pack that made it into IndexedDB is the offline navigation source of truth,
+ * so the open itself must be resilient: never cache a failed open for the
+ * session, never hang forever on an upgrade another tab is blocking, and let go
+ * of our own connection when this tab is the one doing the blocking.
+ */
+const packDb = createIdbOpener<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
+    if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
+    if (!db.objectStoreNames.contains("aliases")) {
+      const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
+      aliases.createIndex("by-canonical", "canonicalId");
+    }
+    if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
+    if (oldVersion <= 0) return;
 
-        const nativeTransaction = unwrap(transaction);
-        const packStore = nativeTransaction.objectStore("routePacks");
-        const aliasStore = nativeTransaction.objectStore("aliases");
-        const request = packStore.getAll();
-        request.onsuccess = () => {
-          const records = request.result as RoutePack[];
-          if (oldVersion === 1) {
-            const { packs, aliases } = collapseLegacyRoutePacks(records);
-            packStore.clear();
-            packs.forEach((pack) => packStore.put(pack));
-            aliases.forEach((alias) => aliasStore.put(alias));
-            return;
-          }
-          // v2/v3 already have one canonical record. Add the explicit identity
-          // field during the same versionchange transaction; older versions are
-          // deliberately stale and must be prepared again before use.
-          records.forEach((record) => packStore.put({ ...record, canonicalId: record.id }));
-        };
-      },
-    });
-  }
-  return dbPromise;
+    const nativeTransaction = unwrap(transaction);
+    const packStore = nativeTransaction.objectStore("routePacks");
+    const aliasStore = nativeTransaction.objectStore("aliases");
+    const request = packStore.getAll();
+    // A failed read must not abort the versionchange transaction: the schema
+    // upgrade itself has already happened above, and unmigrated legacy records
+    // read as "stale" and ask for a re-prepare — recoverable. An aborted
+    // upgrade re-runs and re-fails on every later open, which bricks every
+    // saved route on the device.
+    request.onerror = (event) => {
+      event.preventDefault();
+    };
+    request.onsuccess = () => {
+      try {
+        const records = request.result as RoutePack[];
+        if (oldVersion === 1) {
+          const { packs, aliases } = collapseLegacyRoutePacks(records);
+          packStore.clear();
+          // One poisoned record (missing id, unserializable value) must not
+          // take the rest of the migration down with it.
+          packs.forEach((pack) => {
+            try { packStore.put(pack); } catch { /* skip the poisoned record */ }
+          });
+          aliases.forEach((alias) => {
+            try { aliasStore.put(alias); } catch { /* skip the poisoned pointer */ }
+          });
+          return;
+        }
+        // v2/v3 already have one canonical record. Add the explicit identity
+        // field during the same versionchange transaction; older versions are
+        // deliberately stale and must be prepared again before use.
+        records.forEach((record) => {
+          try { packStore.put({ ...record, canonicalId: record.id }); } catch { /* skip */ }
+        });
+      } catch {
+        // Leave legacy records unmigrated; they surface as "stale" and the
+        // hiker is asked to prepare again, with the database still usable.
+      }
+    };
+  },
+});
+
+function getDb() {
+  return packDb.getDb();
 }
 
 export function buildRoutePack(input: {
@@ -685,7 +712,5 @@ export function packCandidateIds(navId: string): string[] {
 
 /** Test-only reset for fake-indexeddb; not used by the application. */
 export async function resetRoutePackDbForTests() {
-  const current = dbPromise;
-  dbPromise = null;
-  if (current) (await current).close();
+  await packDb.reset();
 }

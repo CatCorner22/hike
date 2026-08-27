@@ -1,4 +1,5 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import type { DBSchema } from "idb";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import type { PaceTerrain } from "@/lib/safety/landnav";
 import { formatReport, reportField } from "@/lib/safety/report-field";
 import { roundBearing } from "@/lib/safety/astro";
@@ -21,21 +22,17 @@ interface NavLogDB extends DBSchema {
   legs: { key: string; value: NavLeg; indexes: { "by-pack": string } };
 }
 
-let dbPromise: Promise<IDBPDatabase<NavLogDB>> | null = null;
+const navLogDb = createIdbOpener<NavLogDB>("hike-navlog", 1, {
+  upgrade(db) {
+    if (!db.objectStoreNames.contains("legs")) {
+      const legs = db.createObjectStore("legs", { keyPath: "id" });
+      legs.createIndex("by-pack", "packId");
+    }
+  },
+});
 
 function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<NavLogDB>("hike-navlog", 1, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains("legs")) {
-          const legs = db.createObjectStore("legs", { keyPath: "id" });
-          legs.createIndex("by-pack", "packId");
-        }
-      },
-    });
-  }
-  return dbPromise;
+  return navLogDb.getDb();
 }
 
 export async function startNavLeg(

@@ -44,7 +44,7 @@ interface TrailData {
   name: string;
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
   bbox: [number, number, number, number];
-  center: { lat: number; lng: number };
+  center: { lat: number; lng: number } | null;
   lengthMeters?: number;
   elevationGainMeters?: number;
   difficulty?: string;

@@ -15,6 +15,8 @@ const activityPatchSchema = z.object({
   endedAt: isoDatetimeSchema.nullable().optional(),
   stats: z.record(z.string(), z.number().finite()).nullable().optional(),
   notes: z.string().max(20_000).nullable().optional(),
+}).refine((body) => "endedAt" in body || "stats" in body || "notes" in body, {
+  message: "At least one of endedAt, stats, or notes is required.",
 });
 
 /**

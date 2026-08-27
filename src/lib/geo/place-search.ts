@@ -111,8 +111,3 @@ export async function searchUsPlaces(query: string): Promise<PlaceSearchResult[]
     }];
   });
 }
-
-export function __resetGeocoderQueueForTests(): void {
-  geocoderQueue = Promise.resolve();
-  nextPublicRequestAt = 0;
-}

@@ -80,10 +80,12 @@ async function fetchCampgroundRecords(query?: string, state?: string): Promise<C
 async function persistCampgrounds(records: CampgroundRecord[]) {
   if (!hasDatabase()) return;
   const db = getDb();
+  const now = new Date();
   for (const record of records) {
-    const existing = await db.query.campgrounds.findFirst({ where: eq(campgrounds.externalId, record.externalId) });
-    if (existing) await db.update(campgrounds).set({ ...record, cachedAt: new Date() }).where(eq(campgrounds.id, existing.id));
-    else await db.insert(campgrounds).values(record);
+    await db.insert(campgrounds).values({ ...record, cachedAt: now }).onConflictDoUpdate({
+      target: campgrounds.externalId,
+      set: { ...record, cachedAt: now },
+    });
   }
 }
 

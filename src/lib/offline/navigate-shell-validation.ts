@@ -117,6 +117,16 @@ export function isValidNavigateShellDocument(
  */
 export const NAVIGATE_ASSET_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
+/**
+ * Query flag the shell warmer appends to its `/_next/static/` fetches so the
+ * service worker lets them through to the network instead of answering from
+ * the very cache the warm is refreshing. Without the bypass, re-preparing
+ * re-stored the ORIGINAL response — original `Date` header included — so a
+ * route re-prepared on day 29 of the 30-day asset window still went not-ready
+ * on day 31, and no amount of re-preparing could ever reset the clock.
+ */
+export const NAVIGATE_WARM_BYPASS_PARAM = "__klandagi_warm";
+
 export function stampNavigateShellHtml(html: string): string {
   return html.includes(NAVIGATE_SHELL_MARKER)
     ? html

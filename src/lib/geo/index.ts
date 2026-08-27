@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
-import { isValidCoordinate } from "@/lib/geo/coords";
+import { isFinitePosition, isValidCoordinate } from "@/lib/geo/coords";
 
 /** Elevation is an enhancement, not a blocker: fail fast and cache an empty profile. */
 const ELEVATION_TIMEOUT_MS = 8_000;
@@ -21,17 +21,6 @@ function geometrySegments(
     (line): line is GeoJSON.Position[] =>
       Array.isArray(line) && line.length >= 2 && line.every(isFinitePosition),
   );
-}
-
-function isFinitePosition(position: unknown): position is GeoJSON.Position {
-  return Array.isArray(position) &&
-    position.length >= 2 &&
-    Number.isFinite(position[0]) &&
-    Number.isFinite(position[1]) &&
-    (position[0] as number) >= -180 &&
-    (position[0] as number) <= 180 &&
-    (position[1] as number) >= -90 &&
-    (position[1] as number) <= 90;
 }
 
 export function lineLengthMeters(
@@ -137,33 +126,6 @@ export function computeTrackStats(
   };
 }
 
-export function computeTrackStatsWithTime(
-  points: Array<{
-    lat: number;
-    lng: number;
-    elevation?: number | null;
-    recordedAt: Date;
-  }>,
-) {
-  const base = computeTrackStats(points);
-  if (points.length < 2) return { ...base, durationSeconds: 0, avgPaceMinPerKm: 0 };
-
-  const durationSeconds =
-    (points[points.length - 1].recordedAt.getTime() -
-      points[0].recordedAt.getTime()) /
-    1000;
-
-  const avgPaceMinPerKm =
-    base.distanceMeters > 0
-      ? durationSeconds / 60 / (base.distanceMeters / 1000)
-      : 0;
-
-  return {
-    ...base,
-    durationSeconds,
-    avgPaceMinPerKm,
-  };
-}
 export function coordsToLineString(
   coordinates: Array<{ lat: number; lng: number }>,
 ): GeoJSON.LineString {

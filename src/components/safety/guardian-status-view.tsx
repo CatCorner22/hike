@@ -1,7 +1,7 @@
 "use client";
 import { apiFetch } from "@/lib/api/client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock3, RefreshCw, ShieldX } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -83,12 +83,15 @@ export function GuardianStatusView() {
   const [state, setState] = useState<ViewState>({ kind: "loading" });
   const [refreshing, setRefreshing] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const refreshGeneration = useRef(0);
 
   async function refresh(nextToken = token) {
     if (!nextToken) return;
+    const generation = ++refreshGeneration.current;
     setRefreshing(true);
     try {
       const data = await fetchStatus(nextToken);
+      if (generation !== refreshGeneration.current) return;
       setState({
         kind: "ready",
         data,
@@ -96,6 +99,7 @@ export function GuardianStatusView() {
         connectionFailed: false,
       });
     } catch (error) {
+      if (generation !== refreshGeneration.current) return;
       setState((current) => current.kind === "ready"
         ? { ...current, connectionFailed: true }
         : {
@@ -103,7 +107,7 @@ export function GuardianStatusView() {
             message: error instanceof Error ? error.message : "Guardian status is unavailable",
           });
     } finally {
-      setRefreshing(false);
+      if (generation === refreshGeneration.current) setRefreshing(false);
     }
   }
 

@@ -1,5 +1,6 @@
 import { toSouthWestNorthEast, type BboxLngLat } from "@/lib/geo/bbox";
 import { bboxFromGeometry } from "@/lib/geo";
+import { haversineMeters } from "@/lib/geo/coords";
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
 import {
   accessStatusFromOsmTags,
@@ -192,14 +193,10 @@ export async function searchTrails(
 }
 
 function endpointDistanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
-  const earthRadius = 6_371_000;
-  const toRadians = (value: number) => (value * Math.PI) / 180;
-  const dLat = toRadians(Number(b[1]) - Number(a[1]));
-  const dLng = toRadians(Number(b[0]) - Number(a[0]));
-  const latA = toRadians(Number(a[1]));
-  const latB = toRadians(Number(b[1]));
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
-  return 2 * earthRadius * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return haversineMeters(
+    { lat: Number(a[1]), lng: Number(a[0]) },
+    { lat: Number(b[1]), lng: Number(b[0]) },
+  );
 }
 
 function wayPositions(way: OverpassElement): GeoJSON.Position[] {

@@ -84,6 +84,10 @@ describe("proxy owner minting", () => {
   it("passes the request through when no secret is configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SESSION_SECRET", "");
+    // The legacy alias must be cleared too, or a machine that exports it (for
+    // example a CI or agent VM with real secrets) silently mints anyway and
+    // this test asserts against the wrong scenario.
+    vi.stubEnv("OWNER_TOKEN_SECRET", "");
     // Must not throw: failing the whole app closed here would take the offline
     // navigate shell down with it. The route handlers refuse instead.
     const response = await proxy(request("/plan", { "sec-fetch-dest": "document" }));

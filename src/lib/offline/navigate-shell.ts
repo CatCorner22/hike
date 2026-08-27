@@ -8,6 +8,7 @@ import {
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
   NAVIGATE_ASSET_MAX_AGE_SECONDS,
+  NAVIGATE_WARM_BYPASS_PARAM,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
@@ -211,7 +212,13 @@ async function warmNavigateShellOnce(): Promise<WarmNavigateShellResult> {
     const missingAssets: string[] = [];
     await Promise.all(assets.map(async (assetUrl) => {
       try {
-        const asset = await fetch(assetUrl.toString(), { cache: "no-store", credentials: "same-origin" });
+        // Fetch through the service worker's warm bypass so the response (and
+        // its Date header, which drives the 30-day readiness window) comes
+        // from the network, not from the cache this warm is refreshing. The
+        // entry is stored under the clean URL the app will actually request.
+        const fetchUrl = new URL(assetUrl.toString());
+        fetchUrl.searchParams.set(NAVIGATE_WARM_BYPASS_PARAM, "1");
+        const asset = await fetch(fetchUrl.toString(), { cache: "no-store", credentials: "same-origin" });
         if (!asset.ok) throw new Error(String(asset.status));
         await assetCache.put(assetUrl.toString(), asset);
       } catch {
@@ -257,10 +264,6 @@ async function warmNavigateShellOnce(): Promise<WarmNavigateShellResult> {
   } catch (error) {
     return fail(error instanceof Error ? error.message : "Navigation screen could not be cached.");
   }
-}
-
-export async function isNavigateShellCached(): Promise<boolean> {
-  return (await getNavigateOfflineStatus()).filesReady;
 }
 
 export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus> {

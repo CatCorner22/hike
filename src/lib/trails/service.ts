@@ -139,7 +139,16 @@ export async function listRecentTrails(limit = 10) {
 export async function resolveStoredTrailId(trailId: string | null | undefined): Promise<string | null> {
   if (!trailId) return null;
   const osm = parseOsmTrailId(trailId);
-  if (!osm) return trailId;
+  if (!osm) {
+    // A well-formed UUID that is not a stored trail used to pass through and
+    // then die on the Postgres FK as a 500 — while the JSON fallback stored
+    // it silently. Verify the row exists when we have a trails table.
+    if (hasDatabase()) {
+      const existing = await getTrailById(trailId);
+      return existing ? existing.id : null;
+    }
+    return trailId;
+  }
   if (!hasDatabase()) return trailId;
   try {
     const created = await findOrCreateTrail(osm.osmId, osm.osmType);

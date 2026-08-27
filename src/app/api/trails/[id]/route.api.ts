@@ -7,6 +7,15 @@ import { getTrailDetail } from "@/lib/osm/overpass";
 import { rateLimit } from "@/lib/api/rate-limit";
 import { withDeadline } from "@/lib/api/outbound";
 
+function bboxCenter(bbox: unknown): { lat: number; lng: number } | null {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  if (![minLng, minLat, maxLng, maxLat].every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return null;
+  }
+  return { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 };
+}
+
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const limited = rateLimit(request, "trail-detail", 15);
   if (limited) return limited;
@@ -19,7 +28,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
         const bbox = (cached.bbox as number[] | null) ?? [];
         return NextResponse.json({
           id: cached.id, osmId: cached.osmId, osmType: cached.osmType, name: cached.name, geometry: cached.geometry,
-          bbox: cached.bbox, center: { lat: (bbox[1] + bbox[3]) / 2 || 0, lng: (bbox[0] + bbox[2]) / 2 || 0 },
+          bbox: cached.bbox, center: bboxCenter(bbox),
           lengthMeters: cached.lengthMeters, elevationGainMeters: cached.elevationGainMeters,
           difficulty: cached.difficulty, sacScale: cached.sacScale, network: cached.network,
           wikipediaUrl: cached.wikipediaUrl, tags: cached.tags,
@@ -37,7 +46,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const bbox = (trail.bbox as number[] | null) ?? [];
     return NextResponse.json({
       id: trail.id, osmId: trail.osmId, osmType: trail.osmType, name: trail.name, geometry: trail.geometry,
-      bbox: trail.bbox, center: { lat: (bbox[1] + bbox[3]) / 2 || 0, lng: (bbox[0] + bbox[2]) / 2 || 0 },
+      bbox: trail.bbox, center: bboxCenter(bbox),
       lengthMeters: trail.lengthMeters, elevationGainMeters: trail.elevationGainMeters,
       difficulty: trail.difficulty, sacScale: trail.sacScale, network: trail.network,
       wikipediaUrl: trail.wikipediaUrl, tags: trail.tags,
