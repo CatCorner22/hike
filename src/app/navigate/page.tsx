@@ -43,6 +43,7 @@ import { parseNavigateTarget } from "@/lib/ids";
 import { planDetailHref, trailDetailHref } from "@/lib/routes";
 import { isOnline } from "@/lib/platform/network";
 import {
+  enrichRoutePack,
   isLikelyOffline,
   loadCachedRoutePack,
   packFromPlanApi,
@@ -461,7 +462,10 @@ function NavigateScreen({ navId }: { navId: string }) {
         if (target.kind === "trail") {
           const res = await withNetworkTimeout((signal) => apiFetch(`/api/trails/${encodeURIComponent(target.id)}`, { signal }), 8000);
           if (!res.ok) throw new Error("Trail not found on server");
-          const pack = await persistRoutePack(packFromTrailApi(navId, await res.json()));
+          // Merge with the cached pack: a bare server rebuild must not delete the
+          // hazard brief, official alerts, terrain, corridor context, weather,
+          // or the hiker's own bailout tracks that Prepare offline stored.
+          const pack = await persistRoutePack(enrichRoutePack(packFromTrailApi(navId, await res.json()), cached));
           complete({ status: "ready", pack, source: "network" });
           return;
         }
@@ -475,7 +479,7 @@ function NavigateScreen({ navId }: { navId: string }) {
         }
         const built = packFromPlanApi(navId, plan, trail);
         if (!built) throw new Error("Plan has no route geometry");
-        complete({ status: "ready", pack: await persistRoutePack(built), source: "network" });
+        complete({ status: "ready", pack: await persistRoutePack(enrichRoutePack(built, cached)), source: "network" });
       } catch (error) {
         let retry = cached;
         if (!retry) {
@@ -1343,6 +1347,15 @@ function NavigateScreen({ navId }: { navId: string }) {
           compact
           snapshot={loadState.status === "ready" ? loadState.pack.officialAlerts : null}
         />
+        {/* Absence means "never checked," not "all clear" — without this line a
+            pack saved before those checks (or after a failed prepare) rendered
+            nothing, indistinguishable from the feature not existing. */}
+        {loadState.status === "ready" && !loadState.pack.hazardBrief && !loadState.pack.officialAlerts && (
+          <p className="mb-2 text-xs text-muted-foreground">
+            No forecast or official-alert snapshot is saved with this route — conditions were not
+            checked, which is not an all-clear. Re-prepare offline while you have signal to add them.
+          </p>
+        )}
         <NextDecisionCard
           point={nextDecision}
           aheadMeters={

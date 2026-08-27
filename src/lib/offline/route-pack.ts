@@ -136,6 +136,10 @@ function canonicalIdForLegacyPack(pack: RoutePack): string {
   return pack.canonicalId || pack.aliases?.[0] || pack.id;
 }
 
+function legacyCachedAt(pack: RoutePack): string {
+  return typeof pack.cachedAt === "string" ? pack.cachedAt : "";
+}
+
 function validId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 256;
 }
@@ -305,7 +309,7 @@ function validationError(pack: RoutePack | null | undefined): string | null {
  * corridor. A grid from a different route would shade the wrong hillside under
  * the right line, which is worse than shading nothing.
  */
-function validPackTerrain(
+export function validPackTerrain(
   terrain: unknown,
   packBbox: [number, number, number, number] | undefined,
 ): terrain is TerrainGrid {
@@ -409,7 +413,8 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   const packs: RoutePack[] = [];
   const aliases: RoutePackAlias[] = [];
   for (const [canonicalId, group] of groups) {
-    const source = group.find((record) => record.id === canonicalId) ?? [...group].sort((a, b) => b.cachedAt.localeCompare(a.cachedAt))[0];
+    const source = group.find((record) => record.id === canonicalId) ??
+      [...group].sort((a, b) => legacyCachedAt(b).localeCompare(legacyCachedAt(a)))[0];
     const aliasesForPack = uniqueAliases(canonicalId, group.flatMap((record) => [...(record.aliases ?? []), record.id]));
     const pack: RoutePack = { ...source, id: canonicalId, canonicalId, aliases: aliasesForPack };
     packs.push(pack);
@@ -438,19 +443,40 @@ const packDb = createIdbOpener<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERS
     const packStore = nativeTransaction.objectStore("routePacks");
     const aliasStore = nativeTransaction.objectStore("aliases");
     const request = packStore.getAll();
+    // A failed read must not abort the versionchange transaction: the schema
+    // upgrade itself has already happened above, and unmigrated legacy records
+    // read as "stale" and ask for a re-prepare — recoverable. An aborted
+    // upgrade re-runs and re-fails on every later open, which bricks every
+    // saved route on the device.
+    request.onerror = (event) => {
+      event.preventDefault();
+    };
     request.onsuccess = () => {
-      const records = request.result as RoutePack[];
-      if (oldVersion === 1) {
-        const { packs, aliases } = collapseLegacyRoutePacks(records);
-        packStore.clear();
-        packs.forEach((pack) => packStore.put(pack));
-        aliases.forEach((alias) => aliasStore.put(alias));
-        return;
+      try {
+        const records = request.result as RoutePack[];
+        if (oldVersion === 1) {
+          const { packs, aliases } = collapseLegacyRoutePacks(records);
+          packStore.clear();
+          // One poisoned record (missing id, unserializable value) must not
+          // take the rest of the migration down with it.
+          packs.forEach((pack) => {
+            try { packStore.put(pack); } catch { /* skip the poisoned record */ }
+          });
+          aliases.forEach((alias) => {
+            try { aliasStore.put(alias); } catch { /* skip the poisoned pointer */ }
+          });
+          return;
+        }
+        // v2/v3 already have one canonical record. Add the explicit identity
+        // field during the same versionchange transaction; older versions are
+        // deliberately stale and must be prepared again before use.
+        records.forEach((record) => {
+          try { packStore.put({ ...record, canonicalId: record.id }); } catch { /* skip */ }
+        });
+      } catch {
+        // Leave legacy records unmigrated; they surface as "stale" and the
+        // hiker is asked to prepare again, with the database still usable.
       }
-      // v2/v3 already have one canonical record. Add the explicit identity
-      // field during the same versionchange transaction; older versions are
-      // deliberately stale and must be prepared again before use.
-      records.forEach((record) => packStore.put({ ...record, canonicalId: record.id }));
     };
   },
 });
