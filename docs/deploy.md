@@ -26,7 +26,7 @@ talks to the same API over HTTPS with a bearer token.
    | `SESSION_SECRET` | 32+ random bytes (`openssl rand -base64 32`) | a DIFFERENT random value | REQUIRED in production; rotating it logs every device out (each mints a fresh identity and old rows become unreachable) |
    | `TRUST_PROXY_HEADERS` | `true` | `true` | Vercel overwrites X-Forwarded-For, so this is safe AND necessary — without it the rate limiter lumps every caller into one bucket |
    | `ALLOWED_APP_ORIGINS` | *(empty)* | *(empty)* | `capacitor://localhost` + `https://localhost` are built in; add extras here only if needed |
-   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | optional | every one degrades gracefully when absent |
+   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | optional | every one degrades gracefully when absent. Pioneer opens from either AI key; `PIONEER_ENABLED=0` or `PIONEER_KILL=1` closes only the model door. |
 
 4. **Schema push** (from any machine with the repo):
    `DATABASE_URL='<neon string>' npx drizzle-kit push`

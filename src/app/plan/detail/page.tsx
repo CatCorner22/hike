@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NavigateLink } from "@/components/offline/navigate-link";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { PreDeparturePanel } from "@/components/offline/pre-departure-panel";
+import { PioneerAdvisor } from "@/components/pioneer/pioneer-advisor";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { enrichRoutePack, packFromPlanApi, persistRoutePack } from "@/lib/offline/load-route-pack";
 import { getRoutePack } from "@/lib/offline/route-pack";
@@ -596,6 +597,16 @@ function PlanDetail({ planId }: { planId: string }) {
             planNotes={plan.notes}
             geometry={geometry}
             waypoints={plan.waypoints}
+          />
+          <PioneerAdvisor
+            trailName={trail?.name ?? plan.name}
+            osmTags={trail?.tags}
+            packId={`plan-${plan.id}`}
+            packReady={offlineReadiness.packReady}
+            tripReady={offlineReadiness.tripReady}
+            planNotes={plan.notes}
+            waypointCount={plan.waypoints?.length ?? 0}
+            plannedDate={plan.plannedDate}
           />
         </>
       )}

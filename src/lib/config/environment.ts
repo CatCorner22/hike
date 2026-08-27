@@ -153,7 +153,8 @@ function appOriginsCheck(env: Environment): ConfigCheck {
 const OPTIONAL_KEYS: Array<{ key: string; loses: string }> = [
   { key: "NPS_API_KEY", loses: "National Park Service alerts and campground detail" },
   { key: "RIDB_API_KEY", loses: "Recreation.gov campground detail" },
-  { key: "OPENAI_API_KEY", loses: "the trail research brief" },
+  { key: "OPENAI_API_KEY", loses: "the trail research brief and Pioneer observations" },
+  { key: "AI_GATEWAY_API_KEY", loses: "Pioneer observations through Vercel AI Gateway" },
   { key: "TAVILY_API_KEY", loses: "web evidence behind the research brief" },
   { key: "NEXT_PUBLIC_MAPTILER_KEY", loses: "the online basemap" },
   { key: "ELEVATION_API_URL", loses: "a self-hosted elevation service (the public open-elevation instance is used instead)" },

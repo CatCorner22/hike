@@ -54,6 +54,11 @@ export default function TermsPage() {
             The medical, avalanche and survival references are training aids. They are not
             medical direction and they do not replace training.
           </li>
+          <li>
+            Pioneer is experimental advisory text. Local gauges are deterministic. The
+            optional model does not calculate coordinates, bearings, remaining distance,
+            or emergency thresholds, and it is not a go/no-go order.
+          </li>
         </ul>
       </section>
 

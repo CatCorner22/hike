@@ -47,7 +47,7 @@ moment the deployment does.
    | Secret | Value | Why |
    |---|---|---|
    | `SESSION_SECRET` | 32+ random bytes — run `openssl rand -base64 32` in the shell | **Required.** The server fails closed without it. Rotating it logs every device out: each mints a fresh identity and old rows become unreachable. |
-   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | All optional. Every one degrades gracefully when absent — which also means a dead key is invisible, so re-check trail search after rotating one. `/api/health` lists which of them are unset and what each one costs. |
+   | `NPS_API_KEY`, `RIDB_API_KEY`, `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY`, `TAVILY_API_KEY`, `NEXT_PUBLIC_MAPTILER_KEY` | as available | All optional. Every one degrades gracefully when absent — which also means a dead key is invisible, so re-check trail search after rotating one. Pioneer opens from either AI key. `/api/health` lists which of them are unset and what each one costs. |
    | `ELEVATION_API_URL` | a self-hosted open-elevation instance | Optional. The offline map shades its relief from an elevation grid sampled when a route is prepared, and the default is the free public open-elevation instance — which goes down, rate-limits, and is unreachable from some networks. Point this at your own copy if you have one. Must be https. |
 
    **Do not set `ALLOW_LOCAL_STORE_IN_PRODUCTION`.** It exists as a
