@@ -185,6 +185,16 @@ describe("stable local activity identity", () => {
     });
   });
 
+  it("keeps a local recording when the server rejects start, and names the server error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => json({ error: "Invalid trail." }, 400)));
+    const started = await beginActivity({ trailId: "not-a-trail" });
+    expect(started).toMatchObject({
+      offline: true,
+      serverError: "Invalid trail.",
+    });
+    expect(await getLocalActivity(started.id)).toMatchObject({ id: started.id });
+  });
+
   it("maps an offline session and its queued point to one remote activity before finishing", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => {
       throw new Error("offline");

@@ -15,6 +15,7 @@ import { formatDistance, formatElevation, lineLengthMeters } from "@/lib/geo";
 import { safeFilename } from "@/lib/safety/field";
 import { saveTextFile } from "@/lib/platform/save-file";
 import { NavigateLink } from "@/components/offline/navigate-link";
+import { formatOfflineRouteStorageError } from "@/components/offline/offline-readiness";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
 import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
@@ -87,6 +88,7 @@ function TrailDetail({ trailId }: { trailId: string }) {
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [gpxBusy, setGpxBusy] = useState(false);
   const [gpxError, setGpxError] = useState<string | null>(null);
+  const [packWarning, setPackWarning] = useState<string | null>(null);
   const offlineReadiness = useOfflinePackReady(trail ? `trail-${trailId}` : null);
 
   useEffect(() => {
@@ -99,8 +101,9 @@ function TrailDetail({ trailId }: { trailId: string }) {
         if (data.geometry) {
           try {
             await persistRoutePack(packFromTrailApi(`trail-${trailId}`, data));
-          } catch {
-            /* Navigate stays gated until a valid pack is on device */
+            setPackWarning(null);
+          } catch (persistError) {
+            setPackWarning(formatOfflineRouteStorageError(persistError).message);
           }
         }
       } catch (e) {
@@ -232,6 +235,7 @@ function TrailDetail({ trailId }: { trailId: string }) {
           </div>
           {planError && <p className="mt-2 text-sm text-destructive">{planError}</p>}
           {gpxError && <p className="mt-2 text-sm text-destructive">{gpxError}</p>}
+          {packWarning && <p className="mt-2 text-sm text-amber-800 dark:text-amber-300">{packWarning}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button onClick={createPlan} disabled={creatingPlan}>

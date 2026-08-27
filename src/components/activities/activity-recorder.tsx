@@ -349,7 +349,9 @@ export function ActivityRecorder({
     statusRef.current = "recording";
     setActivityId(started.id);
     setOffline(started.offline);
-    if (started.offline) {
+    if (started.serverError) {
+      setError(`Recording on this phone only. ${started.serverError}`);
+    } else if (started.offline) {
       setError("Started offline on this phone. Points queue locally and replay when you are back online.");
     }
     startTimeRef.current = Date.now();
