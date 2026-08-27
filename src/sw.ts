@@ -10,6 +10,7 @@ import {
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
   NAVIGATE_ASSET_MAX_AGE_SECONDS,
+  NAVIGATE_WARM_BYPASS_PARAM,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
 
@@ -27,8 +28,11 @@ function offlineDocument(misses: string[] = []): Response {
   // each cache attempt missed, failed validation, errored, or timed out. Machine- and
   // human-readable via a data attribute; invisible to the hiker.
   const trail = misses.join("|").slice(0, 400).replace(/[^a-zA-Z0-9|>:_-]/g, "");
+  // /offline and /saved are precached with per-build revisions, so they remain
+  // reachable even here: a hiker whose shell was evicted but whose route packs
+  // survived deserves a path to them, not a dead end.
   return new Response(
-    `<!doctype html><html><head><meta charset="utf-8"><title>Offline navigation</title></head><body data-shell-miss="${trail}"><main><h1>Offline navigation is unavailable</h1><p>This navigation screen was not saved before service was lost. Reconnect, then prepare the matching route while you have signal.</p></main></body></html>`,
+    `<!doctype html><html><head><meta charset="utf-8"><title>Offline navigation</title></head><body data-shell-miss="${trail}"><main><h1>Offline navigation is unavailable</h1><p>This navigation screen was not saved before service was lost. Reconnect, then prepare the matching route while you have signal.</p><p><a href="/saved">Open routes saved on this device</a> · <a href="/offline">Offline home</a></p></main></body></html>`,
     { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
   );
 }
@@ -197,12 +201,27 @@ type NetworkNavigateDocument = {
   trusted: boolean;
 };
 
+/**
+ * The shell document is plan-agnostic, so store it under the bare path. Keying
+ * by the full URL grew one duplicate HTML copy per `?target=` visited online
+ * (reads already use `ignoreSearch`), pruned only when the user next prepared.
+ */
+function navigateShellCacheKey(requestUrl: string): string {
+  try {
+    const url = new URL(requestUrl);
+    url.search = "";
+    return url.toString();
+  } catch {
+    return requestUrl;
+  }
+}
+
 async function persistNavigateDocument(request: Request, marked: Response): Promise<void> {
   await resolveWithin(
     (async () => {
       try {
         const cache = await caches.open(NAVIGATE_SHELL_CACHE);
-        await cache.put(request.url, marked);
+        await cache.put(navigateShellCacheKey(request.url), marked);
       } catch {
         /* the live response remains usable, but was not durably prepared */
       }
@@ -380,6 +399,15 @@ const serwist = new Serwist({
         request.headers.get("Next-Router-Prefetch"),
       ),
       handler: navigateShellHandler,
+    },
+    {
+      // The shell warmer's refresh fetches. They must reach the network — a
+      // CacheFirst answer here would hand the warm back the very entry it is
+      // trying to refresh, `Date` header and all, so re-preparing could never
+      // reset the 30-day asset clock.
+      matcher: ({ url }) =>
+        url.pathname.startsWith("/_next/static/") && url.searchParams.has(NAVIGATE_WARM_BYPASS_PARAM),
+      handler: new NetworkOnly(),
     },
     {
       matcher: ({ url }) => url.pathname.startsWith("/_next/static/"),
