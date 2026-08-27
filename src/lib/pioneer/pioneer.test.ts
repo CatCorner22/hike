@@ -352,6 +352,54 @@ describe("observation rails", () => {
     })).toBe(true);
   });
 
+  it("rejects when any matching sentence contradicts the snapshot, not only the last one", () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, packReady: false },
+    };
+    expect(suggestionContradictsSnapshot(snapshot, {
+      kind: "pack",
+      say: "The offline pack is on this device.",
+      why: "The offline pack is not ready.",
+      question: "Has this route been prepared offline?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(true);
+  });
+
+  it("treats trip and corridor gaps as incomplete for overall readiness claims", () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, tripReady: false, corridorReady: false },
+    };
+    expect(suggestionContradictsSnapshot(snapshot, {
+      kind: "completeness",
+      say: "The trip is ready to go.",
+      why: "Launch assets look complete.",
+      question: "Has a land manager confirmed the start window?",
+      source: "Klandagi instrument",
+    })).toBe(true);
+  });
+
+  it("treats hasn't/doesn't as negation when checking pack claims", () => {
+    expect(suggestionContradictsSnapshot(BASE_SNAPSHOT, {
+      kind: "pack",
+      say: "The offline route pack hasn't been loaded.",
+      why: "A missing pack blocks offline navigation.",
+      question: "Has this route been prepared offline?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(true);
+    expect(suggestionContradictsSnapshot({
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, packReady: false },
+    }, {
+      kind: "pack",
+      say: "The offline route pack hasn't been loaded.",
+      why: "A missing pack blocks offline navigation.",
+      question: "Has this route been prepared offline?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(false);
+  });
+
   it("keeps a pack-gap question that matches the snapshot", async () => {
     const snapshot: PioneerSnapshot = {
       ...BASE_SNAPSHOT,
