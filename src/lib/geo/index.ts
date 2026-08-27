@@ -137,33 +137,6 @@ export function computeTrackStats(
   };
 }
 
-export function computeTrackStatsWithTime(
-  points: Array<{
-    lat: number;
-    lng: number;
-    elevation?: number | null;
-    recordedAt: Date;
-  }>,
-) {
-  const base = computeTrackStats(points);
-  if (points.length < 2) return { ...base, durationSeconds: 0, avgPaceMinPerKm: 0 };
-
-  const durationSeconds =
-    (points[points.length - 1].recordedAt.getTime() -
-      points[0].recordedAt.getTime()) /
-    1000;
-
-  const avgPaceMinPerKm =
-    base.distanceMeters > 0
-      ? durationSeconds / 60 / (base.distanceMeters / 1000)
-      : 0;
-
-  return {
-    ...base,
-    durationSeconds,
-    avgPaceMinPerKm,
-  };
-}
 export function coordsToLineString(
   coordinates: Array<{ lat: number; lng: number }>,
 ): GeoJSON.LineString {

@@ -1,5 +1,5 @@
 import * as turf from "@turf/turf";
-import { bboxFromGeometry, formatDistance } from "@/lib/geo";
+import { bboxFromGeometry } from "@/lib/geo";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 import { isValidCoordinate } from "@/lib/geo/coords";
 
@@ -35,15 +35,6 @@ export interface TrailProgress {
 
 export interface SnapHint {
   traveledMeters: number;
-}
-
-/** First usable segment only — never flatten MultiLineString (that invents connectors). */
-export function toLineString(
-  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
-): GeoJSON.LineString {
-  if (geometry.type === "LineString") return geometry;
-  const first = geometry.coordinates.find((line) => line.length >= 2) ?? [];
-  return { type: "LineString", coordinates: first };
 }
 
 export function trailLengthMeters(
@@ -477,10 +468,6 @@ export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
   if (accuracyMeters <= 8) return `GPS ±${meters} m (good)`;
   if (accuracyMeters <= 20) return `GPS ±${meters} m (fair)`;
   return `GPS ±${meters} m (poor — canyon/trees)`;
-}
-
-export function formatRemaining(meters: number): string {
-  return formatDistance(meters);
 }
 
 export function safeBbox(

@@ -134,12 +134,3 @@ export function getDb(): Database {
 export function hasDatabase() {
   return Boolean(process.env.DATABASE_URL);
 }
-
-/** Test-only: drop the memoised client so a different DATABASE_URL takes effect. */
-export async function __resetDbForTests(): Promise<void> {
-  db = null;
-  announced = false;
-  const closing = pool;
-  pool = null;
-  await closing?.end();
-}

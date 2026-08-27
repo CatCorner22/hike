@@ -446,11 +446,6 @@ export async function resumeOrStartNavSession(
   }
 }
 
-/** Backward-compatible id-only wrapper. It resumes an existing active session. */
-export async function startNavSession(packId: string, name: string): Promise<string> {
-  return (await resumeOrStartNavSession(packId, name)).sessionId;
-}
-
 export async function appendNavPoint(
   sessionId: string,
   input: NavTrackPointInput,

@@ -8,7 +8,6 @@
 // code paths, database schemas, or any other cage detail. A pioneer that knows
 // the shape of its cage will test the bars.
 
-export const PIONEER_NAME = "Pioneer";
 export const PIONEER_PROMPT_VERSION = "1.0.0";
 
 export const PIONEER_DISCLAIMER_FOR_PROMPT =

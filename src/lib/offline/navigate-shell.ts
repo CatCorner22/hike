@@ -266,10 +266,6 @@ async function warmNavigateShellOnce(): Promise<WarmNavigateShellResult> {
   }
 }
 
-export async function isNavigateShellCached(): Promise<boolean> {
-  return (await getNavigateOfflineStatus()).filesReady;
-}
-
 export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus> {
   if (isNative()) return { ...NATIVE_BUNDLED_STATUS };
   const shellUrl = navigateUrl();

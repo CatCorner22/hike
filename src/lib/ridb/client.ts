@@ -78,14 +78,6 @@ export async function searchFacilities(params: {
   return data?.RECDATA ?? [];
 }
 
-export async function getFacilityCampsites(facilityId: string): Promise<RidbCampsite[]> {
-  const data = await ridbFetch<{ RECDATA: RidbCampsite[] }>(
-    `/facilities/${facilityId}/campsites`,
-    { limit: "100" },
-  );
-  return data?.RECDATA ?? [];
-}
-
 export async function searchPermitEntrances(params: {
   query?: string;
   limit?: number;

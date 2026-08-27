@@ -58,7 +58,3 @@ export function resolveReads(env: Record<string, string | undefined> = process.e
   if (!Number.isInteger(n)) return 1;
   return Math.min(3, Math.max(1, n));
 }
-
-export function aiEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  return getPioneerConfig(env).enabled;
-}
