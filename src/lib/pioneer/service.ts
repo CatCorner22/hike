@@ -10,7 +10,7 @@ import {
 } from "./instrument";
 import { pioneerModel } from "./provider";
 import { PIONEER_PROMPT_VERSION, PIONEER_SYSTEM_PROMPT } from "./prompts";
-import { isAllowedSource, isRegulatorySource } from "./public";
+import { isRegulatorySource } from "./public";
 import {
   hasStrongClaim,
   resolveModes,
@@ -25,6 +25,7 @@ import {
   type PioneerSnapshot,
   type PioneerSuggestion,
 } from "./schemas";
+import { verifySuggestion } from "./verify";
 
 export interface CorroboratedSuggestion extends PioneerSuggestion {
   corroboration?: { seen: number; reads: number };
@@ -66,10 +67,6 @@ export type GeneratePioneerFn = (args: {
   prompt: string;
 }) => Promise<unknown>;
 
-const EVIDENCE_REQUIRED_KINDS = new Set(["research", "hazard"]);
-
-const COORDINATE_RE = /\b-?\d{1,3}\.\d{3,}\b|\b\d{1,3}°/;
-
 function instrumentOutcome(
   snapshot: PioneerSnapshot,
   modes: PioneerMode[],
@@ -89,27 +86,6 @@ function instrumentOutcome(
     modes,
     profile,
   };
-}
-
-function verifySuggestion(parseContext: string, suggestion: PioneerSuggestion): string | null {
-  if (!isAllowedSource(suggestion.source)) return "source-not-allowed";
-  if (COORDINATE_RE.test(suggestion.say) || COORDINATE_RE.test(suggestion.why)) {
-    return "nav-math";
-  }
-  if (detectEscape(`${suggestion.say} ${suggestion.why} ${suggestion.question ?? ""}`).length > 0) {
-    return "escape-model";
-  }
-  if (suggestion.kind === "pack" || suggestion.kind === "readiness" || suggestion.kind === "completeness") {
-    const question = suggestion.question || suggestion.say;
-    if (!/\?/.test(question)) return "gap-not-question";
-  }
-  if (EVIDENCE_REQUIRED_KINDS.has(suggestion.kind) && !suggestion.evidence) {
-    return "missing-evidence";
-  }
-  if (suggestion.evidence && !parseContext.includes(suggestion.evidence)) {
-    return "ungrounded-evidence";
-  }
-  return null;
 }
 
 function consensusKey(suggestion: PioneerSuggestion): string {
@@ -238,11 +214,18 @@ export async function runPioneer(
   const successful = results.filter(
     (result): result is Extract<(typeof results)[number], { ok: true }> => result.ok,
   );
-  if (successful.length === 0) {
-    return instrumentOutcome(snapshot, modes, profile.id, ["model-error"]);
+  if (successful.length < profile.minReads) {
+    return instrumentOutcome(
+      snapshot,
+      modes,
+      profile.id,
+      successful.length === 0 ? ["model-error"] : ["insufficient-reads"],
+    );
   }
 
-  const needed = profile.unanimous ? successful.length : Math.floor(successful.length / 2) + 1;
+  const needed = profile.unanimous
+    ? successful.length
+    : Math.floor(successful.length / 2) + 1;
   const byKey = new Map<string, { suggestion: PioneerSuggestion; seen: number }>();
   for (const read of successful) {
     const seenThisRead = new Set<string>();
@@ -265,7 +248,7 @@ export async function runPioneer(
       codes.push("no-consensus");
       continue;
     }
-    const reason = verifySuggestion(parseContext, suggestion);
+    const reason = verifySuggestion(parseContext, snapshot, suggestion);
     if (reason === "escape-model") {
       return {
         ok: false,

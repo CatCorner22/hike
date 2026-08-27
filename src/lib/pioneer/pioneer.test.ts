@@ -19,6 +19,11 @@ import { hasStrongClaim, resolveModes, resolveProfile } from "./router";
 import { validatePioneerResponse, type PioneerSnapshot } from "./schemas";
 import { runPioneer, type GeneratePioneerFn } from "./service";
 import { assemblePioneerSnapshot, redactNavMath, researchSliceFromBrief } from "./snapshot";
+import {
+  suggestionContradictsSnapshot,
+  suggestionHasCoordinates,
+  verifySuggestion,
+} from "./verify";
 
 const KEY_ON = { AI_GATEWAY_API_KEY: "test-key" };
 
@@ -178,6 +183,43 @@ describe("escape backstops", () => {
     if (!outcome.ok) expect(outcome.code).toBe("escape-model");
   });
 
+  it("discards a suggestion that hides a coordinate only in the question", async () => {
+    const generate: GeneratePioneerFn = async () => ({
+      suggestions: [
+        {
+          kind: "completeness",
+          say: "A meeting point is listed.",
+          why: "A named place is not a coordinate.",
+          question: "Is the meeting point 35.1234?",
+          source: "Klandagi instrument",
+        },
+      ],
+    });
+    const outcome = await runPioneer(BASE_SNAPSHOT, { env: KEY_ON, generate });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.source).toBe("instrument");
+      expect(JSON.stringify(outcome.suggestions)).not.toMatch(/35\.1234/);
+    }
+  });
+
+  it("scans every displayed field for coordinates", () => {
+    expect(suggestionHasCoordinates({
+      kind: "completeness",
+      say: "A meeting point is listed.",
+      why: "Named places beat coordinates.",
+      question: "Is the meeting point 35.1234?",
+      source: "Klandagi instrument",
+    })).toBe(true);
+    expect(suggestionHasCoordinates({
+      kind: "pack",
+      say: "The offline route pack is not on this device.",
+      why: "Navigation needs the prepared pack.",
+      question: "Has this route been prepared offline?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(false);
+  });
+
   it("discards a suggestion that invents a coordinate", async () => {
     const generate: GeneratePioneerFn = async () => ({
       suggestions: [
@@ -256,6 +298,116 @@ describe("observation rails", () => {
     if (outcome.ok) {
       expect(outcome.source).toBe("pioneer");
       expect(outcome.suggestions[0]?.tentative).toBe(true);
+    }
+  });
+
+  it("rejects a pack-present claim when the snapshot says the pack is missing", async () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, packReady: false },
+    };
+    const generate: GeneratePioneerFn = async () => ({
+      suggestions: [
+        {
+          kind: "pack",
+          say: "The offline route pack is on this device.",
+          why: "A cached pack supports offline navigation.",
+          question: "Is the pack ready?",
+          evidence: "Offline pack on this device: no",
+          source: "Klandagi readiness — offline pack",
+        },
+      ],
+    });
+    const outcome = await runPioneer(snapshot, { env: KEY_ON, generate });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.source).toBe("instrument");
+      expect(outcome.suggestions.some((suggestion) =>
+        /pack is on this device/i.test(suggestion.say) && !/\bnot\b/i.test(suggestion.say),
+      )).toBe(false);
+    }
+    expect(suggestionContradictsSnapshot(snapshot, {
+      kind: "pack",
+      say: "The offline route pack is on this device.",
+      why: "A cached pack supports offline navigation.",
+      question: "Is the pack ready?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe(true);
+    expect(verifySuggestion(parseContextFor(snapshot), snapshot, {
+      kind: "pack",
+      say: "The offline route pack is on this device.",
+      why: "A cached pack supports offline navigation.",
+      question: "Is the pack ready?",
+      source: "Klandagi readiness — offline pack",
+    })).toBe("snapshot-contradiction");
+    expect(suggestionContradictsSnapshot({
+      ...BASE_SNAPSHOT,
+      readiness: { iceComplete: false, returnAtSet: false, gaps: ["your name"] },
+    }, {
+      kind: "readiness",
+      say: "The ICE card is complete.",
+      why: "A named emergency contact is on this device.",
+      question: "Is a return time set?",
+      source: "Klandagi readiness — ICE and return",
+    })).toBe(true);
+  });
+
+  it("keeps a pack-gap question that matches the snapshot", async () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, packReady: false },
+    };
+    const generate: GeneratePioneerFn = async () => ({
+      suggestions: [
+        {
+          kind: "pack",
+          say: "The offline route pack is not on this device.",
+          why: "Navigation and get-home tools need the prepared pack before signal disappears.",
+          question: "Has this route been prepared offline on the phone that will walk it?",
+          source: "Klandagi readiness — offline pack",
+        },
+      ],
+    });
+    const outcome = await runPioneer(snapshot, { env: KEY_ON, generate });
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.source).toBe("pioneer");
+      expect(outcome.suggestions[0]?.say).toMatch(/not on this device/);
+    }
+  });
+
+  it("falls back to instruments when a strict profile gets fewer successful reads than it requires", async () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      osmTags: { hazard: "avalanche runout" },
+      pack: { ...BASE_SNAPSHOT.pack, packReady: false },
+    };
+    expect(resolveProfile(resolveModes(snapshot)).id).toBe("strict");
+    expect(resolveProfile(resolveModes(snapshot)).minReads).toBe(2);
+    expect(resolveProfile(resolveModes(snapshot)).unanimous).toBe(true);
+    let calls = 0;
+    const generate: GeneratePioneerFn = async () => {
+      calls += 1;
+      if (calls > 1) throw new Error("provider failed");
+      return {
+        suggestions: [
+          {
+            kind: "pack",
+            say: "The offline route pack is not on this device.",
+            why: "An avalanche-tagged route still needs the offline pack.",
+            question: "Has this route been prepared offline?",
+            source: "Klandagi readiness — offline pack",
+          },
+        ],
+      };
+    };
+    const outcome = await runPioneer(snapshot, { env: KEY_ON, generate });
+    expect(calls).toBe(2);
+    expect(outcome.ok).toBe(true);
+    if (outcome.ok) {
+      expect(outcome.source).toBe("instrument");
+      expect(outcome.codes).toContain("insufficient-reads");
+      expect(outcome.reads).toBe(0);
     }
   });
 
