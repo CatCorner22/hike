@@ -60,7 +60,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ trai
         ? { id: String(trail.osmId), type: String(trail.osmType) }
         : undefined,
     });
-    if (hasDatabase()) await getDb().insert(trailResearch).values({ trailId: resolvedId, brief });
+    if (hasDatabase() && isCurrentResearchBrief(brief)) {
+      // One row per trail: replace rather than accumulate. Briefs that fail
+      // the cache-reusability check are not persisted — they would only force
+      // another LLM run tomorrow while growing trail_research without bound.
+      const db = getDb();
+      await db.delete(trailResearch).where(eq(trailResearch.trailId, resolvedId));
+      await db.insert(trailResearch).values({ trailId: resolvedId, brief });
+    }
     return NextResponse.json({ brief, cached: false, refreshed: refresh });
   } catch (error) { return errorResponse(error, "Research failed"); }
 }

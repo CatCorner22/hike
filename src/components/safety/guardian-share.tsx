@@ -121,6 +121,11 @@ export function GuardianShare({
   const [expiresInHours, setExpiresInHours] = useState(24);
   const [linkClock, setLinkClock] = useState(() => Date.now());
   const publishInFlight = useRef(false);
+  // Spacing is on attempts, not acknowledgements: after an outage (or on a
+  // brand-new link with lastUpdateAt still null) the effect used to fire a
+  // PATCH on every GPS-driven payload identity change, burning the 30/min
+  // guardian-write limit and overwriting the on-screen notice each time.
+  const lastPublishAttemptAt = useRef(0);
   const linkExpiresAt = linkClock + expiresInHours * 60 * 60 * 1000;
   const returnAtMs = returnAt ? Date.parse(returnAt) : null;
   const haveReturn = returnAtMs != null && Number.isFinite(returnAtMs);
@@ -302,10 +307,9 @@ export function GuardianShare({
   useEffect(() => {
     if (!link?.autoUpdate || !publishPayload) return;
     const tick = () => {
-      const lastAcknowledged = link.lastUpdateAt ? Date.parse(link.lastUpdateAt) : 0;
-      if (!Number.isFinite(lastAcknowledged) || Date.now() - lastAcknowledged >= 4.5 * 60 * 1000) {
-        void publishStatus(link, true);
-      }
+      if (Date.now() - lastPublishAttemptAt.current < 4.5 * 60 * 1000) return;
+      lastPublishAttemptAt.current = Date.now();
+      void publishStatus(link, true);
     };
     tick();
     const interval = window.setInterval(tick, 60_000);

@@ -294,7 +294,22 @@ function PlanDetail({ planId }: { planId: string }) {
           body: JSON.stringify({ ...updates, updatedAt: requestBase.updatedAt }),
         });
         const body = await jsonBody(response);
-        if (!response.ok) throw new Error(responseMessage(response, body, "Plan changes were not saved"));
+        if (!response.ok) {
+          // A 409 deliberately carries the server's current plan. Adopting its
+          // revision lets the next retry succeed; without this every retry
+          // re-sent the same stale updatedAt and conflicted forever, wedging
+          // saves until a full page reload.
+          const conflictPlan = response.status === 409 && body && typeof body === "object"
+            ? (body as { plan?: unknown }).plan
+            : undefined;
+          if (isPlanPayload(conflictPlan)) {
+            const latestDraft = planRef.current ?? requestBase;
+            const next = { ...latestDraft, updatedAt: conflictPlan.updatedAt };
+            planRef.current = next;
+            setPlan(next);
+          }
+          throw new Error(responseMessage(response, body, "Plan changes were not saved"));
+        }
         if (!isPlanPayload(body)) throw new Error("The save response was incomplete or invalid.");
 
         const latestDraft = planRef.current ?? requestBase;

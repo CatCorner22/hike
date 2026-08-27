@@ -229,9 +229,20 @@ function mutateStore<T>(
 ): Promise<T> {
   const result = mutationQueue.then(async () => {
     const store = await readStore();
-    const value = await mutation(store);
-    await writeStore(store);
-    return value;
+    try {
+      const value = await mutation(store);
+      await writeStore(store);
+      return value;
+    } catch (error) {
+      // The mutation ran in place on the cached store. If the write (or the
+      // mutation itself, mid-edit) failed, that cache now holds data the disk
+      // never accepted — while its mtime/size stamps still match the unchanged
+      // file, so reads would serve the phantom rows until restart and OCC
+      // checks would 409 against revisions that were never persisted. Drop it;
+      // the next read reloads the durable file.
+      cache = null;
+      throw error;
+    }
   });
   mutationQueue = result.then(
     () => undefined,

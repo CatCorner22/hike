@@ -104,7 +104,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
         if ("plannedDate" in body) values.plannedDate = body.plannedDate ? new Date(body.plannedDate) : null;
         if ("notes" in body) values.notes = body.notes;
         if ("waypoints" in body) values.waypoints = body.waypoints;
-        if ("campgroundIds" in body) values.campgroundIds = body.campgroundIds;
+        if ("campgroundIds" in body) values.campgroundIds = body.campgroundIds ?? [];
         if ("customGeometry" in body) values.customGeometry = body.customGeometry;
 
         const [plan] = await db
