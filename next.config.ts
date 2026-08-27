@@ -70,7 +70,12 @@ const webConfig: NextConfig = {
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https://*.maptiler.com https://*.openfreemap.org",
-      "connect-src 'self' https://api.maptiler.com https://*.maptiler.com https://tiles.openfreemap.org https://*.openfreemap.org",
+      // api.open-meteo.com: the along-route hazard brief and pack weather are
+      // fetched directly from the browser during Prepare offline. Without this
+      // entry the deployed PWA blocked both, every pack saved without a
+      // forecast snapshot, and the UI reported it as a transient network
+      // failure that retries could never fix.
+      "connect-src 'self' https://api.maptiler.com https://*.maptiler.com https://tiles.openfreemap.org https://*.openfreemap.org https://api.open-meteo.com",
       "worker-src 'self' blob:",
       "font-src 'self' data:",
       "object-src 'none'",
