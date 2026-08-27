@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/api/client";
-import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import type { LocalActivity } from "@/lib/offline/activity-sync";
 
@@ -34,7 +35,6 @@ export const MAX_PENDING_POINT_STORAGE_BYTES = 32 * 1024 * 1024;
 export const MAX_PENDING_POINT_COUNT = Math.floor(
   MAX_PENDING_POINT_STORAGE_BYTES / ESTIMATED_PENDING_POINT_BYTES,
 );
-let dbPromise: Promise<IDBPDatabase<HikeDB>> | null = null;
 let flushPromise: Promise<FlushResult> | null = null;
 let pointWriteQueue: Promise<void> = Promise.resolve();
 
@@ -48,40 +48,38 @@ export class OfflinePointQueueFullError extends Error {
   }
 }
 
+const offlineDb = createIdbOpener<HikeDB>("hike-offline", OFFLINE_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
+    if (oldVersion < 1) {
+      const points = db.createObjectStore("pendingPoints", { keyPath: "id" });
+      points.createIndex("by-activity", "activityId");
+      points.createIndex("by-synced", "synced");
+    }
+    if (oldVersion < 2 && oldVersion >= 1) {
+      const points = transaction.objectStore("pendingPoints");
+      if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
+      points.createIndex("by-synced", "synced");
+      // Use native cursor callbacks inside the versionchange transaction.
+      // Detached promises can finish after the upgrade commits, leaving legacy
+      // boolean values outside the numeric by-synced index.
+      const nativePoints = unwrap(points);
+      const cursorRequest = nativePoints.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        const value = cursor.value as PendingPoint & { synced: boolean | number };
+        cursor.update({ ...value, synced: value.synced ? 1 : 0 });
+        cursor.continue();
+      };
+    }
+    if (!db.objectStoreNames.contains("localActivities")) {
+      db.createObjectStore("localActivities", { keyPath: "id" });
+    }
+  },
+});
+
 export function getOfflineDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<HikeDB>("hike-offline", OFFLINE_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (oldVersion < 1) {
-          const points = db.createObjectStore("pendingPoints", { keyPath: "id" });
-          points.createIndex("by-activity", "activityId");
-          points.createIndex("by-synced", "synced");
-        }
-        if (oldVersion < 2 && oldVersion >= 1) {
-          const points = transaction.objectStore("pendingPoints");
-          if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
-          points.createIndex("by-synced", "synced");
-          // Use native cursor callbacks inside the versionchange transaction.
-          // Detached promises can finish after the upgrade commits, leaving legacy
-          // boolean values outside the numeric by-synced index.
-          const nativePoints = unwrap(points);
-          const cursorRequest = nativePoints.openCursor();
-          cursorRequest.onsuccess = () => {
-            const cursor = cursorRequest.result;
-            if (!cursor) return;
-            const value = cursor.value as PendingPoint & { synced: boolean | number };
-            cursor.update({ ...value, synced: value.synced ? 1 : 0 });
-            cursor.continue();
-          };
-        }
-        if (!db.objectStoreNames.contains("localActivities")) {
-          db.createObjectStore("localActivities", { keyPath: "id" });
-        }
-      },
-    });
-  }
-  return dbPromise;
+  return offlineDb.getDb();
 }
 
 function notifyQueueChanged() {
@@ -404,11 +402,9 @@ export async function flushPendingPoints(): Promise<FlushResult> {
 
 /** Test-only reset for fake-indexeddb; not used by the application. */
 export async function __resetOfflineDbForTests() {
-  const current = dbPromise;
-  dbPromise = null;
   flushPromise = null;
   pointWriteQueue = Promise.resolve();
-  if (current) (await current).close();
+  await offlineDb.reset();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase("hike-offline");
     request.onsuccess = () => resolve();

@@ -1,5 +1,6 @@
-import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import type { PackWeather } from "@/lib/offline/pack-weather";
 import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
 import {
@@ -130,8 +131,6 @@ export interface RoutePackLookup {
   /** Optional extras dropped so a prepared route stays navigable. */
   strippedExtras?: RoutePackExtraField[];
 }
-
-let dbPromise: Promise<IDBPDatabase<RoutePackDB>> | null = null;
 
 function canonicalIdForLegacyPack(pack: RoutePack): string {
   return pack.canonicalId || pack.aliases?.[0] || pack.id;
@@ -419,41 +418,45 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   return { packs, aliases };
 }
 
-function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
-        if (!db.objectStoreNames.contains("aliases")) {
-          const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
-          aliases.createIndex("by-canonical", "canonicalId");
-        }
-        if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
-        if (oldVersion <= 0) return;
+/**
+ * A pack that made it into IndexedDB is the offline navigation source of truth,
+ * so the open itself must be resilient: never cache a failed open for the
+ * session, never hang forever on an upgrade another tab is blocking, and let go
+ * of our own connection when this tab is the one doing the blocking.
+ */
+const packDb = createIdbOpener<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
+    if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
+    if (!db.objectStoreNames.contains("aliases")) {
+      const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
+      aliases.createIndex("by-canonical", "canonicalId");
+    }
+    if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
+    if (oldVersion <= 0) return;
 
-        const nativeTransaction = unwrap(transaction);
-        const packStore = nativeTransaction.objectStore("routePacks");
-        const aliasStore = nativeTransaction.objectStore("aliases");
-        const request = packStore.getAll();
-        request.onsuccess = () => {
-          const records = request.result as RoutePack[];
-          if (oldVersion === 1) {
-            const { packs, aliases } = collapseLegacyRoutePacks(records);
-            packStore.clear();
-            packs.forEach((pack) => packStore.put(pack));
-            aliases.forEach((alias) => aliasStore.put(alias));
-            return;
-          }
-          // v2/v3 already have one canonical record. Add the explicit identity
-          // field during the same versionchange transaction; older versions are
-          // deliberately stale and must be prepared again before use.
-          records.forEach((record) => packStore.put({ ...record, canonicalId: record.id }));
-        };
-      },
-    });
-  }
-  return dbPromise;
+    const nativeTransaction = unwrap(transaction);
+    const packStore = nativeTransaction.objectStore("routePacks");
+    const aliasStore = nativeTransaction.objectStore("aliases");
+    const request = packStore.getAll();
+    request.onsuccess = () => {
+      const records = request.result as RoutePack[];
+      if (oldVersion === 1) {
+        const { packs, aliases } = collapseLegacyRoutePacks(records);
+        packStore.clear();
+        packs.forEach((pack) => packStore.put(pack));
+        aliases.forEach((alias) => aliasStore.put(alias));
+        return;
+      }
+      // v2/v3 already have one canonical record. Add the explicit identity
+      // field during the same versionchange transaction; older versions are
+      // deliberately stale and must be prepared again before use.
+      records.forEach((record) => packStore.put({ ...record, canonicalId: record.id }));
+    };
+  },
+});
+
+function getDb() {
+  return packDb.getDb();
 }
 
 export function buildRoutePack(input: {
@@ -685,7 +688,5 @@ export function packCandidateIds(navId: string): string[] {
 
 /** Test-only reset for fake-indexeddb; not used by the application. */
 export async function resetRoutePackDbForTests() {
-  const current = dbPromise;
-  dbPromise = null;
-  if (current) (await current).close();
+  await packDb.reset();
 }
