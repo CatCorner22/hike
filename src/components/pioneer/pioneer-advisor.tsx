@@ -111,10 +111,13 @@ export function PioneerAdvisor({
 }: PioneerAdvisorProps) {
   const [snapshot, setSnapshot] = useState<PioneerSnapshot | null>(null);
   const [deploy, setDeploy] = useState<PioneerDeployStatus>("unknown");
-  const [pioneerObs, setPioneerObs] = useState<Observation[]>([]);
+  const [pioneerCache, setPioneerCache] = useState<{
+    key: string;
+    observations: Observation[];
+    profile: string | null;
+  } | null>(null);
   const [tipIndex, setTipIndex] = useState(0);
   const [observing, setObserving] = useState(false);
-  const [profile, setProfile] = useState<string | null>(null);
   const lastFetched = useRef("");
 
   useEffect(() => {
@@ -171,14 +174,15 @@ export function PioneerAdvisor({
     () => (snapshot ? instrumentObservations(snapshot) : []),
     [snapshot],
   );
+  const snapshotKey = snapshot ? JSON.stringify(snapshot) : "";
+  const pioneerActive = deploy === "on" && Boolean(snapshotKey) && pioneerCache?.key === snapshotKey;
+  const pioneerObs = pioneerActive ? pioneerCache.observations : [];
+  const profile = pioneerActive ? pioneerCache.profile : null;
   const observations: Observation[] = pioneerObs.length > 0 ? pioneerObs : instrument;
   const mood = gauges ? gaugesToMood(gauges, Boolean(snapshot)) : "idle";
 
   useEffect(() => {
-    if (deploy !== "on" || !snapshot) {
-      setPioneerObs([]);
-      return;
-    }
+    if (deploy !== "on" || !snapshot) return;
     const key = JSON.stringify(snapshot);
     const ac = new AbortController();
     const timer = window.setTimeout(() => {
@@ -200,16 +204,18 @@ export function PioneerAdvisor({
         }) => {
           if (ac.signal.aborted) return;
           if (data.unavailable) {
-            setPioneerObs([]);
-            setProfile(null);
+            setPioneerCache({ key, observations: [], profile: null });
             return;
           }
-          setPioneerObs(Array.isArray(data.observations) ? data.observations : []);
-          setProfile(typeof data.profile === "string" ? data.profile : null);
+          setPioneerCache({
+            key,
+            observations: Array.isArray(data.observations) ? data.observations : [],
+            profile: typeof data.profile === "string" ? data.profile : null,
+          });
           setTipIndex(0);
         })
         .catch(() => {
-          if (!ac.signal.aborted) setPioneerObs([]);
+          if (!ac.signal.aborted) setPioneerCache({ key, observations: [], profile: null });
         })
         .finally(() => {
           if (!ac.signal.aborted) setObserving(false);
