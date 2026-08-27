@@ -8,7 +8,8 @@ const SNAPSHOT_KINDS = new Set(["pack", "readiness", "completeness"]);
 /** Decimal degrees or degree-marked angles in any published Pioneer field. */
 export const COORDINATE_RE = /\b-?\d{1,3}\.\d{3,}\b|\b\d{1,3}°/;
 
-const NEGATION_RE = /\b(?:not|n't|no|missing|absent|without|isn't|aren't|never|unset|incomplete)\b/i;
+// `n't` must not use a leading \b — in hasn't/doesn't the n sits after a word character.
+const NEGATION_RE = /\b(?:not|no|missing|absent|without|never|unset|incomplete)\b|n't/i;
 const PACK_TOPIC_RE = /\b(?:offline(?:\s+route)?\s+pack|route pack|offline pack)\b/i;
 const PACK_CUE_RE = /\b(?:on this device|present|ready|prepared|loaded|cached)\b/i;
 const ICE_TOPIC_RE = /\b(?:ice(?:\s+card)?|emergency contact|in-?case-of-emergency)\b/i;
@@ -36,25 +37,38 @@ function sentencesOf(text: string): string[] {
   return text.split(/[.!?;\n]+/).map((part) => part.trim()).filter(Boolean);
 }
 
-function sentencePolarity(
-  sentence: string,
+/** Split a sentence so negation in one clause does not poison another. */
+function clausesOf(sentence: string): string[] {
+  return sentence
+    .split(/\s*(?:[,;]|(?:\s+)(?:but|and|yet|while|although|though|however)\s+)\s*/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function clausePolarity(
+  clause: string,
   topic: RegExp,
   cue: RegExp,
 ): "pos" | "neg" | null {
-  if (!topic.test(sentence) || !cue.test(sentence)) return null;
-  return NEGATION_RE.test(sentence) ? "neg" : "pos";
+  if (!topic.test(clause) || !cue.test(clause)) return null;
+  return NEGATION_RE.test(clause) ? "neg" : "pos";
 }
 
 const INTERROGATIVE_RE = /^(?:is|are|has|have|can|could|does|do|was|were|should)\b/i;
 
-function assertedPolarity(text: string, topic: RegExp, cue: RegExp): "pos" | "neg" | null {
-  let seen: "pos" | "neg" | null = null;
+function anyAssertedPolarity(
+  text: string,
+  topic: RegExp,
+  cue: RegExp,
+  polarity: "pos" | "neg",
+): boolean {
   for (const sentence of sentencesOf(text)) {
     if (INTERROGATIVE_RE.test(sentence)) continue;
-    const polarity = sentencePolarity(sentence, topic, cue);
-    if (polarity) seen = polarity;
+    for (const clause of clausesOf(sentence)) {
+      if (clausePolarity(clause, topic, cue) === polarity) return true;
+    }
   }
-  return seen;
+  return false;
 }
 
 /**
@@ -69,27 +83,37 @@ export function suggestionContradictsSnapshot(
   const asserted = `${suggestion.say} ${suggestion.why}`;
 
   if (suggestion.kind === "pack" || suggestion.kind === "completeness") {
-    const pack = assertedPolarity(asserted, PACK_TOPIC_RE, PACK_CUE_RE);
-    if (pack === "pos" && !snapshot.pack.packReady) return true;
-    if (pack === "neg" && snapshot.pack.packReady) return true;
+    if (anyAssertedPolarity(asserted, PACK_TOPIC_RE, PACK_CUE_RE, "pos") && !snapshot.pack.packReady) {
+      return true;
+    }
+    if (anyAssertedPolarity(asserted, PACK_TOPIC_RE, PACK_CUE_RE, "neg") && snapshot.pack.packReady) {
+      return true;
+    }
   }
 
   if (suggestion.kind === "readiness" || suggestion.kind === "completeness") {
-    const ice = assertedPolarity(asserted, ICE_TOPIC_RE, ICE_CUE_RE);
-    if (ice === "pos" && !snapshot.readiness.iceComplete) return true;
-    if (ice === "neg" && snapshot.readiness.iceComplete) return true;
-    const returnAt = assertedPolarity(asserted, RETURN_TOPIC_RE, RETURN_CUE_RE);
-    if (returnAt === "pos" && !snapshot.readiness.returnAtSet) return true;
-    if (returnAt === "neg" && snapshot.readiness.returnAtSet) return true;
+    if (anyAssertedPolarity(asserted, ICE_TOPIC_RE, ICE_CUE_RE, "pos") && !snapshot.readiness.iceComplete) {
+      return true;
+    }
+    if (anyAssertedPolarity(asserted, ICE_TOPIC_RE, ICE_CUE_RE, "neg") && snapshot.readiness.iceComplete) {
+      return true;
+    }
+    if (anyAssertedPolarity(asserted, RETURN_TOPIC_RE, RETURN_CUE_RE, "pos") && !snapshot.readiness.returnAtSet) {
+      return true;
+    }
+    if (anyAssertedPolarity(asserted, RETURN_TOPIC_RE, RETURN_CUE_RE, "neg") && snapshot.readiness.returnAtSet) {
+      return true;
+    }
   }
 
   if (suggestion.kind === "completeness") {
-    const prep = assertedPolarity(asserted, PREP_TOPIC_RE, PREP_CUE_RE);
     const incomplete = !snapshot.pack.packReady
+      || !snapshot.pack.tripReady
+      || !snapshot.pack.corridorReady
       || !snapshot.readiness.iceComplete
       || !snapshot.readiness.returnAtSet;
-    if (prep === "pos" && incomplete) return true;
-    if (prep === "neg" && !incomplete) return true;
+    if (anyAssertedPolarity(asserted, PREP_TOPIC_RE, PREP_CUE_RE, "pos") && incomplete) return true;
+    if (anyAssertedPolarity(asserted, PREP_TOPIC_RE, PREP_CUE_RE, "neg") && !incomplete) return true;
   }
 
   return false;
