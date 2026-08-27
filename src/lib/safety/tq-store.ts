@@ -1,4 +1,5 @@
-import { openDB, type DBSchema, type IDBPDatabase } from "idb";
+import type { DBSchema } from "idb";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 
 export interface TourniquetRecord {
   appliedAt: string;
@@ -9,18 +10,17 @@ interface TourniquetDB extends DBSchema {
   tourniquet: { key: string; value: TourniquetRecord & { id: string } };
 }
 
-let dbPromise: Promise<IDBPDatabase<TourniquetDB>> | null = null;
+// The tourniquet clock of all things must not be disabled for the session by
+// one transient IndexedDB failure; the opener retries and survives blocked
+// upgrades and terminated connections.
+const tourniquetDb = createIdbOpener<TourniquetDB>("hike-tourniquet", 1, {
+  upgrade(db) {
+    db.createObjectStore("tourniquet", { keyPath: "id" });
+  },
+});
 
 function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<TourniquetDB>("hike-tourniquet", 1, {
-      upgrade(db) {
-        db.createObjectStore("tourniquet", { keyPath: "id" });
-      },
-    });
-  }
-  return dbPromise;
+  return tourniquetDb.getDb();
 }
 
 export async function getTourniquetRecord(): Promise<TourniquetRecord | null> {
