@@ -3,6 +3,7 @@ import {
   buildRoutePack,
   getRoutePackStatus,
   packCandidateIds,
+  packOwnsAlias,
   saveRoutePack,
   validPackTerrain,
   validPackWeather,
@@ -77,10 +78,25 @@ export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): R
   });
 }
 
+const PERSISTED_EXTRAS = [
+  "weather",
+  "corridorFeatures",
+  "hazardBrief",
+  "officialAlerts",
+  "bailoutRoutes",
+  "terrain",
+] as const;
+
+function persistedExtrasSurvived(written: RoutePack, verified: RoutePack): boolean {
+  return PERSISTED_EXTRAS.every((key) => written[key] == null || verified[key] != null);
+}
+
 export async function persistRoutePack(pack: RoutePack): Promise<RoutePack> {
   await saveRoutePack(pack);
   const verified = await loadCachedRoutePack(pack.id, { retries: 5, retryMs: 100 });
-  if (!verified) throw new Error("Route pack failed to save on device");
+  if (!verified || !packOwnsAlias(verified, pack.id) || !persistedExtrasSurvived(pack, verified)) {
+    throw new Error("Route pack failed to save on device");
+  }
   return verified;
 }
 
@@ -128,7 +144,11 @@ export function packFromPlanApi(
     elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   } | null,
 ): RoutePack | null {
-  const geometry = trail?.geometry ?? plan.customGeometry;
+  // A later GPX import is the plan's own route. Preferring the trail line
+  // here used to snap a prepared pack (and its extras) back to the OSM trail
+  // on every online plan load.
+  const usingCustom = Boolean(plan.customGeometry);
+  const geometry = plan.customGeometry ?? trail?.geometry;
   if (!geometry || !isValidGeometry(geometry)) return null;
 
   return buildRoutePack({
@@ -138,8 +158,10 @@ export function packFromPlanApi(
     aliases: [plan.id],
     name: plan.name,
     geometry,
-    bbox: trail?.bbox,
-    elevationProfile: trail?.elevationProfile ?? [],
+    // Trail bounds/profile belong to the OSM line. A later GPX must compute
+    // its own bbox and not inherit an elevation profile for a different path.
+    bbox: usingCustom ? undefined : trail?.bbox,
+    elevationProfile: usingCustom ? [] : trail?.elevationProfile ?? [],
   });
 }
 

@@ -8,6 +8,7 @@ import {
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
   NAVIGATE_ASSET_MAX_AGE_SECONDS,
+  MAX_NAVIGATE_ASSETS,
   NAVIGATE_WARM_BYPASS_PARAM,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
@@ -27,7 +28,6 @@ export { NAVIGATE_ASSETS_CACHE, NAVIGATE_SHELL_CACHE, NAVIGATE_SHELL_MARKER } fr
  * Prepare offline instead of trusting a stale per-plan shell.
  */
 const NAVIGATE_MANIFEST_VERSION = 2;
-const MAX_NAVIGATE_ASSETS = 500;
 
 interface NavigateAssetManifest {
   version: number;
@@ -296,8 +296,12 @@ export async function getNavigateOfflineStatus(): Promise<NavigateOfflineStatus>
       // prepared five weeks ago reported trip-ready right up until the moment
       // it was needed offline — and never corrected itself.
       const dateHeader = hit.headers.get("date");
-      const cachedAtMs = dateHeader ? Date.parse(dateHeader) : Number.NaN;
-      if (Number.isFinite(cachedAtMs) && cachedAtMs < oldestUsable) missingAssets.push(assetUrl);
+      const headerMs = dateHeader ? Date.parse(dateHeader) : Number.NaN;
+      const manifestMs = Date.parse(manifest.cachedAt);
+      // Missing Date used to count as fresh forever. The warmer stamps
+      // manifest.cachedAt when it writes, so that is the fallback clock.
+      const cachedAtMs = Number.isFinite(headerMs) ? headerMs : manifestMs;
+      if (!Number.isFinite(cachedAtMs) || cachedAtMs < oldestUsable) missingAssets.push(assetUrl);
     }
   }
   const expectedAssets = manifest?.assetUrls.length ?? 0;

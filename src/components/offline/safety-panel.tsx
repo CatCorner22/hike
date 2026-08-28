@@ -238,6 +238,8 @@ interface SafetyPanelProps {
   altitudeM?: number;
   stale?: boolean;
   recordedAt?: number;
+  /** Wall clock from the navigate tick. Do not use GPS fix time as "now". */
+  clockMs?: number;
   backtrackEnabled: boolean;
   backtrackReady: boolean;
   onToggleBacktrack: () => void;
@@ -326,6 +328,7 @@ export function SafetyPanel({
   altitudeM,
   stale,
   recordedAt,
+  clockMs,
   backtrackEnabled,
   backtrackReady,
   onToggleBacktrack,
@@ -622,8 +625,9 @@ export function SafetyPanel({
   const observedWindKph = enteredWeatherNumber(displayedWeatherFields.windKph, packDecisionWeather != null);
   const observedRhPct = enteredWeatherNumber(displayedWeatherFields.rhPct, packDecisionWeather != null);
   const guardianProgress = guardianProgressPercent(traveledMeters, remainingMeters);
+  const panelNowMs = clockMs && Number.isFinite(clockMs) && clockMs > 0 ? clockMs : Date.now();
   const guardianEta = estimateGuardianEta({
-    nowMs: recordedAt ?? Number.NaN,
+    nowMs: panelNowMs,
     startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
     traveledMeters,
     remainingMeters,
@@ -631,7 +635,7 @@ export function SafetyPanel({
   // The same measured pace the ETA above is built from, so the walking estimate
   // on this panel cannot contradict the one on the navigate HUD.
   const panelPace = observedPace({
-    nowMs: recordedAt ?? Number.NaN,
+    nowMs: panelNowMs,
     startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
     traveledMeters,
   });
@@ -747,10 +751,9 @@ export function SafetyPanel({
     setReturnTimeMessage(null);
     setReturnTimeChoices(null);
     if (!value) {
+      // datetime-local emits empty/partial values while the picker is open.
+      // Keep the stored deadline until the hiker explicitly clears it.
       setReturnResolution(null);
-      if (!(await setOverdueAlarm(null))) {
-        setReturnTimeMessage("Could not clear the stored deadline — the old one may still be armed.");
-      }
       return;
     }
     const resolved = resolveLocalDateTime(value);
@@ -762,7 +765,17 @@ export function SafetyPanel({
     setReturnResolution(null);
     setReturnTimeMessage(resolved.message);
     if (resolved.kind === "ambiguous") setReturnTimeChoices(resolved.choices);
-    await setOverdueAlarm(null);
+  }
+
+  async function clearReturn() {
+    setReturnLocal("");
+    setReturnResolution(null);
+    setReturnTimeChoices(null);
+    if (!(await setOverdueAlarm(null))) {
+      setReturnTimeMessage("Could not clear the stored deadline — the old one may still be armed.");
+      return;
+    }
+    setReturnTimeMessage("Return deadline cleared on this phone.");
   }
 
   async function chooseReturnOccurrence(choice: ResolvedLocalTime) {
@@ -2570,11 +2583,16 @@ export function SafetyPanel({
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Planned return
             </p>
-            <Input
-              type="datetime-local"
-              value={returnLocal}
-              onChange={(e) => void persistReturn(e.target.value)}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="datetime-local"
+                value={returnLocal}
+                onChange={(e) => void persistReturn(e.target.value)}
+              />
+              <Button size="sm" variant="outline" onClick={() => void clearReturn()}>
+                Clear deadline
+              </Button>
+            </div>
             {returnTimeChoices && (
               <div className="flex gap-2">
                 {returnTimeChoices.map((choice, index) => (

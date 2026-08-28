@@ -113,45 +113,51 @@ export function useNavigationTrack(options: {
   const finishingRef = useRef(false);
   const pendingRef = useRef<QueuedTrackPoint[]>([]);
 
+  const flushPending = useCallback(async () => {
+    const sessionId = sessionIdRef.current;
+    if (!sessionId || saveBlockedRef.current) return;
+    while (sessionIdRef.current === sessionId && pendingRef.current.length > 0 && !saveBlockedRef.current) {
+      const point = pendingRef.current[0];
+      setPersistence({ status: "pending", queued: pendingRef.current.length });
+      try {
+        const saved = await appendNavPoint(sessionId, point);
+        if (pendingRef.current[0]?.pointId === point.pointId) {
+          pendingRef.current.shift();
+        } else {
+          pendingRef.current = pendingRef.current.filter(
+            (candidate) => candidate.pointId !== point.pointId,
+          );
+        }
+        setPoints((current) => mergeSavedTrackPoint(current, saved, point.pointId));
+      } catch (error) {
+        saveBlockedRef.current = true;
+        setPersistence({
+          status: "error",
+          message: formatNavTrackStorageError(error),
+        });
+        throw error;
+      }
+    }
+  }, []);
+
   const drain = useCallback(() => {
     const sessionId = sessionIdRef.current;
     if (!sessionId || drainRunningRef.current || saveBlockedRef.current) return;
 
     drainRunningRef.current = true;
     void (async () => {
-      while (sessionIdRef.current === sessionId && pendingRef.current.length > 0) {
-        const point = pendingRef.current[0];
-        setPersistence({ status: "pending", queued: pendingRef.current.length });
-        try {
-          const saved = await appendNavPoint(sessionId, point);
-          if (pendingRef.current[0]?.pointId === point.pointId) {
-            pendingRef.current.shift();
-          } else {
-            pendingRef.current = pendingRef.current.filter(
-              (candidate) => candidate.pointId !== point.pointId,
-            );
-          }
-          setPoints((current) => mergeSavedTrackPoint(current, saved, point.pointId));
-        } catch (error) {
-          saveBlockedRef.current = true;
-          setPersistence({
-            status: "error",
-            message: formatNavTrackStorageError(error),
-          });
-          return;
-        }
-      }
-
-      if (sessionIdRef.current === sessionId) {
-        const session = await getNavSession(sessionId);
-        if (session) {
-          setPoints((current) => mergePersistedTrackPoints(session.points, current));
-          setPersistence({
-            status: "saved",
-            pointCount: session.pointCount,
-            resumed: sessionResumedRef.current,
-          });
-        }
+      await flushPending();
+      if (saveBlockedRef.current || pendingRef.current.length > 0) return;
+      if (sessionIdRef.current !== sessionId) return;
+      const session = await getNavSession(sessionId);
+      if (pendingRef.current.length > 0) return;
+      if (session) {
+        setPoints((current) => mergePersistedTrackPoints(session.points, current));
+        setPersistence({
+          status: "saved",
+          pointCount: session.pointCount,
+          resumed: sessionResumedRef.current,
+        });
       }
     })()
       .catch((error) => {
@@ -163,8 +169,9 @@ export function useNavigationTrack(options: {
       })
       .finally(() => {
         drainRunningRef.current = false;
+        if (pendingRef.current.length > 0 && !saveBlockedRef.current) drain();
       });
-  }, []);
+  }, [flushPending]);
 
   useEffect(() => {
     if (!packId || !name) return;
@@ -240,16 +247,32 @@ export function useNavigationTrack(options: {
       throw error;
     }
     finishingRef.current = true;
-    saveBlockedRef.current = true;
     setPersistence({ status: "finishing" });
     try {
+      if (drainRunningRef.current) {
+        await new Promise<void>((resolve) => {
+          const started = Date.now();
+          const wait = () => {
+            if (!drainRunningRef.current || Date.now() - started > 8_000) {
+              resolve();
+              return;
+            }
+            window.setTimeout(wait, 20);
+          };
+          wait();
+        });
+      }
+      await flushPending();
+      if (pendingRef.current.length > 0 || saveBlockedRef.current) {
+        throw new Error("Breadcrumb points are still unsaved on this phone.");
+      }
       await finishNavSession(sessionId);
     } catch (error) {
       finishingRef.current = false;
       setPersistence({ status: "error", message: formatNavTrackStorageError(error) });
       throw error;
     }
-  }, []);
+  }, [flushPending]);
 
   return { points, persistence, retry, finish };
 }

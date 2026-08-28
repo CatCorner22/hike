@@ -40,7 +40,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ plans });
     }
 
-    return NextResponse.json({ plans: await listPlans(owner.ownerId) });
+    const plans = await listPlans(owner.ownerId);
+    return NextResponse.json({ plans: plans.slice(0, 50) });
   } catch (error) {
     return errorResponse(error, "Failed to list plans");
   }

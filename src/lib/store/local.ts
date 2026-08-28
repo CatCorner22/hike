@@ -228,7 +228,7 @@ function mutateStore<T>(
   mutation: (store: LocalStore) => T | Promise<T>,
 ): Promise<T> {
   const result = mutationQueue.then(async () => {
-    const store = await readStore();
+    const store = structuredClone(await readStore());
     try {
       const value = await mutation(store);
       await writeStore(store);

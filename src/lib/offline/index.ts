@@ -290,7 +290,7 @@ async function isRehomeableActivity(activityId: string): Promise<boolean> {
   const locals = await db.getAll("localActivities");
   return locals.some(
     (local) =>
-      (local.remoteId === activityId || local.id === activityId) &&
+      (local.remoteId === activityId || local.id === activityId || local.rehomingFrom === activityId) &&
       !(local.endedAt && !local.pendingStop),
   );
 }

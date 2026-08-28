@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enrichRoutePack, withNetworkTimeout } from "./load-route-pack";
+import { enrichRoutePack, packFromPlanApi, withNetworkTimeout } from "./load-route-pack";
 import { buildRoutePack } from "./route-pack";
 import { prepareBailoutRoute } from "./bailout-routes";
 import type { TerrainGrid } from "./terrain-grid";
@@ -114,5 +114,44 @@ describe("enrichRoutePack", () => {
     };
     const rebuilt = buildRoutePack({ id: "plan-keep", name: "Moved", geometry: moved });
     expect(enrichRoutePack(rebuilt, existing).terrain).toBeUndefined();
+  });
+});
+
+describe("packFromPlanApi", () => {
+  const trailGeometry: GeoJSON.LineString = {
+    type: "LineString",
+    coordinates: [[-83.92, 35.96], [-83.90, 35.96]],
+  };
+  const customGeometry: GeoJSON.LineString = {
+    type: "LineString",
+    coordinates: [[-82.0, 36.5], [-81.9, 36.5]],
+  };
+
+  it("prefers a later GPX over the linked OSM trail", () => {
+    const pack = packFromPlanApi(
+      "plan-abc",
+      { id: "abc", name: "GPX day", trailId: "trail-1", customGeometry },
+      {
+        id: "trail-1",
+        name: "OSM trail",
+        geometry: trailGeometry,
+        bbox: [-83.94, 35.94, -83.88, 35.98],
+        elevationProfile: [{ distanceMeters: 0, elevation: 400 }],
+      },
+    );
+    expect(pack?.geometry).toEqual(customGeometry);
+    expect(pack?.aliases).toEqual(["abc"]);
+    expect(pack?.elevationProfile).toEqual([]);
+    expect(pack?.bbox[0]).toBeCloseTo(-82.0, 1);
+  });
+
+  it("uses the trail line when the plan has no custom geometry", () => {
+    const pack = packFromPlanApi(
+      "plan-abc",
+      { id: "abc", name: "Trail day", trailId: "trail-1" },
+      { id: "trail-1", geometry: trailGeometry, bbox: [-83.94, 35.94, -83.88, 35.98] },
+    );
+    expect(pack?.geometry).toEqual(trailGeometry);
+    expect(pack?.bbox).toEqual([-83.94, 35.94, -83.88, 35.98]);
   });
 });

@@ -21,7 +21,7 @@ import {
   type RouteOfficialAlertSnapshot,
 } from "@/lib/offline/official-alerts";
 import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
-import { buildRoutePack, getRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
+import { buildRoutePack, getRoutePack, hasRoutePack, validPackTerrain, type RoutePack } from "@/lib/offline/route-pack";
 import { bboxFromGeometry } from "@/lib/geo";
 import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
@@ -249,7 +249,11 @@ export function PrepareOffline({
             ? existing.officialAlerts
             : undefined
         ),
-        terrain: terrain ?? (isUsableTerrainGrid(existing?.terrain) ? existing.terrain : undefined),
+        terrain: terrain ?? (
+          existing?.terrain && validPackTerrain(existing.terrain, packBbox)
+            ? existing.terrain
+            : undefined
+        ),
         bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
           ? existing.bailoutRoutes
           : undefined,
@@ -283,7 +287,7 @@ export function PrepareOffline({
         saved.officialAlerts
           ? "Official alert snapshot saved; recheck it before departure."
           : "Official alerts were not saved; this is not an all-clear.",
-        weather
+        saved.weather
           ? "Basic weather snapshot saved."
           : "Basic weather snapshot was not saved.",
       ];

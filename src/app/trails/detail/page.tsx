@@ -19,7 +19,8 @@ import { NavigateLink } from "@/components/offline/navigate-link";
 import { formatOfflineRouteStorageError } from "@/components/offline/offline-readiness";
 import { PrepareOffline } from "@/components/offline/prepare-offline";
 import { useOfflinePackReady } from "@/hooks/use-offline-pack-ready";
-import { packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
+import { enrichRoutePack, packFromTrailApi, persistRoutePack } from "@/lib/offline/load-route-pack";
+import { getRoutePack } from "@/lib/offline/route-pack";
 import type { TrailResearchBrief } from "@/lib/research/schema";
 import { httpsUrl } from "@/lib/urls";
 import { npsParkCodeFromTags } from "@/lib/nps/park-code";
@@ -101,7 +102,9 @@ function TrailDetail({ trailId }: { trailId: string }) {
         setTrail(data);
         if (data.geometry) {
           try {
-            await persistRoutePack(packFromTrailApi(`trail-${trailId}`, data));
+            const packId = `trail-${trailId}`;
+            const existing = await getRoutePack(packId);
+            await persistRoutePack(enrichRoutePack(packFromTrailApi(packId, data), existing));
             setPackWarning(null);
           } catch (persistError) {
             setPackWarning(formatOfflineRouteStorageError(persistError).message);

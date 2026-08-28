@@ -585,6 +585,21 @@ describe("schema and live status", () => {
   it("allows OpenStreetMap and refuses an invented authority", () => {
     expect(isAllowedSource("OpenStreetMap trail record")).toBe(true);
     expect(isAllowedSource("My cousin Dave")).toBe(false);
+    expect(isAllowedSource("NWS-style guess")).toBe(false);
+    expect(isAllowedSource("gridblock notes")).toBe(false);
+  });
+
+  it("rejects a weather claim that contradicts a danger snapshot", () => {
+    const snapshot: PioneerSnapshot = {
+      ...BASE_SNAPSHOT,
+      pack: { ...BASE_SNAPSHOT.pack, weatherSeverity: "danger" },
+    };
+    expect(suggestionContradictsSnapshot(snapshot, {
+      kind: "weather",
+      say: "Weather conditions look safe for the ridge.",
+      why: "No hazardous conditions in the snapshot.",
+      source: "Klandagi instrument",
+    })).toBe(true);
   });
 
   it("uses present-tense status and a layer chip", () => {

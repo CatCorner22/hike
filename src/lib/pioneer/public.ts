@@ -19,10 +19,14 @@ const ALLOWED_PREFIXES = [
   "usgs",
 ] as const;
 
+function matchesListedPrefix(value: string, prefix: string): boolean {
+  return value === prefix || value.startsWith(`${prefix} `) || value.startsWith(`${prefix}:`);
+}
+
 export function isAllowedSource(source: string): boolean {
   const lower = source.trim().toLowerCase();
   if (lower.length < 3) return false;
-  return ALLOWED_PREFIXES.some((prefix) => lower.startsWith(prefix) || lower.includes(prefix));
+  return ALLOWED_PREFIXES.some((prefix) => matchesListedPrefix(lower, prefix));
 }
 
 const REGULATORY_PREFIXES = [
@@ -38,7 +42,7 @@ const REGULATORY_PREFIXES = [
 
 export function isRegulatorySource(source: string): boolean {
   const lower = source.trim().toLowerCase();
-  return REGULATORY_PREFIXES.some((prefix) => lower.startsWith(prefix) || lower.includes(prefix));
+  return REGULATORY_PREFIXES.some((prefix) => matchesListedPrefix(lower, prefix));
 }
 
 /** Strip copyable evidence before the response reaches the hiker. */

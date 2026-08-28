@@ -18,6 +18,8 @@ const RETURN_TOPIC_RE = /\b(?:return time|return-at|planned return)\b/i;
 const RETURN_CUE_RE = /\b(?:set|present|filled|ready|complete)\b/i;
 const PREP_TOPIC_RE = /\b(?:prep|get-home state|hike is|trip is)\b/i;
 const PREP_CUE_RE = /\b(?:complete|ready to (?:go|hike|leave)|fully prepared|on course)\b/i;
+const WEATHER_TOPIC_RE = /\b(?:weather|forecast|hazard(?:ous)? conditions|alerts?)\b/i;
+const WEATHER_SAFE_CUE_RE = /\b(?:safe|clear|fine|quiet|benign)\b|\bno (?:hazard|danger|alert|warning)s?\b/i;
 
 export function displayedPioneerFields(suggestion: PioneerSuggestion): string[] {
   return [
@@ -79,8 +81,17 @@ export function suggestionContradictsSnapshot(
   snapshot: PioneerSnapshot,
   suggestion: PioneerSuggestion,
 ): boolean {
-  if (!SNAPSHOT_KINDS.has(suggestion.kind)) return false;
   const asserted = `${suggestion.say} ${suggestion.why}`;
+  if (suggestion.kind === "weather" || suggestion.kind === "hazard") {
+    const dangerous = snapshot.pack.weatherSeverity === "danger"
+      || snapshot.pack.hazardBriefSeverity === "critical"
+      || snapshot.pack.officialAlertMaxSeverity === "extreme"
+      || snapshot.pack.officialAlertMaxSeverity === "severe";
+    if (dangerous && anyAssertedPolarity(asserted, WEATHER_TOPIC_RE, WEATHER_SAFE_CUE_RE, "pos")) {
+      return true;
+    }
+  }
+  if (!SNAPSHOT_KINDS.has(suggestion.kind)) return false;
 
   if (suggestion.kind === "pack" || suggestion.kind === "completeness") {
     if (anyAssertedPolarity(asserted, PACK_TOPIC_RE, PACK_CUE_RE, "pos") && !snapshot.pack.packReady) {

@@ -461,7 +461,7 @@ function PlanDetail({ planId }: { planId: string }) {
     );
   }
   if (!plan) return <Skeleton className="h-64 w-full" />;
-  const geometry = trail?.geometry || plan.customGeometry;
+  const geometry = plan.customGeometry ?? trail?.geometry;
 
   return (
     <div className="space-y-6">
@@ -474,7 +474,7 @@ function PlanDetail({ planId }: { planId: string }) {
           </Button>
           <PrepareOffline
             packId={`plan-${plan.id}`}
-            aliases={[plan.id, plan.trailId].filter(Boolean) as string[]}
+            aliases={[plan.id]}
             name={plan.name}
             geometry={geometry}
             bbox={trail?.bbox}

@@ -30,6 +30,10 @@ import {
  * the page already carries one.
  */
 function isDocumentRequest(request: NextRequest): boolean {
+  // API handlers authenticate themselves. Minting here for Accept: text/html
+  // (or a missing Fetch Metadata dest) created unlimited owners from cookie-less
+  // GET/POST /api/* scripts.
+  if (request.nextUrl.pathname.startsWith("/api/")) return false;
   const dest = request.headers.get("sec-fetch-dest");
   if (dest) return dest === "document";
   // Clients without Fetch Metadata: fall back to content negotiation.

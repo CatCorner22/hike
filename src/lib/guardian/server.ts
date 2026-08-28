@@ -105,8 +105,16 @@ export async function updateGuardianShareStatus(
 ) {
   const db = requireGuardianDb();
   const now = new Date();
+  const existing = await getGuardianShareForOwner(id, ownerId);
+  const previous = existing?.latestStatus ?? {};
+  const merged: GuardianStatusPayload = {
+    progressPercent: status.progressPercent ?? previous.progressPercent ?? null,
+    etaAt: status.etaAt ?? previous.etaAt ?? null,
+    batteryPercent: status.batteryPercent ?? previous.batteryPercent ?? null,
+    deviationMeters: status.deviationMeters ?? previous.deviationMeters ?? null,
+  };
   const [saved] = await db.update(guardianShares).set({
-    latestStatus: status,
+    latestStatus: merged,
     lastUpdateAt: now,
     updatedAt: now,
   }).where(and(
