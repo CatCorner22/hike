@@ -15,17 +15,31 @@ function normalizeIntervalMin(value: unknown): number {
     : DEFAULT_SETTINGS.intervalMin;
 }
 
+export type CheckinStoreRead<T> = { ok: true; value: T } | { ok: false };
+
+export async function readCheckinSettings(): Promise<CheckinStoreRead<CheckinSettings>> {
+  try {
+    const db = await getSafetyDb();
+    if (!db) return { ok: false };
+    const row = await db.get("checkinSettings", "current");
+    return {
+      ok: true,
+      value: row
+        ? {
+            intervalMin: normalizeIntervalMin(row.intervalMin),
+            enabled: row.enabled,
+            armedAt: row.enabled ? row.armedAt : undefined,
+          }
+        : DEFAULT_SETTINGS,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export async function getCheckinSettings(): Promise<CheckinSettings> {
-  const db = await getSafetyDb();
-  if (!db) return DEFAULT_SETTINGS;
-  const row = await db.get("checkinSettings", "current");
-  return row
-    ? {
-        intervalMin: normalizeIntervalMin(row.intervalMin),
-        enabled: row.enabled,
-        armedAt: row.enabled ? row.armedAt : undefined,
-      }
-    : DEFAULT_SETTINGS;
+  const read = await readCheckinSettings();
+  return read.ok ? read.value : DEFAULT_SETTINGS;
 }
 
 /** Small allowance for clock drift between devices; matches the repo's backtrack skew bound. */
@@ -105,8 +119,25 @@ export async function listCheckins(packId: string, limit = 20): Promise<CheckinE
 }
 
 export async function lastCheckin(packId: string): Promise<CheckinEntry | null> {
-  const rows = await listCheckins(packId, 1);
-  return rows[0] ?? null;
+  const read = await readLastCheckin(packId);
+  return read.ok ? read.value : null;
+}
+
+export async function readLastCheckin(packId: string): Promise<CheckinStoreRead<CheckinEntry | null>> {
+  try {
+    const db = await getSafetyDb();
+    if (!db) return { ok: false };
+    const forPack = (await db.getAllFromIndex("checkins", "by-pack", packId))
+      .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt));
+    if (forPack[0]) return { ok: true, value: forPack[0] };
+    // Same outing, different trail: a fresh pack must not treat a recent
+    // I'm OK as never happened and immediately OVERDUE from the global armedAt.
+    const any = (await db.getAll("checkins"))
+      .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt));
+    return { ok: true, value: any[0] ?? null };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export function checkinStatus(

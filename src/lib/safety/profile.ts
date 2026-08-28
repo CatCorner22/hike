@@ -717,18 +717,32 @@ export async function setOverdueAlarm(returnTime: ResolvedLocalTime | null): Pro
   }
 }
 
+export type SafetyStoreRead<T> = { ok: true; value: T } | { ok: false };
+
+export async function readOverdueAlarm(): Promise<SafetyStoreRead<OverdueAlarm | null>> {
+  try {
+    const db = await getDb();
+    if (!db) return { ok: false };
+    const row = await db.get("overdue", "current");
+    return {
+      ok: true,
+      value: row
+        ? {
+          returnAt: row.returnAt,
+          resolvedLocal: row.resolvedLocal,
+          timeZone: row.timeZone,
+          utcOffset: row.utcOffset,
+        }
+        : null,
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+
 export async function getOverdueAlarm(): Promise<OverdueAlarm | null> {
-  const db = await getDb();
-  if (!db) return null;
-  const row = await db.get("overdue", "current");
-  return row
-    ? {
-      returnAt: row.returnAt,
-      resolvedLocal: row.resolvedLocal,
-      timeZone: row.timeZone,
-      utcOffset: row.utcOffset,
-    }
-    : null;
+  const read = await readOverdueAlarm();
+  return read.ok ? read.value : null;
 }
 
 /**

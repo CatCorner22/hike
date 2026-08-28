@@ -48,6 +48,7 @@ describe("proxy owner minting", () => {
       { "sec-fetch-dest": "image" },
       { accept: "*/*" },
       { accept: "application/json" },
+      { accept: "text/html" },
       {},
     ];
     for (const headers of cases) {

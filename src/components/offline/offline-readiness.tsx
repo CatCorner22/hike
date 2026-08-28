@@ -14,7 +14,11 @@ import {
 import { isStoragePersistent, storageEstimate } from "@/lib/offline/storage";
 import { describeCorridorFeatures, type CorridorFeatureSet } from "@/lib/offline/corridor-features";
 import { describeHazardBrief, type RouteHazardBrief } from "@/lib/offline/hazard-brief";
-import { describeOfficialAlertSnapshot, type RouteOfficialAlertSnapshot } from "@/lib/offline/official-alerts";
+import {
+  describeOfficialAlertSnapshot,
+  officialAlertsWereChecked,
+  type RouteOfficialAlertSnapshot,
+} from "@/lib/offline/official-alerts";
 import { describePersistedCorridor, type TerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
 import type { TerrainGrid } from "@/lib/offline/terrain-grid";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -267,11 +271,11 @@ export function OfflineReadiness({ packId }: { packId: string }) {
           <CheckRow
             icon={<ShieldAlert className="mt-0.5 h-4 w-4" />}
             title={
-              packReady && state.officialAlerts
+              packReady && officialAlertsWereChecked(state.officialAlerts)
                 ? "Official alerts checked"
                 : "Official alerts not checked — update while online"
             }
-            ok={Boolean(packReady && state.officialAlerts)}
+            ok={Boolean(packReady && officialAlertsWereChecked(state.officialAlerts))}
             detail={
               packReady && state.officialAlerts
                 ? describeOfficialAlertSnapshot(state.officialAlerts)

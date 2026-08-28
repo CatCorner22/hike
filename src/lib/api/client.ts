@@ -86,7 +86,11 @@ export async function mintSession(): Promise<string | null> {
 
 async function mintSessionOnce(): Promise<string | null> {
   try {
-    const response = await fetch(`${API_BASE}/api/session`, { method: "POST" });
+    const existing = await readStoredToken();
+    const response = await fetch(
+      `${API_BASE}/api/session`,
+      withAuthHeader({ method: "POST" }, existing),
+    );
     if (!response.ok) return null;
     const body = (await response.json()) as { token?: unknown };
     if (typeof body.token !== "string" || !body.token) return null;
@@ -106,7 +110,14 @@ function withAuthHeader(init: RequestInit, token: string | null): RequestInit {
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   if (!isNative()) {
-    return fetch(path, { credentials: "same-origin", ...init });
+    let response = await fetch(path, { credentials: "same-origin", ...init });
+    if (response.status === 401 && !path.startsWith("/api/session")) {
+      const remint = await fetch("/api/session", { method: "POST", credentials: "same-origin" });
+      if (remint.ok) {
+        response = await fetch(path, { credentials: "same-origin", ...init });
+      }
+    }
+    return response;
   }
   let token = await readStoredToken();
   if (!token) token = await mintSession();

@@ -10,6 +10,7 @@ import {
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_SHELL_ROUTE_ID,
   NAVIGATE_ASSET_MAX_AGE_SECONDS,
+  MAX_NAVIGATE_ASSETS,
   NAVIGATE_WARM_BYPASS_PARAM,
   stampNavigateShellHtml,
 } from "@/lib/offline/navigate-shell-validation";
@@ -414,12 +415,19 @@ const serwist = new Serwist({
       handler: new CacheFirst({
         cacheName: NAVIGATE_ASSETS_CACHE,
         plugins: [
-          new ExpirationPlugin({ maxEntries: 300, maxAgeSeconds: NAVIGATE_ASSET_MAX_AGE_SECONDS }),
+          new ExpirationPlugin({ maxEntries: MAX_NAVIGATE_ASSETS, maxAgeSeconds: NAVIGATE_ASSET_MAX_AGE_SECONDS }),
         ],
       }),
     },
     {
       matcher: ({ url }) => url.pathname.startsWith("/api/"),
+      handler: new NetworkOnly(),
+    },
+    {
+      // Forecast snapshots must not land in defaultCache's cross-origin
+      // NetworkFirst: a failed re-prepare would replay a ≤1h-old body and
+      // buildHazardBrief would stamp generatedAt = now on stale model data.
+      matcher: ({ url }) => url.hostname === "api.open-meteo.com",
       handler: new NetworkOnly(),
     },
     ...defaultCache,

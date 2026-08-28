@@ -4,6 +4,7 @@ import {
   describeOfficialAlertSnapshot,
   fetchOfficialRouteAlerts,
   officialAlertFreshness,
+  officialAlertsWereChecked,
   parseNwsAlerts,
   validOfficialAlertSnapshot,
 } from "./official-alerts";
@@ -112,5 +113,11 @@ describe("official route alert snapshot", () => {
     }, "trail-1")).toBe(false);
     expect(officialAlertFreshness(snapshot, NOW + OFFICIAL_ALERTS_STALE_MS)).toBe("fresh");
     expect(officialAlertFreshness(snapshot, NOW + OFFICIAL_ALERTS_STALE_MS + 1)).toBe("stale");
+    expect(officialAlertsWereChecked(snapshot, NOW)).toBe(true);
+    expect(officialAlertsWereChecked({
+      ...snapshot,
+      sources: snapshot.sources.map((source) => ({ ...source, status: "unavailable" as const })),
+    }, NOW)).toBe(false);
+    expect(officialAlertsWereChecked(snapshot, NOW + OFFICIAL_ALERTS_STALE_MS + 1)).toBe(false);
   });
 });

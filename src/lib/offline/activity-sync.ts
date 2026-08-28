@@ -30,6 +30,8 @@ export interface LocalActivity {
     pointCount?: number;
   };
   pendingStop: boolean;
+  /** Dead remote id being remapped; keeps a concurrent 404 flush from discarding GPS. */
+  rehomingFrom?: string;
 }
 
 export interface QueuedPoint {
@@ -132,34 +134,65 @@ async function deleteLocalActivity(id: string) {
  * replays every point into it. No GPS data is lost. `syncId` is rotated because the old
  * key may still name another owner's row on the server (409 on reuse).
  */
+const rehomeLocks = new Map<string, Promise<void>>();
+
 async function rehomeLocalActivity(local: LocalActivity): Promise<void> {
-  const deadRemoteId = local.remoteId;
-  local.remoteId = undefined;
-  local.syncId = crypto.randomUUID();
-  remoteIdPromises.delete(local.id);
-  if (deadRemoteId && deadRemoteId !== local.id) {
-    await movePendingPoints(deadRemoteId, local.id);
+  const inFlight = rehomeLocks.get(local.id);
+  if (inFlight) {
+    await inFlight;
+    const latest = await getLocalActivity(local.id);
+    if (latest) Object.assign(local, latest);
+    return;
   }
-  await putLocalActivity(local);
+  let releaseLock = () => {};
+  const lock = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  rehomeLocks.set(local.id, lock);
+  try {
+    const latest = (await getLocalActivity(local.id)) ?? local;
+    if (!(latest.rehomingFrom && !latest.remoteId)) {
+      const deadRemoteId = latest.remoteId;
+      latest.rehomingFrom = deadRemoteId;
+      latest.remoteId = undefined;
+      latest.syncId = crypto.randomUUID();
+      if (deadRemoteId && deadRemoteId !== latest.id) {
+        await movePendingPoints(deadRemoteId, latest.id);
+      }
+      await putLocalActivity(latest);
+      remoteIdPromises.delete(latest.id);
+    }
+    Object.assign(local, latest);
+  } finally {
+    rehomeLocks.delete(local.id);
+    releaseLock();
+  }
 }
 
 export async function getLocalActivity(id: string): Promise<LocalActivity | null> {
-  const cached = localActivityCache.get(id);
-  if (cached) return cached;
   const db = await getOfflineDb();
-  if (!db || !db.objectStoreNames.contains("localActivities")) return null;
-  const row = (await db.get("localActivities", id)) ?? null;
-  if (row) localActivityCache.set(row.id, row);
-  return row;
+  if (db?.objectStoreNames.contains("localActivities")) {
+    const row = (await db.get("localActivities", id)) ?? null;
+    if (row) {
+      localActivityCache.set(row.id, row);
+      return row;
+    }
+    localActivityCache.delete(id);
+    return null;
+  }
+  return localActivityCache.get(id) ?? null;
 }
 
 export async function listLocalActivities(): Promise<LocalActivity[]> {
-  const rows = new Map(localActivityCache);
+  const rows = new Map<string, LocalActivity>();
   const db = await getOfflineDb();
   if (db?.objectStoreNames.contains("localActivities")) {
     for (const row of await db.getAll("localActivities")) {
-      if (!rows.has(row.id)) rows.set(row.id, row);
+      rows.set(row.id, row);
+      localActivityCache.set(row.id, row);
     }
+  } else {
+    for (const [id, cached] of localActivityCache) rows.set(id, cached);
   }
   return [...rows.values()];
 }

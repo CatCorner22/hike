@@ -9,6 +9,7 @@ import {
   NAVIGATE_SHELL_CACHE,
   NAVIGATE_SHELL_MARKER,
   NAVIGATE_ASSET_MAX_AGE_SECONDS,
+  MAX_NAVIGATE_ASSETS,
 } from "./navigate-shell-validation";
 
 const VALID_HTML = `<!doctype html><html><body><main data-hike-navigate-shell="plan-123"><!--${NAVIGATE_SHELL_MARKER}--><script src="/_next/static/chunks/main.js"></script></main></body></html>`.padEnd(
@@ -68,6 +69,7 @@ describe("navigate shell validation", () => {
     // Readiness used to apply no age rule at all, so it reported trip-ready for
     // assets the worker's expiration plugin would already refuse to serve.
     expect(NAVIGATE_ASSET_MAX_AGE_SECONDS).toBe(60 * 60 * 24 * 30);
+    expect(MAX_NAVIGATE_ASSETS).toBe(500);
   });
 
   it("exports cache names aligned with the service worker", () => {

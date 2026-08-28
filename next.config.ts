@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import withSerwistInit from "@serwist/next";
+import { contentSecurityPolicy } from "./src/lib/security/csp";
 
 /**
  * A per-build revision for the precached APP ROUTES below. With `revision: null`
@@ -63,31 +64,14 @@ const webConfig: NextConfig = {
     ];
   },
   async headers() {
-    const contentSecurityPolicy = [
-      "default-src 'self'",
-      // Next's production bootstrap uses inline script/style tags. Do not add
-      // unsafe-eval; MapLibre workers are handled by worker-src below.
-      "script-src 'self' 'unsafe-inline'",
-      "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://*.maptiler.com https://*.openfreemap.org",
-      // api.open-meteo.com: the along-route hazard brief and pack weather are
-      // fetched directly from the browser during Prepare offline. Without this
-      // entry the deployed PWA blocked both, every pack saved without a
-      // forecast snapshot, and the UI reported it as a transient network
-      // failure that retries could never fix.
-      "connect-src 'self' https://api.maptiler.com https://*.maptiler.com https://tiles.openfreemap.org https://*.openfreemap.org https://api.open-meteo.com",
-      "worker-src 'self' blob:",
-      "font-src 'self' data:",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-      "frame-ancestors 'none'",
-    ].join("; ");
+    // api.open-meteo.com must stay in connect-src: Prepare fetches the
+    // along-route hazard brief and pack weather from the browser.
+    const policy = contentSecurityPolicy();
     return [
       {
         source: "/:path*",
         headers: [
-          { key: "Content-Security-Policy", value: contentSecurityPolicy },
+          { key: "Content-Security-Policy", value: policy },
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           /*

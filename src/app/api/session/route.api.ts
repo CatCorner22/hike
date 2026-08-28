@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import {
   MissingSessionSecretError,
+  OWNER_COOKIE,
   newOwnerId,
+  ownerCookieOptions,
   resolveOwnerId,
   signOwnerToken,
 } from "@/lib/auth/owner";
@@ -29,10 +31,14 @@ export async function POST(request: Request) {
   try {
     const existing = await resolveOwnerId(request);
     const ownerId = existing ?? newOwnerId();
-    return NextResponse.json(
-      { token: await signOwnerToken(ownerId) },
+    const token = await signOwnerToken(ownerId);
+    const response = NextResponse.json(
+      { token },
       { headers: { "Cache-Control": "private, no-store, max-age=0" } },
     );
+    // Web remint after a 401 needs the cookie, not just a body token.
+    response.cookies.set(OWNER_COOKIE, token, ownerCookieOptions());
+    return response;
   } catch (error) {
     if (error instanceof MissingSessionSecretError) {
       console.error("[session]", error.message);

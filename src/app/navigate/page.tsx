@@ -78,8 +78,9 @@ import {
 } from "@/lib/safety/backtrack";
 import {
   checkinStatus,
-  getCheckinSettings,
   lastCheckin,
+  readCheckinSettings,
+  readLastCheckin,
 } from "@/lib/safety/checkin";
 import { moonPhase } from "@/lib/safety/astro";
 import { altitudeFromProfile } from "@/lib/safety/altitude";
@@ -87,7 +88,6 @@ import { slopeAnglesFromProfile } from "@/lib/safety/avalanche";
 import {
   formatWalkBearing,
   gmAngleCard,
-  isFixNearRouteBbox,
   magneticDeclination,
   turnaroundWarning,
 } from "@/lib/safety/declination";
@@ -98,6 +98,7 @@ import {
   getOverdueAlarm,
   listWaypoints,
   overdueStatus,
+  readOverdueAlarm,
   type SafetyWaypoint,
 } from "@/lib/safety/profile";
 import { hypothermiaWarning, suddenStopWarning, waterReminder } from "@/lib/safety/field";
@@ -150,6 +151,11 @@ function NavigateTarget() {
 function NavigateScreen({ navId }: { navId: string }) {
 
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
+  const loadStateRef = useRef<LoadState>(loadState);
+  const assignLoadState = useCallback((next: LoadState) => {
+    loadStateRef.current = next;
+    setLoadState(next);
+  }, []);
   const [progress, setProgress] = useState<TrailProgress | null>(null);
   const [headingUp, setHeadingUp] = useState(true);
   const [exitArmed, setExitArmed] = useState(false);
@@ -220,9 +226,18 @@ function NavigateScreen({ navId }: { navId: string }) {
 
   const gps = useGps(powerMode);
   const gpsTrusted = Boolean(gps.fix && isTrustedFix(gps.fix.recordedAt, gps.fix.stale));
+  const declinationFix = gps.fix
+    ?? (deniedAnchor ? { lat: deniedAnchor.lat, lng: deniedAnchor.lng } : null)
+    ?? (loadState.status === "ready"
+      ? {
+          lat: (loadState.pack.bbox[1] + loadState.pack.bbox[3]) / 2,
+          lng: (loadState.pack.bbox[0] + loadState.pack.bbox[2]) / 2,
+        }
+      : null);
   const deviceHeading = useDeviceHeading({
-    declinationDeg:
-      gpsTrusted && gps.fix ? magneticDeclination(gps.fix.lat, gps.fix.lng) : null,
+    declinationDeg: declinationFix
+      ? magneticDeclination(declinationFix.lat, declinationFix.lng)
+      : null,
   });
 
   useEffect(() => {
@@ -274,10 +289,10 @@ function NavigateScreen({ navId }: { navId: string }) {
   useEffect(() => {
     let cancelled = false;
     async function refreshCheckin() {
-      const [settings, last] = await Promise.all([getCheckinSettings(), lastCheckin(navId)]);
+      const [settings, last] = await Promise.all([readCheckinSettings(), readLastCheckin(navId)]);
       if (cancelled) return;
-      setCheckinSettings(settings);
-      setLastCheckinAt(last?.recordedAt ?? null);
+      if (settings.ok) setCheckinSettings(settings.value);
+      if (last.ok) setLastCheckinAt(last.value?.recordedAt ?? null);
     }
     void refreshCheckin();
     const id = window.setInterval(() => void refreshCheckin(), 30000);
@@ -410,35 +425,44 @@ function NavigateScreen({ navId }: { navId: string }) {
 
   const loadPack = useCallback(async (options: { forceNetwork?: boolean } = {}) => {
     let terminal = false;
-    const complete = (next: LoadState) => {
+    const complete = (next: LoadState, lock = true) => {
       if (terminal) return;
-      terminal = true;
-      setLoadState(next);
+      if (lock) terminal = true;
+      assignLoadState(next);
     };
-    if (!options.forceNetwork) setLoadState({ status: "loading" });
+    if (!options.forceNetwork) assignLoadState({ status: "loading" });
     // The deadline must never destroy a working route: on a manual refresh with a slow
     // radio (the exact field case for pressing Refresh), the network chain can outlast
     // this timer — 8 s per fetch, two fetches for a plan — and the old handler replaced
     // the on-screen route with the full-screen error while a valid cached pack sat in
     // hand. Time out INTO the cached pack when one exists; the honest error is only for
-    // a first load with nothing cached.
+    // a first load with nothing cached. That cache fallback must not lock: a late
+    // successful persist still replaces the on-screen geometry.
     let timeoutFallback: RoutePack | null = null;
-    const timeout = window.setTimeout(() => complete(
-      timeoutFallback
-        ? { status: "ready", pack: timeoutFallback, source: "cache" }
-        : {
-            status: "error",
-            message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
-          }
-    ), 12_000);
+    const timeout = window.setTimeout(() => {
+      if (timeoutFallback) {
+        complete({ status: "ready", pack: timeoutFallback, source: "cache" }, false);
+        return;
+      }
+      complete({
+        status: "error",
+        message: "Route loading timed out. Do not navigate from a loading screen; re-download this matching trail while you have signal.",
+      });
+    }, 12_000);
     let cached: RoutePack | null = null;
     try {
       try {
         cached = await loadCachedRoutePack(navId);
         timeoutFallback = cached;
       } catch (error) {
-        complete({ status: "error", message: error instanceof Error ? error.message : "Saved route does not match this trail — re-download while you have signal." });
-        return;
+        const current = loadStateRef.current;
+        if (options.forceNetwork && current.status === "ready") {
+          cached = current.pack;
+          timeoutFallback = cached;
+        } else {
+          complete({ status: "error", message: error instanceof Error ? error.message : "Saved route does not match this trail — re-download while you have signal." });
+          return;
+        }
       }
       // Cache wins by default; a manual refresh never removes a working route.
       if (cached && !options.forceNetwork) {
@@ -491,7 +515,7 @@ function NavigateScreen({ navId }: { navId: string }) {
     } finally {
       window.clearTimeout(timeout);
     }
-  }, [navId]);
+  }, [navId, assignLoadState]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadPack(), 0);
@@ -949,13 +973,13 @@ function NavigateScreen({ navId }: { navId: string }) {
   useEffect(() => {
     let cancelled = false;
     async function tick() {
-      const alarm = await getOverdueAlarm();
-      if (cancelled) return;
-      if (!alarm) {
+      const read = await readOverdueAlarm();
+      if (cancelled || !read.ok) return;
+      if (!read.value) {
         setOverdueBanner(null);
         return;
       }
-      const status = overdueStatus(alarm.returnAt);
+      const status = overdueStatus(read.value.returnAt);
       setOverdueBanner(status?.overdue ? status.label : null);
     }
     void tick();
@@ -1042,9 +1066,6 @@ function NavigateScreen({ navId }: { navId: string }) {
   }
 
   const { pack, source } = loadState;
-  const fixOnRoute = Boolean(
-    gps.fix && isFixNearRouteBbox(gps.fix.lat, gps.fix.lng, pack.bbox),
-  );
   const navHeading = navHeadingFusion.headingTrue ?? undefined;
   const navHeadingSource = navHeadingFusion.source;
   const user =
@@ -1055,15 +1076,10 @@ function NavigateScreen({ navId }: { navId: string }) {
           heading: navHeading,
           accuracy: gpsDenied ? drUncertainty : gps.fix?.accuracy,
         }
-      : gps.fix && fixOnRoute && !gpsDenied
-        ? {
-            lat: gps.fix.lat,
-            lng: gps.fix.lng,
-            heading: undefined,
-            accuracy: gps.fix.accuracy,
-          }
-        : null;
-  const ghost = gpsDenied && gps.fix ? { lat: gps.fix.lat, lng: gps.fix.lng } : null;
+      : null;
+  const ghost = gps.fix && (!trusted || gpsDenied)
+    ? { lat: gps.fix.lat, lng: gps.fix.lng }
+    : null;
   const gm = navFix ? gmAngleCard(navFix.lat, navFix.lng) : null;
 
   return (
@@ -1144,6 +1160,7 @@ function NavigateScreen({ navId }: { navId: string }) {
                 altitudeM={gps.fix?.altitude}
                 stale={positionSource !== "gps"}
                 recordedAt={gpsDenied ? deniedAnchor?.at : gps.fix?.recordedAt}
+                clockMs={nowMs}
                 backtrackEnabled={backtrackOn}
                 backtrackReady={trackPoints.length >= 2}
                 onToggleBacktrack={() => setBacktrackOn((v) => !v)}

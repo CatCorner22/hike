@@ -7,7 +7,14 @@ import {
   APP_NAME,
   APP_THEME_COLOR,
 } from "@/lib/brand";
+import { contentSecurityPolicy, httpsOrigin } from "@/lib/security/csp";
 import "./globals.css";
+
+const capacitorCsp = process.env.BUILD_TARGET === "capacitor"
+  ? contentSecurityPolicy(
+    [httpsOrigin(process.env.NEXT_PUBLIC_API_BASE)].filter((origin): origin is string => Boolean(origin)),
+  )
+  : null;
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"),
@@ -47,6 +54,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased">
+      {capacitorCsp ? <head><meta httpEquiv="Content-Security-Policy" content={capacitorCsp} /></head> : null}
       <body className="min-h-full flex flex-col bg-background pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
         <NativeBootstrap />
         <AppNav />

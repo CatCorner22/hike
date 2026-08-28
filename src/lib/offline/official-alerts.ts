@@ -304,6 +304,16 @@ export function officialAlertFreshness(snapshot: RouteOfficialAlertSnapshot, now
   return now - retrieved <= OFFICIAL_ALERTS_STALE_MS ? "fresh" : "stale";
 }
 
+/** Same predicate the official-alerts card uses before it treats a snapshot as a real check. */
+export function officialAlertsWereChecked(
+  snapshot: RouteOfficialAlertSnapshot | null | undefined,
+  now = Date.now(),
+): boolean {
+  if (!snapshot) return false;
+  if (officialAlertFreshness(snapshot, now) !== "fresh") return false;
+  return snapshot.sources.some((source) => source.status === "checked" || source.status === "partial");
+}
+
 export function describeOfficialAlertSnapshot(snapshot: RouteOfficialAlertSnapshot, now = Date.now()): string {
   const freshness = officialAlertFreshness(snapshot, now);
   const checked = snapshot.sources.filter((source) => source.status === "checked" || source.status === "partial");

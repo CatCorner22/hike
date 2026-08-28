@@ -116,6 +116,13 @@ export function isValidNavigateShellDocument(
  * will already refuse to serve.
  */
 export const NAVIGATE_ASSET_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
+/**
+ * Warmer and worker must share this ceiling. If the warmer stores 500
+ * `/_next/static` URLs and the worker's ExpirationPlugin only keeps 300, the
+ * first CacheFirst hit after activate evicts the overflow and a trip-ready
+ * device goes blank offline.
+ */
+export const MAX_NAVIGATE_ASSETS = 500;
 
 /**
  * Query flag the shell warmer appends to its `/_next/static/` fetches so the
