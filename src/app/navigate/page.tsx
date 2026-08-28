@@ -151,8 +151,11 @@ function NavigateTarget() {
 function NavigateScreen({ navId }: { navId: string }) {
 
   const [loadState, setLoadState] = useState<LoadState>({ status: "loading" });
-  const loadStateRef = useRef(loadState);
-  loadStateRef.current = loadState;
+  const loadStateRef = useRef<LoadState>(loadState);
+  const assignLoadState = useCallback((next: LoadState) => {
+    loadStateRef.current = next;
+    setLoadState(next);
+  }, []);
   const [progress, setProgress] = useState<TrailProgress | null>(null);
   const [headingUp, setHeadingUp] = useState(true);
   const [exitArmed, setExitArmed] = useState(false);
@@ -425,9 +428,9 @@ function NavigateScreen({ navId }: { navId: string }) {
     const complete = (next: LoadState, lock = true) => {
       if (terminal) return;
       if (lock) terminal = true;
-      setLoadState(next);
+      assignLoadState(next);
     };
-    if (!options.forceNetwork) setLoadState({ status: "loading" });
+    if (!options.forceNetwork) assignLoadState({ status: "loading" });
     // The deadline must never destroy a working route: on a manual refresh with a slow
     // radio (the exact field case for pressing Refresh), the network chain can outlast
     // this timer — 8 s per fetch, two fetches for a plan — and the old handler replaced
@@ -512,7 +515,7 @@ function NavigateScreen({ navId }: { navId: string }) {
     } finally {
       window.clearTimeout(timeout);
     }
-  }, [navId]);
+  }, [navId, assignLoadState]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => void loadPack(), 0);

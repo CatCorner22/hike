@@ -140,7 +140,8 @@ describe("packFromPlanApi", () => {
       },
     );
     expect(pack?.geometry).toEqual(customGeometry);
-    expect(pack?.aliases).toEqual(["abc"]);
+    expect(pack?.aliases).toEqual(["plan-abc", "abc"]);
+    expect(pack?.aliases).not.toContain("trail-1");
     expect(pack?.elevationProfile).toEqual([]);
     expect(pack?.bbox[0]).toBeCloseTo(-82.0, 1);
   });

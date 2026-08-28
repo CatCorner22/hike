@@ -625,7 +625,7 @@ export function SafetyPanel({
   const observedWindKph = enteredWeatherNumber(displayedWeatherFields.windKph, packDecisionWeather != null);
   const observedRhPct = enteredWeatherNumber(displayedWeatherFields.rhPct, packDecisionWeather != null);
   const guardianProgress = guardianProgressPercent(traveledMeters, remainingMeters);
-  const panelNowMs = clockMs && Number.isFinite(clockMs) && clockMs > 0 ? clockMs : Date.now();
+  const panelNowMs = clockMs && Number.isFinite(clockMs) && clockMs > 0 ? clockMs : Number.NaN;
   const guardianEta = estimateGuardianEta({
     nowMs: panelNowMs,
     startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,

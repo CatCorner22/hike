@@ -141,38 +141,32 @@ async function rehomeLocalActivity(local: LocalActivity): Promise<void> {
   if (inFlight) {
     await inFlight;
     const latest = await getLocalActivity(local.id);
-    if (latest) {
-      local.remoteId = latest.remoteId;
-      local.syncId = latest.syncId;
-      local.rehomingFrom = latest.rehomingFrom;
-    }
+    if (latest) Object.assign(local, latest);
     return;
   }
-  const work = (async () => {
-    const latest = (await getLocalActivity(local.id)) ?? local;
-    if (latest.rehomingFrom && !latest.remoteId) {
-      local.remoteId = latest.remoteId;
-      local.syncId = latest.syncId;
-      local.rehomingFrom = latest.rehomingFrom;
-      return;
-    }
-    const deadRemoteId = latest.remoteId;
-    if (!deadRemoteId || deadRemoteId === latest.id) return;
-    latest.rehomingFrom = deadRemoteId;
-    await putLocalActivity(latest);
-    latest.remoteId = undefined;
-    latest.syncId = crypto.randomUUID();
-    await movePendingPoints(deadRemoteId, latest.id);
-    await putLocalActivity(latest);
-    remoteIdPromises.delete(latest.id);
-    local.remoteId = latest.remoteId;
-    local.syncId = latest.syncId;
-    local.rehomingFrom = latest.rehomingFrom;
-  })().finally(() => {
-    if (rehomeLocks.get(local.id) === work) rehomeLocks.delete(local.id);
+  let releaseLock = () => {};
+  const lock = new Promise<void>((resolve) => {
+    releaseLock = resolve;
   });
-  rehomeLocks.set(local.id, work);
-  await work;
+  rehomeLocks.set(local.id, lock);
+  try {
+    const latest = (await getLocalActivity(local.id)) ?? local;
+    if (!(latest.rehomingFrom && !latest.remoteId)) {
+      const deadRemoteId = latest.remoteId;
+      latest.rehomingFrom = deadRemoteId;
+      latest.remoteId = undefined;
+      latest.syncId = crypto.randomUUID();
+      if (deadRemoteId && deadRemoteId !== latest.id) {
+        await movePendingPoints(deadRemoteId, latest.id);
+      }
+      await putLocalActivity(latest);
+      remoteIdPromises.delete(latest.id);
+    }
+    Object.assign(local, latest);
+  } finally {
+    rehomeLocks.delete(local.id);
+    releaseLock();
+  }
 }
 
 export async function getLocalActivity(id: string): Promise<LocalActivity | null> {

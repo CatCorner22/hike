@@ -112,6 +112,7 @@ export function useNavigationTrack(options: {
   const saveBlockedRef = useRef(false);
   const finishingRef = useRef(false);
   const pendingRef = useRef<QueuedTrackPoint[]>([]);
+  const drainRef = useRef<() => void>(() => {});
 
   const flushPending = useCallback(async () => {
     const sessionId = sessionIdRef.current;
@@ -146,18 +147,21 @@ export function useNavigationTrack(options: {
 
     drainRunningRef.current = true;
     void (async () => {
-      await flushPending();
-      if (saveBlockedRef.current || pendingRef.current.length > 0) return;
-      if (sessionIdRef.current !== sessionId) return;
-      const session = await getNavSession(sessionId);
-      if (pendingRef.current.length > 0) return;
-      if (session) {
-        setPoints((current) => mergePersistedTrackPoints(session.points, current));
-        setPersistence({
-          status: "saved",
-          pointCount: session.pointCount,
-          resumed: sessionResumedRef.current,
-        });
+      while (sessionIdRef.current === sessionId && !saveBlockedRef.current) {
+        await flushPending();
+        if (saveBlockedRef.current || sessionIdRef.current !== sessionId) return;
+        if (pendingRef.current.length > 0) continue;
+        const session = await getNavSession(sessionId);
+        if (pendingRef.current.length > 0) continue;
+        if (session) {
+          setPoints((current) => mergePersistedTrackPoints(session.points, current));
+          setPersistence({
+            status: "saved",
+            pointCount: session.pointCount,
+            resumed: sessionResumedRef.current,
+          });
+        }
+        return;
       }
     })()
       .catch((error) => {
@@ -169,9 +173,13 @@ export function useNavigationTrack(options: {
       })
       .finally(() => {
         drainRunningRef.current = false;
-        if (pendingRef.current.length > 0 && !saveBlockedRef.current) drain();
+        if (pendingRef.current.length > 0 && !saveBlockedRef.current) drainRef.current();
       });
   }, [flushPending]);
+
+  useEffect(() => {
+    drainRef.current = drain;
+  }, [drain]);
 
   useEffect(() => {
     if (!packId || !name) return;
