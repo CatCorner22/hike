@@ -179,42 +179,52 @@ export function MapView({
    * `["errored","errored","loading","errored","errored","errored"]` at that
    * moment. Deciding there would blank a map that was about to draw.
    *
-   * So the verdict waits for the last tile to land. It gives up waiting after a
+   * So the verdict waits for the last tile to land, and stops waiting after a
    * few seconds, because a request that never returns must not hold the notice
-   * off for ever — but giving up is not the end of the matter: a slow tile that
-   * lands afterwards still clears it. A mountain connection is exactly where a
-   * tile takes longer than this, and leaving the notice over a map that has
-   * since drawn would be the same lie in the other direction.
+   * off for ever.
+   *
+   * Stopping is not a final answer, though. A tile that lands afterwards has to
+   * take the notice back down — a mountain connection is exactly where a tile
+   * takes longer than this, and leaving a warning over a map that has since
+   * drawn is the same lie in the other direction.
+   *
+   * That second half is a listener rather than a longer timer, and deliberately.
+   * Any deadline picked for it is arbitrary and wrong for the tile that arrives
+   * just after it; the only timer that is never wrong is one that never stops,
+   * which is a leak. MapLibre fires `idle` whenever it has finished rendering
+   * with nothing left dirty, and a late tile makes it dirty again — so the
+   * event says exactly "something changed, look again", costs nothing while
+   * nothing is happening, and needs no bound at all.
    */
   useEffect(() => {
     if (settleTick === null || !mapRef.current) return;
     const map = mapRef.current.getMap();
     const startedAt = Date.now();
-    // Long enough for a bad connection to finish; short enough that a stuck
-    // request does not keep a timer alive for the life of the screen.
     const patience = 8_000;
-    const giveUpEntirely = 90_000;
     let timer: ReturnType<typeof setTimeout>;
     const check = () => {
       const { drew, settling } = basemapTileReport(map);
-      const waited = Date.now() - startedAt;
       if (drew || !settling) {
         // Settled, one way or the other. This is the answer.
         setStyleFailed(!drew);
         return;
       }
-      if (waited >= patience) {
-        // Still waiting. Say so — but keep watching, cheaply, so the notice
-        // comes down by itself if the tile arrives late.
+      if (Date.now() - startedAt >= patience) {
+        // Still nothing to show. True right now, and `idle` below revisits it.
         setStyleFailed(true);
-        if (waited >= giveUpEntirely) return;
-        timer = setTimeout(check, 2_000);
         return;
       }
       timer = setTimeout(check, 300);
     };
+    const onIdle = () => {
+      if (basemapTileReport(map).drew) setStyleFailed(false);
+    };
     check();
-    return () => clearTimeout(timer);
+    map.on("idle", onIdle);
+    return () => {
+      clearTimeout(timer);
+      map.off("idle", onIdle);
+    };
   }, [settleTick, attempt]);
 
   useEffect(() => {
