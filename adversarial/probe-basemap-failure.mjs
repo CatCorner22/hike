@@ -24,7 +24,13 @@ function check(name, ok, detail = "") {
   if (!ok) failures += 1;
 }
 
-const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH });
+const browser = await chromium.launch({
+  headless: true,
+  // Match the sibling probes: omit the key entirely when the variable is
+  // unset, rather than passing `executablePath: undefined`. CI installs its
+  // own browser and sets nothing.
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 
 async function openExplore({ blockTiles }) {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
