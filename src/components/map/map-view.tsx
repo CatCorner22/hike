@@ -179,19 +179,36 @@ export function MapView({
    * `["errored","errored","loading","errored","errored","errored"]` at that
    * moment. Deciding there would blank a map that was about to draw.
    *
-   * So the verdict waits for the last tile to land, and gives up waiting after
-   * a few seconds so a permanently stuck request cannot hold the notice off for
-   * ever.
+   * So the verdict waits for the last tile to land. It gives up waiting after a
+   * few seconds, because a request that never returns must not hold the notice
+   * off for ever — but giving up is not the end of the matter: a slow tile that
+   * lands afterwards still clears it. A mountain connection is exactly where a
+   * tile takes longer than this, and leaving the notice over a map that has
+   * since drawn would be the same lie in the other direction.
    */
   useEffect(() => {
     if (settleTick === null || !mapRef.current) return;
     const map = mapRef.current.getMap();
-    const deadline = Date.now() + 8_000;
+    const startedAt = Date.now();
+    // Long enough for a bad connection to finish; short enough that a stuck
+    // request does not keep a timer alive for the life of the screen.
+    const patience = 8_000;
+    const giveUpEntirely = 90_000;
     let timer: ReturnType<typeof setTimeout>;
     const check = () => {
       const { drew, settling } = basemapTileReport(map);
-      if (drew || !settling || Date.now() > deadline) {
+      const waited = Date.now() - startedAt;
+      if (drew || !settling) {
+        // Settled, one way or the other. This is the answer.
         setStyleFailed(!drew);
+        return;
+      }
+      if (waited >= patience) {
+        // Still waiting. Say so — but keep watching, cheaply, so the notice
+        // comes down by itself if the tile arrives late.
+        setStyleFailed(true);
+        if (waited >= giveUpEntirely) return;
+        timer = setTimeout(check, 2_000);
         return;
       }
       timer = setTimeout(check, 300);

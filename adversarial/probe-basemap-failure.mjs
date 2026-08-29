@@ -306,7 +306,47 @@ async function openExplore({ blockTiles }) {
   await ctx.close();
 }
 
-// --- 6. a working basemap stays quiet ----------------------------------------
+// --- 6. the good tile arrives after the patience runs out --------------------
+// The notice is allowed to go up while a slow tile is outstanding — saying "no
+// map yet" is true at that moment. What it must not do is stay up once the tile
+// lands. A mountain connection is exactly where a tile takes this long.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  let served = 0;
+  await page.route(TILE_GLOB, async (route) => {
+    if (route.request().url().includes("/styles/")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(rasterStyle()),
+      });
+    }
+    served += 1;
+    if (served === 1) {
+      // Past the eight-second patience on purpose.
+      await new Promise((resolve) => setTimeout(resolve, 11_000));
+      return route.fulfill({ status: 200, contentType: "image/png", body: PNG_TILE });
+    }
+    return route.abort();
+  });
+  await page.goto(`${BASE}/explore`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  // While it is still outstanding, saying there is no map is honest.
+  await page.waitForTimeout(9_500);
+  check(
+    "a tile still outstanding past the deadline is reported, not ignored",
+    /background map could not be loaded/i.test(await page.innerText("body")),
+  );
+  // And once it lands, the notice must come down by itself.
+  await page.waitForTimeout(8_000);
+  check(
+    "a slow tile that finally arrives takes the notice back down",
+    !/background map could not be loaded/i.test(await page.innerText("body")),
+  );
+  await ctx.close();
+}
+
+// --- 7. a working basemap stays quiet ----------------------------------------
 {
   const { ctx, page } = await openExplore({ blockTiles: false });
   const text = await page.innerText("body");
