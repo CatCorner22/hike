@@ -224,6 +224,12 @@ jobs:
         env:
           BASE: http://127.0.0.1:3111
         run: node adversarial/retest-concurrency.mjs
+      - name: Basemap failure probe
+        # The background map is the one part of the prepare-a-route screens that
+        # needs the network. It used to fail silently into a blank box.
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-basemap-failure.mjs
       - name: CSP probe
         env:
           BASE: http://127.0.0.1:3111

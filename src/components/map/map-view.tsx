@@ -50,6 +50,20 @@ export function MapView({
   const [loaded, setLoaded] = useState(false);
   const didCenterRef = useRef(false);
   const initialCenterRef = useRef(center);
+  /**
+   * The basemap comes from a third-party tile host, and it is the one part of
+   * this screen that needs the network. When that fetch fails the map used to
+   * render as an empty box: no message, no retry, and — because `onLoad` never
+   * fires — no `fitBounds` either, so it was not even pointing at the trail.
+   * Silence is the wrong answer anywhere in this app, and worse here, because
+   * the failure looks exactly like "there is nothing here".
+   */
+  const [styleFailed, setStyleFailed] = useState(false);
+  // `onError` fires from a listener registered once, so a state value read
+  // inside it would be the one captured at registration. The ref is current.
+  const loadedRef = useRef(false);
+  // Bumping this remounts the map, which is what actually re-fetches the style.
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!loaded || !mapRef.current || fitBounds) return;
@@ -79,7 +93,30 @@ export function MapView({
   }, [fitBounds, loaded]);
 
   return (
-    <div className={className}>
+    <div className={`relative ${className}`}>
+      {styleFailed && (
+        <div
+          role="status"
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-muted/95 p-6 text-center"
+        >
+          <p className="text-sm font-medium">The background map could not be loaded.</p>
+          <p className="max-w-xs text-sm text-muted-foreground">
+            This needs a connection. The trail details on this page are still correct, and
+            saving a route for offline use does not use this map.
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              loadedRef.current = false;
+              setStyleFailed(false);
+              setAttempt((n) => n + 1);
+            }}
+            className="rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent"
+          >
+            Try again
+          </button>
+        </div>
+      )}
       <Map
         ref={mapRef}
         mapStyle={MAP_STYLE}
@@ -88,7 +125,18 @@ export function MapView({
           latitude: center.lat,
           zoom,
         }}
-        onLoad={() => setLoaded(true)}
+        key={attempt}
+        onLoad={() => {
+          loadedRef.current = true;
+          setLoaded(true);
+          setStyleFailed(false);
+        }}
+        onError={() => {
+          // Once the style is up, errors are individual tiles failing on a map
+          // that still works and still shows the route. Blanking it for those
+          // would take away a usable map over a missing square.
+          if (!loadedRef.current) setStyleFailed(true);
+        }}
         onClick={
           onClick
             ? (e) => onClick({ lat: e.lngLat.lat, lng: e.lngLat.lng })
