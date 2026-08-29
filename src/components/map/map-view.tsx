@@ -72,6 +72,25 @@ export function MapView({
    * attempt resolves one way or the other; it is still true while it is up.
    */
   const [retrying, setRetrying] = useState(false);
+  /**
+   * `load` is not proof that the map drew anything.
+   *
+   * MapLibre's own `TileManager.loaded()` returns true when the source errored
+   * (`tile/tile_manager.ts`: `if (this._sourceErrored) return true`) and counts
+   * a tile in state `errored` as settled alongside `loaded`. Either makes
+   * `map.loaded()` true and fires `load`. So a style that fetches fine while
+   * every one of its tiles fails — a tile host down, a captive portal, a
+   * connection that dies between the two requests — raised the notice on the
+   * first tile error and then erased it a moment later on `load`, leaving a
+   * blank map saying nothing. Verified against a real build: six tile requests,
+   * all refused, and no warning on screen.
+   *
+   * So `load` clears the notice only if the map has something on it. An error
+   * with at least one tile through is a gap in a usable map, and is ignored the
+   * way isolated tile errors after load already were.
+   */
+  const sawErrorRef = useRef(false);
+  const anyTileLoadedRef = useRef(false);
 
   useEffect(() => {
     if (!loaded || !mapRef.current || fitBounds) return;
@@ -121,6 +140,8 @@ export function MapView({
                 type="button"
                 onClick={() => {
                   loadedRef.current = false;
+                  sawErrorRef.current = false;
+                  anyTileLoadedRef.current = false;
                   setRetrying(true);
                   setAttempt((n) => n + 1);
                 }}
@@ -144,10 +165,24 @@ export function MapView({
         onLoad={() => {
           loadedRef.current = true;
           setLoaded(true);
-          setStyleFailed(false);
           setRetrying(false);
+          // Nothing failed, or something failed but the map still drew: usable.
+          if (!sawErrorRef.current || anyTileLoadedRef.current) setStyleFailed(false);
+        }}
+        onSourceData={(event) => {
+          // A basemap tile that actually arrived. One is enough to know the map
+          // is reaching its host and putting something on the screen.
+          //
+          // The overlays below are excluded deliberately. MapLibre tiles GeoJSON
+          // sources internally, so `trail` and `track` raise tile events of their
+          // own from data this app already holds — counting those would mark the
+          // basemap healthy on precisely the pages that draw a route, which is
+          // most of them, and suppress the warning for good.
+          if (event.sourceId === "trail" || event.sourceId === "track") return;
+          if (event.tile && event.isSourceLoaded !== false) anyTileLoadedRef.current = true;
         }}
         onError={() => {
+          sawErrorRef.current = true;
           // Once the style is up, errors are individual tiles failing on a map
           // that still works and still shows the route. Blanking it for those
           // would take away a usable map over a missing square.

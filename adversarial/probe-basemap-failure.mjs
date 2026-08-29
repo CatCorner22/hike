@@ -16,7 +16,8 @@
 import { chromium } from "playwright";
 
 const BASE = process.env.BASE ?? "http://127.0.0.1:3111";
-const TILE_GLOB = "**/tiles.openfreemap.org/**";
+const TILE_ORIGIN = "https://tiles.openfreemap.org";
+const TILE_GLOB = `${TILE_ORIGIN}/**`;
 
 let failures = 0;
 function check(name, ok, detail = "") {
@@ -94,7 +95,54 @@ async function openExplore({ blockTiles }) {
   await ctx.close();
 }
 
-// --- 2. a working basemap stays quiet ----------------------------------------
+// --- 2. the style loads but its tiles do not ---------------------------------
+// MapLibre fires `load` even when every tile errored, because a source that
+// errored and a tile in state `errored` both count as settled. The notice was
+// raised on the first tile error and then erased by that `load`.
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const page = await ctx.newPage();
+  let tileRequests = 0;
+  // Raster rather than vector on purpose: MapLibre fetches vector tiles inside a
+  // worker, which page routing does not intercept, so a vector case would assert
+  // against zero requests and pass no matter what the app did.
+  const style = {
+    version: 8,
+    sources: {
+      base: { type: "raster", tiles: [`${TILE_ORIGIN}/r/{z}/{x}/{y}.png`], tileSize: 256 },
+    },
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#dddddd" } },
+      { id: "r", type: "raster", source: "base" },
+    ],
+  };
+  await page.route(TILE_GLOB, (route) => {
+    if (route.request().url().includes("/styles/")) {
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(style),
+      });
+    }
+    tileRequests += 1;
+    return route.abort();
+  });
+  await page.goto(`${BASE}/explore`, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await page.waitForTimeout(9_000);
+  check(
+    "the tile host being down is a real request, not an assertion against nothing",
+    tileRequests > 0,
+    `saw ${tileRequests} tile requests`,
+  );
+  check(
+    "a style that loads with no tiles behind it still warns",
+    /background map could not be loaded/i.test(await page.innerText("body")),
+    "load fired on an all-errored source and cleared the notice",
+  );
+  await ctx.close();
+}
+
+// --- 3. a working basemap stays quiet ----------------------------------------
 {
   const { ctx, page } = await openExplore({ blockTiles: false });
   const text = await page.innerText("body");
