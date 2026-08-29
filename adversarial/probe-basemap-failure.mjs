@@ -69,10 +69,23 @@ async function openExplore({ blockTiles }) {
   const retry = page.getByRole("button", { name: /try again/i });
   check("it offers a way to try again", (await retry.count()) > 0);
 
-  // A retry with the network still down must not wedge or go silent.
+  // A retry is the slowest thing on this screen when the connection is weak.
+  // Clearing the notice on the button press put the user back in front of a
+  // blank box — the same dead end the notice exists to prevent. So the notice
+  // must stand for the whole attempt, and the attempt must be acknowledged.
   if ((await retry.count()) > 0) {
     await retry.first().click();
-    await page.waitForTimeout(4_000);
+    let acknowledged = true;
+    try {
+      await page.getByText(/trying again/i).first().waitFor({ state: "visible", timeout: 5_000 });
+    } catch {
+      acknowledged = false;
+    }
+    check("a retry says it is trying, rather than going blank while it works", acknowledged);
+    // And whichever way it lands, the screen never goes quiet: the notice holds
+    // until the attempt resolves, so there is no window with nothing to read.
+    // This is checked without a settling delay precisely because a timing
+    // assumption here is what a slow runner breaks.
     check(
       "a retry that fails again still says so, rather than going blank",
       /background map could not be loaded/i.test(await page.innerText("body")),

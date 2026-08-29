@@ -64,6 +64,14 @@ export function MapView({
   const loadedRef = useRef(false);
   // Bumping this remounts the map, which is what actually re-fetches the style.
   const [attempt, setAttempt] = useState(0);
+  /**
+   * A retry is not instant, and on a weak connection it is the slowest thing on
+   * the screen. Clearing the message the moment the button is pressed put the
+   * user back in front of a blank box with nothing to read — the same dead end
+   * the message exists to prevent, just briefly. The notice stands until the
+   * attempt resolves one way or the other; it is still true while it is up.
+   */
+  const [retrying, setRetrying] = useState(false);
 
   useEffect(() => {
     if (!loaded || !mapRef.current || fitBounds) return;
@@ -94,27 +102,34 @@ export function MapView({
 
   return (
     <div className={`relative ${className}`}>
-      {styleFailed && (
+      {(styleFailed || retrying) && (
         <div
           role="status"
+          aria-live="polite"
           className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-muted/95 p-6 text-center"
         >
           <p className="text-sm font-medium">The background map could not be loaded.</p>
-          <p className="max-w-xs text-sm text-muted-foreground">
-            This needs a connection. The trail details on this page are still correct, and
-            saving a route for offline use does not use this map.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              loadedRef.current = false;
-              setStyleFailed(false);
-              setAttempt((n) => n + 1);
-            }}
-            className="rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent"
-          >
-            Try again
-          </button>
+          {retrying ? (
+            <p className="max-w-xs text-sm text-muted-foreground">Trying again…</p>
+          ) : (
+            <>
+              <p className="max-w-xs text-sm text-muted-foreground">
+                This needs a connection. The trail details on this page are still correct, and
+                saving a route for offline use does not use this map.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  loadedRef.current = false;
+                  setRetrying(true);
+                  setAttempt((n) => n + 1);
+                }}
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-accent"
+              >
+                Try again
+              </button>
+            </>
+          )}
         </div>
       )}
       <Map
@@ -130,12 +145,14 @@ export function MapView({
           loadedRef.current = true;
           setLoaded(true);
           setStyleFailed(false);
+          setRetrying(false);
         }}
         onError={() => {
           // Once the style is up, errors are individual tiles failing on a map
           // that still works and still shows the route. Blanking it for those
           // would take away a usable map over a missing square.
           if (!loadedRef.current) setStyleFailed(true);
+          setRetrying(false);
         }}
         onClick={
           onClick
