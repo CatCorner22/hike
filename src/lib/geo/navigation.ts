@@ -37,17 +37,24 @@ export interface SnapHint {
   traveledMeters: number;
 }
 
+/** Components with at least two finite positions, the ones `isValidGeometry` accepts. */
+function usableLines(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+): GeoJSON.Position[][] {
+  const lines = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+  return lines.filter(
+    (line) => Array.isArray(line) && line.length >= 2 && line.every(isFinitePosition),
+  );
+}
+
 export function trailLengthMeters(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
 ): number {
   if (!isValidGeometry(geometry)) return 0;
-  if (geometry.type === "MultiLineString") {
-    return geometry.coordinates.reduce((sum, coords) => {
-      if (coords.length < 2) return sum;
-      return sum + turf.length(turf.lineString(coords), { units: "meters" });
-    }, 0);
-  }
-  return turf.length(turf.feature(geometry), { units: "meters" });
+  return usableLines(geometry).reduce(
+    (sum, coords) => sum + turf.length(turf.lineString(coords), { units: "meters" }),
+    0,
+  );
 }
 
 function isTravelDirection(value: unknown): value is TravelDirection {
@@ -125,20 +132,20 @@ function componentRangesFromGeometry(
   geometry: GeoJSON.MultiLineString,
   cumulative?: number[],
 ): RouteComponentRange[] {
+  const lines = usableLines(geometry);
   const ranges: RouteComponentRange[] = [];
   let offset = 0;
-  for (const coords of geometry.coordinates) {
-    if (coords.length < 2) continue;
+  for (const coords of lines) {
     const length = turf.length(turf.lineString(coords), { units: "meters" });
     ranges.push({ startMeters: offset, endMeters: offset + length });
     offset += length;
   }
   if (cumulative && cumulative.length >= 2 && ranges.length > 0) {
     return ranges.map((range, index) => {
-      const startIdx = geometry.coordinates
+      const startIdx = lines
         .slice(0, index)
         .reduce((sum, line) => sum + Math.max(line.length, 1), 0);
-      const line = geometry.coordinates[index];
+      const line = lines[index];
       return {
         startMeters: cumulative[startIdx] ?? range.startMeters,
         endMeters: cumulative[startIdx + line.length - 1] ?? range.endMeters,
@@ -478,20 +485,24 @@ export function safeBbox(
   if (!extra) return bboxFromGeometry(geometry, 0.004);
   const lines = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
   const longitudes: number[] = [extra.lng];
-  const latitudes: number[] = [extra.lat];
+  let minLat = Infinity;
+  let maxLat = -Infinity;
   for (const line of lines) {
     for (const [lng, lat] of line) {
       longitudes.push(lng);
-      latitudes.push(lat);
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
     }
   }
+  if (extra.lat < minLat) minLat = extra.lat;
+  if (extra.lat > maxLat) maxLat = extra.lat;
   const interval = minimumLongitudeInterval(longitudes);
   if (!interval) return null;
   return [
     interval.minLng - 0.004,
-    Math.min(...latitudes) - 0.004,
+    minLat - 0.004,
     interval.maxLng + 0.004,
-    Math.max(...latitudes) + 0.004,
+    maxLat + 0.004,
   ];
 }
 

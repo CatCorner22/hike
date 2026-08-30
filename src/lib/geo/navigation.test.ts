@@ -5,12 +5,14 @@ import {
   isValidGeometry,
   normalizeHeading,
   progressAlongTrail,
+  safeBbox,
   trailLengthMeters,
   travelDirectionAlong,
   type TravelDirection,
   remainingElevationGain,
 } from "./navigation";
 import { offTrailLevel, shouldRepeatAlert } from "@/lib/safety/alerts";
+import { MAX_ROUTE_PACK_COORDINATES } from "@/lib/offline/route-pack";
 
 const straightLine: GeoJSON.LineString = {
   type: "LineString",
@@ -100,6 +102,38 @@ describe("progressAlongTrail", () => {
     );
     expect(kept.remainingMeters).toBe(0);
     expect(kept.traveledMeters).toBe(kept.totalMeters);
+  });
+
+  it("still measures the usable component when another one is corrupt", () => {
+    const partlyCorrupt = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        [[Number.NaN, 37.02], [-119.0, 37.03]],
+      ],
+    } as unknown as GeoJSON.MultiLineString;
+    const progress = progressAlongTrail({ lat: 37.005, lng: -119.0 }, partlyCorrupt);
+    expect(progress.totalMeters).toBeGreaterThan(1_000);
+    expect(Number.isFinite(progress.traveledMeters)).toBe(true);
+    expect(Number.isFinite(progress.remainingMeters)).toBe(true);
+  });
+});
+
+describe("safeBbox", () => {
+  it("bounds a route at the offline pack coordinate limit without overflowing the stack", () => {
+    const geometry: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: Array.from({ length: MAX_ROUTE_PACK_COORDINATES }, (_, index) => [
+        -119 + index * 1e-6,
+        37 + index * 1e-6,
+      ]),
+    };
+    const nested = (depth: number): [number, number, number, number] | null =>
+      depth === 0 ? safeBbox(geometry, { lat: 37.5, lng: -119.5 }) : nested(depth - 1);
+    const bbox = nested(2_000);
+    expect(bbox).not.toBeNull();
+    expect(bbox![1]).toBeCloseTo(37 - 0.004, 6);
+    expect(bbox![3]).toBeCloseTo(37.5 + 0.004, 6);
   });
 });
 

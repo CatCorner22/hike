@@ -76,56 +76,6 @@ export function nearestPointOnTrail(
   return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0, alongMeters: Number.NaN };
 }
 
-export function computeTrackStats(
-  coordinates: Array<{ lat: number; lng: number; elevation?: number | null }>,
-): {
-  distanceMeters: number;
-  elevationGainMeters: number;
-  durationSeconds: number;
-  avgPaceMinPerKm: number;
-} {
-  if (coordinates.length < 2) {
-    return {
-      distanceMeters: 0,
-      elevationGainMeters: 0,
-      durationSeconds: 0,
-      avgPaceMinPerKm: 0,
-    };
-  }
-
-  let distanceMeters = 0;
-  let elevationGainMeters = 0;
-
-  for (let i = 1; i < coordinates.length; i++) {
-    const prev = coordinates[i - 1];
-    const curr = coordinates[i];
-    distanceMeters += turf.distance(
-      turf.point([prev.lng, prev.lat]),
-      turf.point([curr.lng, curr.lat]),
-      { units: "meters" },
-    );
-
-    if (
-      prev.elevation != null &&
-      curr.elevation != null &&
-      curr.elevation > prev.elevation
-    ) {
-      elevationGainMeters += curr.elevation - prev.elevation;
-    }
-  }
-
-  const startTime = coordinates[0].elevation;
-  void startTime;
-
-  return {
-    distanceMeters,
-    elevationGainMeters,
-    durationSeconds: 0,
-    avgPaceMinPerKm:
-      distanceMeters > 0 ? (0 / (distanceMeters / 1000)) : 0,
-  };
-}
-
 export function coordsToLineString(
   coordinates: Array<{ lat: number; lng: number }>,
 ): GeoJSON.LineString {
