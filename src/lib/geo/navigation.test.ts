@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   compassLabel,
   gpsAccuracyLabel,
+  halfwayStatus,
   isValidGeometry,
+  routeMidpoint,
   normalizeHeading,
   progressAlongTrail,
   safeBbox,
@@ -131,6 +133,65 @@ describe("progressAlongTrail", () => {
     expect(progress.totalMeters).toBeGreaterThan(1_000);
     expect(safeBbox(withNullLine)).not.toBeNull();
     expect(safeBbox(withNullLine, { lat: 37.02, lng: -119.0 })).not.toBeNull();
+  });
+});
+
+describe("halfwayStatus", () => {
+  it("counts toward the midpoint, then reports it passed", () => {
+    expect(halfwayStatus(200, 1_000, "forward")).toEqual({
+      midpointMeters: 500,
+      distanceMeters: 300,
+      passed: false,
+    });
+    expect(halfwayStatus(800, 1_000, "forward")).toEqual({
+      midpointMeters: 500,
+      distanceMeters: 300,
+      passed: true,
+    });
+  });
+
+  it("flips which side is passed when walking back toward the start", () => {
+    expect(halfwayStatus(200, 1_000, "backward")?.passed).toBe(true);
+    expect(halfwayStatus(800, 1_000, "backward")?.passed).toBe(false);
+  });
+
+  it("has no answer without a direction or a length", () => {
+    expect(halfwayStatus(200, 1_000, "unknown")).toBeNull();
+    expect(halfwayStatus(0, 0, "forward")).toBeNull();
+    expect(halfwayStatus(Number.NaN, 1_000, "forward")).toBeNull();
+  });
+});
+
+describe("routeMidpoint", () => {
+  it("lands halfway along a single line", () => {
+    const midpoint = routeMidpoint(straightLine);
+    expect(midpoint).not.toBeNull();
+    const total = trailLengthMeters(straightLine);
+    const along = progressAlongTrail(midpoint!, straightLine).traveledMeters;
+    expect(along).toBeCloseTo(total / 2, 0);
+  });
+
+  it("crosses into the second component of a MultiLineString", () => {
+    const geometry: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        [[-119.0, 37.02], [-119.0, 37.05]],
+      ],
+    };
+    const midpoint = routeMidpoint(geometry);
+    expect(midpoint).not.toBeNull();
+    expect(midpoint!.lat).toBeGreaterThan(37.02);
+    expect(midpoint!.lat).toBeLessThan(37.05);
+  });
+
+  it("ignores corrupt components and returns null for an unusable route", () => {
+    const partlyCorrupt = {
+      type: "MultiLineString",
+      coordinates: [[[-119.0, 37.0], [-119.0, 37.01]], null],
+    } as unknown as GeoJSON.MultiLineString;
+    expect(routeMidpoint(partlyCorrupt)).not.toBeNull();
+    expect(routeMidpoint({ type: "LineString", coordinates: [] } as GeoJSON.LineString)).toBeNull();
   });
 });
 

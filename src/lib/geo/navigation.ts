@@ -476,6 +476,62 @@ export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
   return `GPS ±${meters} m (poor — canyon/trees)`;
 }
 
+export interface HalfwayStatus {
+  midpointMeters: number;
+  distanceMeters: number;
+  passed: boolean;
+}
+
+/**
+ * Where the halfway point of the whole route sits relative to the hiker.
+ *
+ * Measured along the stored line, so on a multi-component route it stays a
+ * whole-route figure even though `TrailProgress.remainingMeters` is scoped to
+ * the component being walked. Which side counts as "passed" depends on the
+ * direction of travel; with no direction established there is no answer.
+ */
+export function halfwayStatus(
+  traveledMeters: number,
+  totalMeters: number,
+  direction: TravelDirection,
+): HalfwayStatus | null {
+  if (!Number.isFinite(traveledMeters) || !Number.isFinite(totalMeters) || totalMeters <= 0) {
+    return null;
+  }
+  if (direction === "unknown") return null;
+  const midpointMeters = totalMeters / 2;
+  const clamped = Math.min(Math.max(traveledMeters, 0), totalMeters);
+  return {
+    midpointMeters,
+    distanceMeters: Math.abs(clamped - midpointMeters),
+    passed: direction === "backward" ? clamped <= midpointMeters : clamped >= midpointMeters,
+  };
+}
+
+/** The position halfway along the route by distance, for marking on the map. */
+export function routeMidpoint(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+): LatLng | null {
+  if (!isValidGeometry(geometry)) return null;
+  const lines = usableLines(geometry);
+  if (!lines.length) return null;
+  const lengths = lines.map((line) => turf.length(turf.lineString(line), { units: "meters" }));
+  const total = lengths.reduce((sum, length) => sum + length, 0);
+  if (!(total > 0)) return null;
+
+  let target = total / 2;
+  for (let index = 0; index < lines.length; index++) {
+    if (target <= lengths[index] || index === lines.length - 1) {
+      const [lng, lat] = turf.along(turf.lineString(lines[index]), Math.min(target, lengths[index]), {
+        units: "meters",
+      }).geometry.coordinates;
+      return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
+    }
+    target -= lengths[index];
+  }
+  return null;
+}
+
 export function safeBbox(
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
   extra?: LatLng,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { safeBbox, type LatLng } from "@/lib/geo/navigation";
+import { routeMidpoint, safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
 import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
@@ -100,6 +100,8 @@ export function SafetyNavMap({
       end: { lng: last[0], lat: last[1] },
     };
   }, [lines]);
+
+  const midpoint = useMemo(() => routeMidpoint(geometry), [geometry]);
 
   const bbox = useMemo(() => {
     // Include the point the user is being sent to. A fixed window around the user alone
@@ -370,6 +372,19 @@ export function SafetyNavMap({
         ctx.fill();
       }
 
+      if (midpoint) {
+        const p = toPx(midpoint.lng, midpoint.lat);
+        ctx.strokeStyle = nightMode === "red" ? "#ffb0b0" : nightMode === "nvg" ? "#8ee6a6" : "#22c55e";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - 6);
+        ctx.lineTo(p.x + 6, p.y);
+        ctx.lineTo(p.x, p.y + 6);
+        ctx.lineTo(p.x - 6, p.y);
+        ctx.closePath();
+        ctx.stroke();
+      }
+
       if (search && search.coordinates.length >= 2) {
         ctx.setLineDash([2, 4]);
         ctx.strokeStyle = nightMode === "red" ? "#ff9a9a" : nightMode === "nvg" ? "#b8f5c8" : "#facc15";
@@ -563,7 +578,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, terrain, terrainShade, topInsetPx, uncertaintyM, user, waypoints]);
+  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, midpoint, nearest, nightMode, search, showGrid, terrain, terrainShade, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

@@ -35,7 +35,9 @@ import { formatDistance, formatElevation } from "@/lib/geo";
 import {
   compassLabel,
   gpsAccuracyLabel,
+  halfwayStatus,
   normalizeHeading,
+  resolveRemaining,
   travelDirectionAlong,
   type TrailProgress,
 } from "@/lib/geo/navigation";
@@ -688,6 +690,25 @@ function NavigateScreen({ navId }: { navId: string }) {
         : null,
     [trusted, progress, pace],
   );
+  /**
+   * The Remaining tile is scoped to the component being walked, which on a
+   * multi-part route says nothing about how much of the hike is left. These two
+   * are the whole-route figures, shown alongside it rather than instead of it.
+   */
+  const wholeRoute = useMemo(() => {
+    if (!trusted || !progress || !(progress.totalMeters > 0)) return null;
+    const direction = progress.remainingDirection;
+    const { remainingMeters } = resolveRemaining(
+      progress.traveledMeters,
+      progress.totalMeters,
+      direction,
+    );
+    return {
+      remainingMeters,
+      totalMeters: progress.totalMeters,
+      halfway: halfwayStatus(progress.traveledMeters, progress.totalMeters, direction),
+    };
+  }, [trusted, progress]);
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
@@ -1546,6 +1567,17 @@ function NavigateScreen({ navId }: { navId: string }) {
           claiming to be a topo — and the ground it cannot see is exactly the
           ground that hurts people.
         */}
+        {!backtrackOn && wholeRoute && (
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Whole route: {formatDistance(wholeRoute.remainingMeters)} left of{" "}
+            {formatDistance(wholeRoute.totalMeters)}
+            {wholeRoute.halfway
+              ? wholeRoute.halfway.passed
+                ? ` · halfway passed ${formatDistance(wholeRoute.halfway.distanceMeters)} back`
+                : ` · halfway in ${formatDistance(wholeRoute.halfway.distanceMeters)}`
+              : ""}
+          </p>
+        )}
         {pack.terrain && (
           <p className="mt-2 text-[10px] text-muted-foreground">{terrainLegend(pack.terrain)}</p>
         )}
