@@ -219,6 +219,7 @@ export function progressWithRouteCache(
       resolvedDirection,
     ),
     remainingDirection: direction,
+    componentIndex: segment.componentIndex,
     bearingToTrail: bearing(point, best.nearest),
     valid: true,
   }, cache.lastTraveledMeters != null ? { traveledMeters: cache.lastTraveledMeters } : null);

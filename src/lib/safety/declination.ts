@@ -261,10 +261,12 @@ export function turnaroundWarning(
   isDark: boolean,
   pace: ObservedPace | null = null,
 ): string | null {
-  if (isDark || remainingMeters <= 0) return null;
-  const estimate = walkingEstimate(remainingMeters, Math.max(0, remainingGainMeters), pace);
+  if (isDark || !Number.isFinite(remainingMeters) || remainingMeters <= 0) return null;
+  if (!Number.isFinite(minutesUntilSunset)) return null;
+  const gain = Number.isFinite(remainingGainMeters) ? Math.max(0, remainingGainMeters) : 0;
+  const estimate = walkingEstimate(remainingMeters, gain, pace);
   const minutesNeeded = estimate.minutes;
-  if (minutesNeeded <= 0) return null;
+  if (!Number.isFinite(minutesNeeded) || minutesNeeded <= 0) return null;
   // Naming the estimator matters here: "~180 min at your pace" is a different
   // claim from "~180 min", and a hiker who knows the number came from their own
   // measured speed can judge whether the last hour was representative.

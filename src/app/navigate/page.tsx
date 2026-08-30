@@ -35,8 +35,12 @@ import { formatDistance, formatElevation } from "@/lib/geo";
 import {
   compassLabel,
   gpsAccuracyLabel,
+  halfwayStatus,
   normalizeHeading,
+  resolveRemaining,
+  routeSpine,
   travelDirectionAlong,
+  type HalfwayStatus,
   type TrailProgress,
 } from "@/lib/geo/navigation";
 import { parseNavigateTarget } from "@/lib/ids";
@@ -116,6 +120,16 @@ type LoadState =
   | { status: "loading" }
   | { status: "ready"; pack: RoutePack; source: "cache" | "network" }
   | { status: "error"; message: string };
+
+/**
+ * Across a gap the halfway figure is a distance along the stored line, with
+ * unmapped ground in between, so it is not something the hiker can walk.
+ */
+function halfwayLabel(halfway: HalfwayStatus): string {
+  const distance = formatDistance(halfway.distanceMeters);
+  const where = halfway.passed ? `halfway passed ${distance} back` : `halfway in ${distance}`;
+  return halfway.gapMeters > 25 ? ` · ${where} (across a gap)` : ` · ${where}`;
+}
 
 function trailheadPoint(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
   const coords =
@@ -688,6 +702,38 @@ function NavigateScreen({ navId }: { navId: string }) {
         : null,
     [trusted, progress, pace],
   );
+  /**
+   * The Remaining tile is scoped to the component being walked, which on a
+   * multi-part route says nothing about how much of the hike is left. These two
+   * are the whole-route figures, shown alongside it rather than instead of it.
+   */
+  const spine = useMemo(
+    () =>
+      loadState.status === "ready"
+        ? routeSpine(loadState.pack.geometry, loadState.pack.cumulativeDistancesMeters)
+        : null,
+    [loadState],
+  );
+  const wholeRoute = useMemo(() => {
+    if (!trusted || !progress || !(progress.totalMeters > 0)) return null;
+    const direction = progress.remainingDirection;
+    const { remainingMeters } = resolveRemaining(
+      progress.traveledMeters,
+      progress.totalMeters,
+      direction,
+    );
+    return {
+      remainingMeters,
+      totalMeters: progress.totalMeters,
+      halfway: halfwayStatus(
+        progress.traveledMeters,
+        progress.totalMeters,
+        direction,
+        spine,
+        progress.componentIndex,
+      ),
+    };
+  }, [trusted, progress, spine]);
   const turnaround = useMemo(() => {
     if (!trusted || !progress || !daylight) return null;
     return turnaroundWarning(
@@ -1546,6 +1592,13 @@ function NavigateScreen({ navId }: { navId: string }) {
           claiming to be a topo — and the ground it cannot see is exactly the
           ground that hurts people.
         */}
+        {!backtrackOn && wholeRoute && (
+          <p className="mt-2 text-[10px] text-muted-foreground">
+            Whole route: {formatDistance(wholeRoute.remainingMeters)} left of{" "}
+            {formatDistance(wholeRoute.totalMeters)}
+            {wholeRoute.halfway ? halfwayLabel(wholeRoute.halfway) : ""}
+          </p>
+        )}
         {pack.terrain && (
           <p className="mt-2 text-[10px] text-muted-foreground">{terrainLegend(pack.terrain)}</p>
         )}

@@ -2,15 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   compassLabel,
   gpsAccuracyLabel,
+  halfwayStatus,
   isValidGeometry,
+  routeMidpoint,
+  routeSpine,
   normalizeHeading,
   progressAlongTrail,
+  safeBbox,
   trailLengthMeters,
   travelDirectionAlong,
   type TravelDirection,
   remainingElevationGain,
 } from "./navigation";
 import { offTrailLevel, shouldRepeatAlert } from "@/lib/safety/alerts";
+import { MAX_ROUTE_PACK_COORDINATES } from "@/lib/offline/route-pack";
 
 const straightLine: GeoJSON.LineString = {
   type: "LineString",
@@ -79,6 +84,23 @@ describe("progressAlongTrail", () => {
     expect(nearEndSecond.remainingMeters).toBeLessThan(500);
   });
 
+  it("credits the section being started, not the one that ended, at a gap", () => {
+    const disconnected: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-118.5, 37.2], [-118.5, 37.22]],
+      ],
+    };
+    const secondStart = { lat: 37.2, lng: -118.5 };
+    const secondLength = trailLengthMeters({
+      type: "LineString",
+      coordinates: disconnected.coordinates[1],
+    });
+    const progress = progressAlongTrail(secondStart, disconnected, [], "forward");
+    expect(progress.remainingMeters).toBeCloseTo(secondLength, 0);
+  });
+
   it("keeps remaining-m at the finish of a loop instead of snapping to the start", () => {
     const loop: GeoJSON.LineString = {
       type: "LineString",
@@ -100,6 +122,167 @@ describe("progressAlongTrail", () => {
     );
     expect(kept.remainingMeters).toBe(0);
     expect(kept.traveledMeters).toBe(kept.totalMeters);
+  });
+
+  it("still measures the usable component when another one is corrupt", () => {
+    const partlyCorrupt = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        [[Number.NaN, 37.02], [-119.0, 37.03]],
+      ],
+    } as unknown as GeoJSON.MultiLineString;
+    const progress = progressAlongTrail({ lat: 37.005, lng: -119.0 }, partlyCorrupt);
+    expect(progress.totalMeters).toBeGreaterThan(1_000);
+    expect(Number.isFinite(progress.traveledMeters)).toBe(true);
+    expect(Number.isFinite(progress.remainingMeters)).toBe(true);
+  });
+
+  it("ignores a component that is not an array at all", () => {
+    const withNullLine = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        null,
+      ],
+    } as unknown as GeoJSON.MultiLineString;
+    const progress = progressAlongTrail({ lat: 37.005, lng: -119.0 }, withNullLine);
+    expect(progress.valid).toBe(true);
+    expect(progress.totalMeters).toBeGreaterThan(1_000);
+    expect(safeBbox(withNullLine)).not.toBeNull();
+    expect(safeBbox(withNullLine, { lat: 37.02, lng: -119.0 })).not.toBeNull();
+  });
+});
+
+describe("halfwayStatus", () => {
+  it("counts toward the midpoint, then reports it passed", () => {
+    expect(halfwayStatus(200, 1_000, "forward")).toEqual({
+      midpointMeters: 500,
+      distanceMeters: 300,
+      passed: false,
+      gapMeters: 0,
+    });
+    expect(halfwayStatus(800, 1_000, "forward")).toEqual({
+      midpointMeters: 500,
+      distanceMeters: 300,
+      passed: true,
+      gapMeters: 0,
+    });
+  });
+
+  it("flips which side is passed when walking back toward the start", () => {
+    expect(halfwayStatus(200, 1_000, "backward")?.passed).toBe(true);
+    expect(halfwayStatus(800, 1_000, "backward")?.passed).toBe(false);
+  });
+
+  it("reports the unmapped ground when the midpoint is on another component", () => {
+    const gapped: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.1], [-119.0, 37.12]],
+      ],
+    };
+    const spine = routeSpine(gapped);
+    const total = trailLengthMeters(gapped);
+    expect(spine.gapsMeters[0]).toBeGreaterThan(8_000);
+
+    // Just past the midpoint along the line, but on the far side of the gap.
+    const across = halfwayStatus(total / 2 + 50, total, "forward", spine);
+    expect(across?.passed).toBe(true);
+    expect(across?.gapMeters).toBeGreaterThan(8_000);
+
+    const before = halfwayStatus(total / 2 - 50, total, "forward", spine);
+    expect(before?.gapMeters).toBe(0);
+  });
+
+  it("reports no gap between components that touch", () => {
+    const touching: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.02], [-119.0, 37.04]],
+      ],
+    };
+    const spine = routeSpine(touching);
+    const total = trailLengthMeters(touching);
+    expect(spine.gapsMeters[0]).toBeLessThan(1);
+    expect(halfwayStatus(total / 2 + 50, total, "forward", spine)?.gapMeters).toBe(0);
+  });
+
+  it("takes the hiker's own component at a shared index value", () => {
+    const gapped: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.1], [-119.0, 37.14]],
+      ],
+    };
+    const spine = routeSpine(gapped);
+    const total = trailLengthMeters(gapped);
+    const seam = spine.ranges[1].startMeters;
+
+    // The seam is one index value shared by the end of component 0 and the start
+    // of component 1, and the midpoint is inside component 1.
+    expect(halfwayStatus(seam, total, "forward", spine, 1)?.gapMeters).toBe(0);
+    expect(halfwayStatus(seam, total, "forward", spine, 0)?.gapMeters).toBeGreaterThan(8_000);
+  });
+
+  it("has no answer without a direction or a length", () => {
+    expect(halfwayStatus(200, 1_000, "unknown")).toBeNull();
+    expect(halfwayStatus(0, 0, "forward")).toBeNull();
+    expect(halfwayStatus(Number.NaN, 1_000, "forward")).toBeNull();
+  });
+});
+
+describe("routeMidpoint", () => {
+  it("lands halfway along a single line", () => {
+    const midpoint = routeMidpoint(straightLine);
+    expect(midpoint).not.toBeNull();
+    const total = trailLengthMeters(straightLine);
+    const along = progressAlongTrail(midpoint!, straightLine).traveledMeters;
+    expect(along).toBeCloseTo(total / 2, 0);
+  });
+
+  it("crosses into the second component of a MultiLineString", () => {
+    const geometry: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        [[-119.0, 37.02], [-119.0, 37.05]],
+      ],
+    };
+    const midpoint = routeMidpoint(geometry);
+    expect(midpoint).not.toBeNull();
+    expect(midpoint!.lat).toBeGreaterThan(37.02);
+    expect(midpoint!.lat).toBeLessThan(37.05);
+  });
+
+  it("ignores corrupt components and returns null for an unusable route", () => {
+    const partlyCorrupt = {
+      type: "MultiLineString",
+      coordinates: [[[-119.0, 37.0], [-119.0, 37.01]], null],
+    } as unknown as GeoJSON.MultiLineString;
+    expect(routeMidpoint(partlyCorrupt)).not.toBeNull();
+    expect(routeMidpoint({ type: "LineString", coordinates: [] } as GeoJSON.LineString)).toBeNull();
+  });
+});
+
+describe("safeBbox", () => {
+  it("bounds a route at the offline pack coordinate limit without overflowing the stack", () => {
+    const geometry: GeoJSON.LineString = {
+      type: "LineString",
+      coordinates: Array.from({ length: MAX_ROUTE_PACK_COORDINATES }, (_, index) => [
+        -119 + index * 1e-6,
+        37 + index * 1e-6,
+      ]),
+    };
+    const nested = (depth: number): [number, number, number, number] | null =>
+      depth === 0 ? safeBbox(geometry, { lat: 37.5, lng: -119.5 }) : nested(depth - 1);
+    const bbox = nested(2_000);
+    expect(bbox).not.toBeNull();
+    expect(bbox![1]).toBeCloseTo(37 - 0.004, 6);
+    expect(bbox![3]).toBeCloseTo(37.5 + 0.004, 6);
   });
 });
 

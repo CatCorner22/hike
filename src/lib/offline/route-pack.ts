@@ -255,6 +255,13 @@ function validationError(pack: RoutePack | null | undefined): string | null {
     pack.cumulativeDistancesMeters.some((value, index, values) => index > 0 && value < values[index - 1])) {
     return "Saved route distance index is invalid.";
   }
+  // Navigation reads total distance from `lengthMeters` and positions along the
+  // route from the index. If they disagree, every remaining-distance and
+  // halfway figure is measured against a length the route does not have.
+  const indexedLength = pack.cumulativeDistancesMeters[pack.cumulativeDistancesMeters.length - 1] ?? 0;
+  if (Math.abs(indexedLength - pack.lengthMeters) > Math.max(1, indexedLength * 0.005)) {
+    return "Saved route length disagrees with its distance index.";
+  }
   if (!Array.isArray(pack.elevationProfile) || pack.elevationProfile.length > MAX_ELEVATION_PROFILE_POINTS ||
     pack.elevationProfile.some((point) => !Number.isFinite(point.distanceMeters) || !Number.isFinite(point.elevation) || point.distanceMeters < 0) ||
     pack.elevationProfile.some((point, index, profile) => index > 0 && point.distanceMeters <= profile[index - 1].distanceMeters)) {
