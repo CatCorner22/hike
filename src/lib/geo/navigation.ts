@@ -272,8 +272,7 @@ export function progressAlongTrail(
     const componentRanges = componentRangesFromGeometry(geometry);
     let cumulative = 0;
 
-    for (const coords of geometry.coordinates) {
-      if (coords.length < 2 || !coords.every(isFinitePosition)) continue;
+    for (const coords of usableLines(geometry)) {
       candidates.push(
         progressOnSegment(
           point,
@@ -482,8 +481,9 @@ export function safeBbox(
   extra?: LatLng,
 ): [number, number, number, number] | null {
   if (!isValidGeometry(geometry) || (extra && !isValidLatLng(extra))) return null;
-  if (!extra) return bboxFromGeometry(geometry, 0.004);
-  const lines = geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
+  const lines = usableLines(geometry);
+  if (!lines.length) return null;
+  if (!extra) return bboxFromGeometry({ type: "MultiLineString", coordinates: lines }, 0.004);
   const longitudes: number[] = [extra.lng];
   let minLat = Infinity;
   let maxLat = -Infinity;

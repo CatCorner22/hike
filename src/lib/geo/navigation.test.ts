@@ -117,6 +117,21 @@ describe("progressAlongTrail", () => {
     expect(Number.isFinite(progress.traveledMeters)).toBe(true);
     expect(Number.isFinite(progress.remainingMeters)).toBe(true);
   });
+
+  it("ignores a component that is not an array at all", () => {
+    const withNullLine = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.01]],
+        null,
+      ],
+    } as unknown as GeoJSON.MultiLineString;
+    const progress = progressAlongTrail({ lat: 37.005, lng: -119.0 }, withNullLine);
+    expect(progress.valid).toBe(true);
+    expect(progress.totalMeters).toBeGreaterThan(1_000);
+    expect(safeBbox(withNullLine)).not.toBeNull();
+    expect(safeBbox(withNullLine, { lat: 37.02, lng: -119.0 })).not.toBeNull();
+  });
 });
 
 describe("safeBbox", () => {
