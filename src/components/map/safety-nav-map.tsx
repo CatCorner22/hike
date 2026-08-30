@@ -374,14 +374,18 @@ export function SafetyNavMap({
 
       if (midpoint) {
         const p = toPx(midpoint.lng, midpoint.lat);
-        ctx.strokeStyle = nightMode === "red" ? "#ffb0b0" : nightMode === "nvg" ? "#8ee6a6" : "#22c55e";
-        ctx.lineWidth = 2;
+        // Filled, with a dark outline and off the route's own hue: stroked green
+        // on a green line is invisible on a straight leg, which is most of a trail.
         ctx.beginPath();
-        ctx.moveTo(p.x, p.y - 6);
-        ctx.lineTo(p.x + 6, p.y);
-        ctx.lineTo(p.x, p.y + 6);
-        ctx.lineTo(p.x - 6, p.y);
+        ctx.moveTo(p.x, p.y - 8);
+        ctx.lineTo(p.x + 8, p.y);
+        ctx.lineTo(p.x, p.y + 8);
+        ctx.lineTo(p.x - 8, p.y);
         ctx.closePath();
+        ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
+        ctx.fill();
+        ctx.strokeStyle = nightMode === "red" ? "#4a0b0b" : nightMode === "nvg" ? "#063516" : "#0b1220";
+        ctx.lineWidth = 2;
         ctx.stroke();
       }
 

@@ -730,6 +730,7 @@ function NavigateScreen({ navId }: { navId: string }) {
         progress.totalMeters,
         direction,
         spine,
+        progress.componentIndex,
       ),
     };
   }, [trusted, progress, spine]);

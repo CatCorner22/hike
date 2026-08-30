@@ -210,6 +210,24 @@ describe("halfwayStatus", () => {
     expect(halfwayStatus(total / 2 + 50, total, "forward", spine)?.gapMeters).toBe(0);
   });
 
+  it("takes the hiker's own component at a shared index value", () => {
+    const gapped: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.1], [-119.0, 37.14]],
+      ],
+    };
+    const spine = routeSpine(gapped);
+    const total = trailLengthMeters(gapped);
+    const seam = spine.ranges[1].startMeters;
+
+    // The seam is one index value shared by the end of component 0 and the start
+    // of component 1, and the midpoint is inside component 1.
+    expect(halfwayStatus(seam, total, "forward", spine, 1)?.gapMeters).toBe(0);
+    expect(halfwayStatus(seam, total, "forward", spine, 0)?.gapMeters).toBeGreaterThan(8_000);
+  });
+
   it("has no answer without a direction or a length", () => {
     expect(halfwayStatus(200, 1_000, "unknown")).toBeNull();
     expect(halfwayStatus(0, 0, "forward")).toBeNull();

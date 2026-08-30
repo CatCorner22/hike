@@ -27,6 +27,12 @@ export interface TrailProgress {
   remainingElevationMeters: number;
   /** How `remainingMeters` was resolved, so the UI can label it honestly. */
   remainingDirection: TravelDirection;
+  /**
+   * Which component of a MultiLineString the snap came from. At a gap the last
+   * vertex of one component and the first of the next share a distance-index
+   * value, so this is the only thing that says which side the hiker is on.
+   */
+  componentIndex?: number;
   /** Compass heading back to the route, always 0..360. */
   bearingToTrail: number;
   /** False means imported or persisted route/position data was invalid. */
@@ -300,6 +306,7 @@ export function progressAlongTrail(
       return stabilizeLoop(
         {
           ...picked.progress,
+          componentIndex: picked.componentIndex,
           remainingMeters,
           remainingDirection: direction,
           remainingElevationMeters: remainingElevationGain(
@@ -561,6 +568,7 @@ export function halfwayStatus(
   totalMeters: number,
   direction: TravelDirection,
   spine?: RouteSpine | null,
+  hereComponentIndex?: number | null,
 ): HalfwayStatus | null {
   if (!Number.isFinite(traveledMeters) || !Number.isFinite(totalMeters) || totalMeters <= 0) {
     return null;
@@ -571,7 +579,10 @@ export function halfwayStatus(
 
   let gapMeters = 0;
   if (spine && spine.ranges.length > 1) {
-    const here = componentIndexAt(spine.ranges, clamped);
+    const here =
+      hereComponentIndex != null && spine.ranges[hereComponentIndex]
+        ? hereComponentIndex
+        : componentIndexAt(spine.ranges, clamped);
     const there = componentIndexAt(spine.ranges, midpointMeters);
     for (let index = Math.min(here, there); index < Math.max(here, there); index += 1) {
       gapMeters += spine.gapsMeters[index] ?? 0;
