@@ -132,27 +132,7 @@ function componentRangesFromGeometry(
   geometry: GeoJSON.MultiLineString,
   cumulative?: number[],
 ): RouteComponentRange[] {
-  const lines = usableLines(geometry);
-  const ranges: RouteComponentRange[] = [];
-  let offset = 0;
-  for (const coords of lines) {
-    const length = turf.length(turf.lineString(coords), { units: "meters" });
-    ranges.push({ startMeters: offset, endMeters: offset + length });
-    offset += length;
-  }
-  if (cumulative && cumulative.length >= 2 && ranges.length > 0) {
-    return ranges.map((range, index) => {
-      const startIdx = lines
-        .slice(0, index)
-        .reduce((sum, line) => sum + Math.max(line.length, 1), 0);
-      const line = lines[index];
-      return {
-        startMeters: cumulative[startIdx] ?? range.startMeters,
-        endMeters: cumulative[startIdx + line.length - 1] ?? range.endMeters,
-      };
-    });
-  }
-  return ranges;
+  return routeSpine(geometry, cumulative).ranges;
 }
 
 function progressOnSegment(
@@ -202,19 +182,39 @@ function progressOnSegment(
   };
 }
 
-function pickContinuous(candidates: TrailProgress[], hint?: SnapHint | null): TrailProgress {
-  const ranked = [...candidates].sort((a, b) => a.offsetMeters - b.offsetMeters);
+interface ComponentCandidate {
+  progress: TrailProgress;
+  componentIndex: number;
+}
+
+/**
+ * Returns the component the snap came from as well as the snap. Recovering it
+ * afterwards from traveled metres cannot tell the end of one component from the
+ * start of the next, and those are one metre apart in the index but a whole
+ * component's worth of remaining distance apart.
+ */
+function pickContinuous(
+  candidates: ComponentCandidate[],
+  hint?: SnapHint | null,
+): ComponentCandidate {
+  const ranked = [...candidates].sort(
+    (a, b) => a.progress.offsetMeters - b.progress.offsetMeters,
+  );
   const best = ranked[0];
-  if (!hint || ranked.length === 1) return stabilizeLoop(best, hint);
-  const near = ranked.filter((c) => c.offsetMeters <= best.offsetMeters + 25);
-  const forward = near.filter((c) => hint.traveledMeters - c.traveledMeters < 150);
+  if (!hint || ranked.length === 1) {
+    return { ...best, progress: stabilizeLoop(best.progress, hint) };
+  }
+  const near = ranked.filter(
+    (c) => c.progress.offsetMeters <= best.progress.offsetMeters + 25,
+  );
+  const forward = near.filter((c) => hint.traveledMeters - c.progress.traveledMeters < 150);
   const pool = forward.length ? forward : near;
   pool.sort(
     (a, b) =>
-      Math.abs(a.traveledMeters - hint.traveledMeters) -
-      Math.abs(b.traveledMeters - hint.traveledMeters),
+      Math.abs(a.progress.traveledMeters - hint.traveledMeters) -
+      Math.abs(b.progress.traveledMeters - hint.traveledMeters),
   );
-  return stabilizeLoop(pool[0], hint);
+  return { ...pool[0], progress: stabilizeLoop(pool[0].progress, hint) };
 }
 
 /** Window near the route end where a loop may snap back to coordinate 0. */
@@ -268,13 +268,14 @@ export function progressAlongTrail(
   const totalMeters = trailLengthMeters(geometry);
 
   if (geometry.type === "MultiLineString") {
-    const candidates: TrailProgress[] = [];
+    const candidates: ComponentCandidate[] = [];
     const componentRanges = componentRangesFromGeometry(geometry);
     let cumulative = 0;
 
-    for (const coords of usableLines(geometry)) {
-      candidates.push(
-        progressOnSegment(
+    for (const [componentIndex, coords] of usableLines(geometry).entries()) {
+      candidates.push({
+        componentIndex,
+        progress: progressOnSegment(
           point,
           coords,
           elevationProfile,
@@ -282,34 +283,28 @@ export function progressAlongTrail(
           totalMeters,
           direction,
         ),
-      );
+      });
       cumulative += turf.length(turf.lineString(coords), { units: "meters" });
     }
 
     if (candidates.length) {
       const picked = pickContinuous(candidates, hint);
-      if (componentRanges.length <= 1) return picked;
-      const componentIndex = componentRanges.findIndex(
-        (range) =>
-          picked.traveledMeters >= range.startMeters - 1 &&
-          picked.traveledMeters <= range.endMeters + 1,
-      );
-      const activeIndex = componentIndex >= 0 ? componentIndex : 0;
+      if (componentRanges.length <= 1) return picked.progress;
       const { remainingMeters, resolvedDirection } = resolveComponentRemaining(
-        picked.traveledMeters,
+        picked.progress.traveledMeters,
         totalMeters,
         direction,
         componentRanges,
-        activeIndex,
+        picked.componentIndex,
       );
       return stabilizeLoop(
         {
-          ...picked,
+          ...picked.progress,
           remainingMeters,
           remainingDirection: direction,
           remainingElevationMeters: remainingElevationGain(
             elevationProfile,
-            picked.traveledMeters,
+            picked.progress.traveledMeters,
             resolvedDirection,
           ),
         },
@@ -476,10 +471,76 @@ export function gpsAccuracyLabel(accuracyMeters?: number | null): string {
   return `GPS ±${meters} m (poor — canyon/trees)`;
 }
 
+export interface RouteSpine {
+  ranges: RouteComponentRange[];
+  /** Straight-line ground between the end of component i and the start of i+1. */
+  gapsMeters: number[];
+}
+
+/**
+ * Component extents plus the unmapped ground between them.
+ *
+ * The distance index deliberately does not count the gaps, so two figures taken
+ * from it can be a walk apart on the ground while reading as neighbours along
+ * the line. Anything comparing positions on different components needs to know
+ * how much unmapped ground sits between them.
+ */
+export function routeSpine(
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+  cumulativeDistancesMeters?: number[],
+): RouteSpine {
+  const lines = usableLines(geometry);
+  // A stored distance index is the frame every other figure on the navigate
+  // screen is measured in, so the ranges must come from it when it exists
+  // rather than from a second, slightly different measurement of the same line.
+  const cumulative =
+    cumulativeDistancesMeters && cumulativeDistancesMeters.length >= 2
+      ? cumulativeDistancesMeters
+      : null;
+  const ranges: RouteComponentRange[] = [];
+  const gapsMeters: number[] = [];
+  let offset = 0;
+  let coordinateIndex = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const length = turf.length(turf.lineString(line), { units: "meters" });
+    const indexedStart = cumulative?.[coordinateIndex];
+    const indexedEnd = cumulative?.[coordinateIndex + line.length - 1];
+    ranges.push(
+      Number.isFinite(indexedStart) && Number.isFinite(indexedEnd)
+        ? { startMeters: indexedStart as number, endMeters: indexedEnd as number }
+        : { startMeters: offset, endMeters: offset + length },
+    );
+    offset += length;
+    coordinateIndex += line.length;
+    const next = lines[index + 1];
+    if (next) {
+      gapsMeters.push(
+        turf.distance(turf.point(line[line.length - 1]), turf.point(next[0]), {
+          units: "meters",
+        }),
+      );
+    }
+  }
+  return { ranges, gapsMeters };
+}
+
+function componentIndexAt(ranges: RouteComponentRange[], meters: number): number {
+  for (let index = 0; index < ranges.length; index += 1) {
+    if (meters <= ranges[index].endMeters + 1) return index;
+  }
+  return Math.max(ranges.length - 1, 0);
+}
+
 export interface HalfwayStatus {
   midpointMeters: number;
   distanceMeters: number;
   passed: boolean;
+  /**
+   * Unmapped ground between the hiker and the halfway point. Non-zero means
+   * `distanceMeters` is a figure along the stored line, not a walk.
+   */
+  gapMeters: number;
 }
 
 /**
@@ -489,11 +550,17 @@ export interface HalfwayStatus {
  * whole-route figure even though `TrailProgress.remainingMeters` is scoped to
  * the component being walked. Which side counts as "passed" depends on the
  * direction of travel; with no direction established there is no answer.
+ *
+ * Pass the spine on a multi-component route. Without it the readout can say the
+ * halfway point is a few hundred metres behind while the map draws it across a
+ * gap on another section, because the index treats touching components and
+ * distant ones alike.
  */
 export function halfwayStatus(
   traveledMeters: number,
   totalMeters: number,
   direction: TravelDirection,
+  spine?: RouteSpine | null,
 ): HalfwayStatus | null {
   if (!Number.isFinite(traveledMeters) || !Number.isFinite(totalMeters) || totalMeters <= 0) {
     return null;
@@ -501,10 +568,21 @@ export function halfwayStatus(
   if (direction === "unknown") return null;
   const midpointMeters = totalMeters / 2;
   const clamped = Math.min(Math.max(traveledMeters, 0), totalMeters);
+
+  let gapMeters = 0;
+  if (spine && spine.ranges.length > 1) {
+    const here = componentIndexAt(spine.ranges, clamped);
+    const there = componentIndexAt(spine.ranges, midpointMeters);
+    for (let index = Math.min(here, there); index < Math.max(here, there); index += 1) {
+      gapMeters += spine.gapsMeters[index] ?? 0;
+    }
+  }
+
   return {
     midpointMeters,
     distanceMeters: Math.abs(clamped - midpointMeters),
     passed: direction === "backward" ? clamped <= midpointMeters : clamped >= midpointMeters,
+    gapMeters,
   };
 }
 

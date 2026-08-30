@@ -5,6 +5,7 @@ import {
   halfwayStatus,
   isValidGeometry,
   routeMidpoint,
+  routeSpine,
   normalizeHeading,
   progressAlongTrail,
   safeBbox,
@@ -83,6 +84,23 @@ describe("progressAlongTrail", () => {
     expect(nearEndSecond.remainingMeters).toBeLessThan(500);
   });
 
+  it("credits the section being started, not the one that ended, at a gap", () => {
+    const disconnected: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-118.5, 37.2], [-118.5, 37.22]],
+      ],
+    };
+    const secondStart = { lat: 37.2, lng: -118.5 };
+    const secondLength = trailLengthMeters({
+      type: "LineString",
+      coordinates: disconnected.coordinates[1],
+    });
+    const progress = progressAlongTrail(secondStart, disconnected, [], "forward");
+    expect(progress.remainingMeters).toBeCloseTo(secondLength, 0);
+  });
+
   it("keeps remaining-m at the finish of a loop instead of snapping to the start", () => {
     const loop: GeoJSON.LineString = {
       type: "LineString",
@@ -142,17 +160,54 @@ describe("halfwayStatus", () => {
       midpointMeters: 500,
       distanceMeters: 300,
       passed: false,
+      gapMeters: 0,
     });
     expect(halfwayStatus(800, 1_000, "forward")).toEqual({
       midpointMeters: 500,
       distanceMeters: 300,
       passed: true,
+      gapMeters: 0,
     });
   });
 
   it("flips which side is passed when walking back toward the start", () => {
     expect(halfwayStatus(200, 1_000, "backward")?.passed).toBe(true);
     expect(halfwayStatus(800, 1_000, "backward")?.passed).toBe(false);
+  });
+
+  it("reports the unmapped ground when the midpoint is on another component", () => {
+    const gapped: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.1], [-119.0, 37.12]],
+      ],
+    };
+    const spine = routeSpine(gapped);
+    const total = trailLengthMeters(gapped);
+    expect(spine.gapsMeters[0]).toBeGreaterThan(8_000);
+
+    // Just past the midpoint along the line, but on the far side of the gap.
+    const across = halfwayStatus(total / 2 + 50, total, "forward", spine);
+    expect(across?.passed).toBe(true);
+    expect(across?.gapMeters).toBeGreaterThan(8_000);
+
+    const before = halfwayStatus(total / 2 - 50, total, "forward", spine);
+    expect(before?.gapMeters).toBe(0);
+  });
+
+  it("reports no gap between components that touch", () => {
+    const touching: GeoJSON.MultiLineString = {
+      type: "MultiLineString",
+      coordinates: [
+        [[-119.0, 37.0], [-119.0, 37.02]],
+        [[-119.0, 37.02], [-119.0, 37.04]],
+      ],
+    };
+    const spine = routeSpine(touching);
+    const total = trailLengthMeters(touching);
+    expect(spine.gapsMeters[0]).toBeLessThan(1);
+    expect(halfwayStatus(total / 2 + 50, total, "forward", spine)?.gapMeters).toBe(0);
   });
 
   it("has no answer without a direction or a length", () => {

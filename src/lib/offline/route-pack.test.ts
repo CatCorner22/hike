@@ -204,6 +204,15 @@ describe("route pack integrity boundaries", () => {
     expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
   });
 
+  it("rejects a stored length that disagrees with the distance index", () => {
+    const pack = buildRoutePack({ id: "plan-length", name: "Length route", geometry });
+    expect(validateRoutePack(pack)).toBeNull();
+    expect(validateRoutePack({ ...pack, lengthMeters: 0 })).toContain("distance index");
+    expect(validateRoutePack({ ...pack, lengthMeters: pack.lengthMeters * 3 })).toContain(
+      "distance index",
+    );
+  });
+
   it("persists corridor OSM features and still accepts packs without them", async () => {
     const { parseCorridorOverpassResponse } = await import("@/lib/osm/corridor-overpass");
     const pack = buildRoutePack({ id: "plan-features", name: "Feature route", geometry });

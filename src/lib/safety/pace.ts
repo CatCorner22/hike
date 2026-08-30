@@ -8,6 +8,10 @@
  * Naismith + Langmuir-ish: 5 km/h + 1 h / 600 m climb + 10 min / 300 m steep descent.
  */
 export function naismithMinutes(distanceM: number, gainM = 0, lossM = 0): number {
+  // A distance that is not a number is not a zero-minute walk. Returning 0 here
+  // printed "~0 min" and silenced the daylight warning on exactly the invalid
+  // data that should have withdrawn the estimate.
+  if (!Number.isFinite(distanceM)) return Number.NaN;
   if (!(distanceM > 0)) return 0;
   const walk = (distanceM / 5000) * 60;
   const climb = (Math.max(0, gainM) / 600) * 60;
@@ -68,6 +72,7 @@ export function observedPace(input: {
 
 /** Minutes for the distance ahead at a measured pace, keeping Naismith's allowance for the climb still to come. */
 export function paceMinutes(distanceM: number, gainM: number, metersPerSecond: number): number {
+  if (!Number.isFinite(distanceM)) return Number.NaN;
   if (!(distanceM > 0) || !(metersPerSecond > 0)) return 0;
   const walk = distanceM / metersPerSecond / 60;
   // The climb ahead is a specific obstacle the measured pace has no knowledge
