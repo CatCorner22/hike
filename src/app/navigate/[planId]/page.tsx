@@ -932,6 +932,7 @@ export default function NavigatePage() {
           ghost={ghost}
           search={searchOverlay}
           showGrid
+          corridor={pack.corridor ?? null}
           nightMode={nightMode}
           gpsDenied={gpsDenied}
           uncertaintyM={drUncertainty}

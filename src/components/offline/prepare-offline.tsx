@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
 import { persistRoutePack } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
+import { fetchCorridorForRoute } from "@/lib/offline/corridor-client";
+import { corridorCoverageLabel } from "@/lib/offline/corridor";
 import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
 import { warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
@@ -97,6 +99,11 @@ export function PrepareOffline({
       const center = bbox
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
+      // Weather is a small, fast request and is folded into the first save.
+      // The corridor is not: an uncached corridor query was measured taking longer
+      // than ten seconds, and making the route wait on it would mean a hiker with a
+      // weak signal stands there with nothing saved at all. The route is therefore
+      // saved first and the corridor is added afterwards.
       const weather = await fetchPackWeather(center.lat, center.lng);
       const pack: RoutePack = buildRoutePack({
         id: packId,
@@ -127,11 +134,13 @@ export function PrepareOffline({
       const weatherNote = weather
         ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
         : "Type temp/wind in Safety if you want field weather.";
-      setMessage(
-        warnings.length
-          ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
-          : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`,
-      );
+      const savedMessage = warnings.length
+        ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
+        : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`;
+      // Stated as soon as the route is safe. Everything after this point is
+      // additive, and the wording must not imply the route is still pending.
+      setMessage(`${savedMessage} Downloading surrounding terrain…`);
+      void addCorridor(pack, savedMessage);
     } catch (error) {
       setReady(false);
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
@@ -140,6 +149,48 @@ export function PrepareOffline({
       );
     } finally {
       setSaving(false);
+    }
+  }
+
+  /**
+   * Second phase: attach corridor context to an already-saved pack.
+   *
+   * Never throws into the caller and never clears `ready`. The route is already
+   * on the device at this point, so the only outcomes are "corridor added" and
+   * "corridor not added", and both are reported as such.
+   */
+  async function addCorridor(pack: RoutePack, savedMessage: string) {
+    try {
+      const corridor = await fetchCorridorForRoute(pack.geometry);
+      if (!corridor) {
+        setMessage(`${savedMessage} ${corridorCoverageLabel(null)}.`);
+        return;
+      }
+      const withCorridor = buildRoutePack({
+        id: pack.id,
+        aliases: pack.aliases,
+        name: pack.name,
+        geometry: pack.geometry,
+        bbox: pack.bbox,
+        elevationProfile: pack.elevationProfile,
+        weather: pack.weather,
+        corridor,
+      });
+      await persistRoutePack(withCorridor);
+      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
+      // The stored pack is the authority on what was kept, not the fetch result:
+      // a corridor that fails the persistence check is dropped there, and
+      // reporting the request instead of the outcome would overstate coverage.
+      setMessage(
+        `${savedMessage} ${corridorCoverageLabel(withCorridor.corridor)}.${
+          withCorridor.corridor?.note ? ` ${withCorridor.corridor.note}` : ""
+        }`,
+      );
+    } catch {
+      // The route remains saved and verified; only the extra context is missing.
+      setMessage(
+        `${savedMessage} Surrounding terrain could not be saved, so the offline map shows the route line only.`,
+      );
     }
   }
 

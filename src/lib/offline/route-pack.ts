@@ -1,6 +1,7 @@
 import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
 import type { PackWeather } from "@/lib/offline/pack-weather";
+import { corridorValidationError, type OfflineCorridor } from "@/lib/offline/corridor";
 
 /**
  * Offline packs have an intentionally conservative ceiling.  A route above this
@@ -35,6 +36,19 @@ export interface RoutePack {
   cachedAt: string;
   version: number;
   weather?: PackWeather;
+  /**
+   * Surrounding context (nearby roads, trails, water, shelters) for use when the
+   * hiker is off the route line.
+   *
+   * Deliberately optional, and deliberately added WITHOUT bumping
+   * ROUTE_PACK_VERSION. A version bump marks every already-saved pack "stale",
+   * which would tell a hiker who prepared correctly last night that their
+   * offline data is no longer trustworthy and push them to re-download it --
+   * possibly with no signal. An older pack without a corridor is still a
+   * complete, navigable Safety Map, so it stays valid and simply reports that no
+   * corridor is saved.
+   */
+  corridor?: OfflineCorridor;
 }
 
 interface RoutePackAlias {
@@ -187,6 +201,8 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
     return "Saved route weather snapshot is invalid.";
   }
+  const corridorError = corridorValidationError(pack.corridor);
+  if (corridorError) return corridorError;
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -274,6 +290,7 @@ export function buildRoutePack(input: {
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   weather?: PackWeather;
+  corridor?: OfflineCorridor;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -296,9 +313,35 @@ export function buildRoutePack(input: {
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
     weather: input.weather,
+    corridor: input.corridor,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
-  const error = validationError(pack);
+  let error = validationError(pack);
+  if (error && pack.corridor) {
+    // The corridor is context; the route is the Safety Map. If the combined
+    // payload is rejected -- almost always the total size cap -- the corridor is
+    // dropped and the route is saved without it, with the loss stated. Throwing
+    // here instead would mean a hiker who asked for extra offline detail ends up
+    // with no offline route at all, which is the opposite of what they wanted.
+    const withoutCorridor: RoutePack = { ...pack, corridor: undefined };
+    const fallbackError = validationError(withoutCorridor);
+    if (!fallbackError) {
+      withoutCorridor.corridor = {
+        ...pack.corridor,
+        lines: [],
+        points: [],
+        coverage: "failed",
+        note: "Surrounding terrain was dropped because the pack exceeded the offline storage limit. The route line is saved and navigable.",
+      };
+      // Re-check: the marker itself must not be what breaks the pack.
+      error = validationError(withoutCorridor);
+      if (error) {
+        withoutCorridor.corridor = undefined;
+        error = validationError(withoutCorridor);
+      }
+      if (!error) return withoutCorridor;
+    }
+  }
   if (error) throw new Error(error);
   return pack;
 }

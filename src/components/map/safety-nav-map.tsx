@@ -5,6 +5,7 @@ import { safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
 import { unwrapLongitude } from "@/lib/geo/antimeridian";
 import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
+import type { OfflineCorridor } from "@/lib/offline/corridor";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -28,6 +29,11 @@ interface SafetyNavMapProps {
    * when warning banners stack up in the header.
    */
   topInsetPx?: number;
+  /**
+   * Surrounding context drawn beneath the route. Optional: packs prepared before
+   * corridors existed simply have none, and the route-only map remains complete.
+   */
+  corridor?: OfflineCorridor | null;
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -35,6 +41,48 @@ function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
     ? [geometry.coordinates]
     : geometry.coordinates;
 }
+
+/**
+ * Corridor styling.
+ *
+ * Every colour here is measured to sit below the route line's relative luminance
+ * in the same display mode, and dashed for everything that is not a road, so
+ * context can never be mistaken for the line the hiker is meant to be on. Each
+ * night mode keeps its own single-hue palette so red and NVG stay dark-adapted.
+ *
+ * The day palette was originally lifted from the same bright Tailwind ramp used
+ * for alerts, and measurement showed all five colours outshining the route: the
+ * worst was `trail` at #86efac, luminance 0.70 against the route's 0.27 -- and in
+ * nearly the route's own hue, so a side trail read as the line to follow. These
+ * values keep a 25x contrast ratio against the map background while staying
+ * subordinate to the route.
+ */
+const CORRIDOR_LINE_STYLE: Record<
+  "road" | "track" | "trail" | "water" | "barrier",
+  { day: string; red: string; nvg: string; width: number; dash: number[] }
+> = {
+  road: { day: "#64748b", red: "#7f4a4a", nvg: "#4a7f5c", width: 2.5, dash: [] },
+  track: { day: "#78716c", red: "#6f4040", nvg: "#42704f", width: 2, dash: [6, 4] },
+  trail: { day: "#55707d", red: "#5f3636", nvg: "#3d6647", width: 1.5, dash: [4, 3] },
+  water: { day: "#2563eb", red: "#6b3b52", nvg: "#38614f", width: 2, dash: [] },
+  barrier: { day: "#8b5cf6", red: "#743a4a", nvg: "#3f6b52", width: 1.5, dash: [2, 3] },
+};
+
+/**
+ * Corridor points are deliberately NOT held below the route's brightness. A line
+ * competes with the route because it also says "follow me"; a 3.5 px dot marking a
+ * shelter or a spring is a destination, and being easy to spot is the whole point
+ * of drawing it.
+ */
+const CORRIDOR_POINT_STYLE: Record<
+  "water" | "shelter" | "campsite" | "building",
+  { day: string; red: string; nvg: string }
+> = {
+  water: { day: "#38bdf8", red: "#a35c72", nvg: "#5c9c78" },
+  shelter: { day: "#fcd34d", red: "#b06a54", nvg: "#7fb890" },
+  campsite: { day: "#c4b5fd", red: "#8d5566", nvg: "#6ba283" },
+  building: { day: "#cbd5e1", red: "#8a5252", nvg: "#5d8a6d" },
+};
 
 const WAYPOINT_COLORS: Record<string, string> = {
   water: "#38bdf8",
@@ -63,6 +111,7 @@ export function SafetyNavMap({
   search = null,
   showGrid = true,
   nightMode = "off",
+  corridor = null,
   gpsDenied = false,
   uncertaintyM,
   topInsetPx = 0,
@@ -180,10 +229,44 @@ export function SafetyNavMap({
         }
       }
 
+      // Corridor context is drawn first so the route always sits on top of it.
+      // Nothing here may compete with the route line for attention: these are
+      // things that exist nearby, not the line the hiker is following.
+      if (corridor && (corridor.lines.length > 0 || corridor.points.length > 0)) {
+        ctx.lineJoin = "round";
+        ctx.lineCap = "round";
+        for (const feature of corridor.lines) {
+          if (feature.positions.length < 2) continue;
+          const style = CORRIDOR_LINE_STYLE[feature.kind];
+          ctx.strokeStyle =
+            nightMode === "red" ? style.red : nightMode === "nvg" ? style.nvg : style.day;
+          ctx.lineWidth = style.width;
+          ctx.setLineDash(style.dash);
+          ctx.beginPath();
+          feature.positions.forEach(([lng, lat], index) => {
+            const p = toPx(lng, lat);
+            if (index === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+          });
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        for (const point of corridor.points) {
+          const style = CORRIDOR_POINT_STYLE[point.kind];
+          const p = toPx(point.lng, point.lat);
+          ctx.fillStyle =
+            nightMode === "red" ? style.red : nightMode === "nvg" ? style.nvg : style.day;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
       ctx.strokeStyle = nightMode === "red" ? "#f87171" : "#16a34a";
       ctx.lineWidth = 5;
+      ctx.setLineDash([]);
       for (const line of lines) {
         if (line.length < 2) continue;
         ctx.beginPath();

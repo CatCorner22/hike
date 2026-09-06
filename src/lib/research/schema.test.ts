@@ -36,7 +36,24 @@ describe("trailResearchBriefSchema", () => {
     crowdLevel: "moderate" as const,
     dogPolicy: null,
     campingNearby: [],
-    sources: [{ title: "NPS", url: "https://www.nps.gov/yose" }],
+    sources: [{
+      label: "NPS",
+      url: "https://www.nps.gov/yose",
+      evidenceClass: "official" as const,
+      retrievedAt: new Date(0).toISOString(),
+      freshness: "stale" as const,
+    }],
+    claimSources: {
+      summary: ["https://www.nps.gov/yose"],
+      bestSeasons: [],
+      difficultyReality: [],
+      hazards: [],
+      parking: [],
+      permits: [],
+      crowdLevel: [],
+      dogPolicy: [],
+      campingNearby: [],
+    },
     lastResearchedAt: new Date(0).toISOString(),
   };
 
@@ -45,7 +62,7 @@ describe("trailResearchBriefSchema", () => {
   });
 
   it("rejects a source url that is not a url", () => {
-    const bad = { ...brief, sources: [{ title: "NPS", url: "not a url" }] };
+    const bad = { ...brief, sources: [{ ...brief.sources[0], url: "not a url" }] };
     expect(trailResearchBriefSchema.safeParse(bad).success).toBe(false);
   });
 });
