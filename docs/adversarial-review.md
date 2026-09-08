@@ -1971,6 +1971,48 @@ file reference, every Swift file on disk reaching the Sources phase.
 
 Sixteen fixes, each with a regression test and a mutation check. 1,328 tests.
 
+## Twenty-fifth pass — the corridor palette, and the test that measured the wrong ground
+
+The twenty-fourth pass ended with a test asserting that no corridor line
+outshines the route beside it. This pass is a review of that test, and it found
+that the test was wrong in the direction that matters: it reported the contract
+holding while the map broke it.
+
+**The trail line was brighter than the route on every map with terrain in it.**
+The corridor draws roads, trails and water around the route so a hiker who is off
+the line can see which way is out; the route is the only line entitled to say
+*follow me*. The day trail colour `#86efac` composited over the bare canvas at
+its 0.55 alpha to luminance 0.21, under the route's 0.27, and that is the number
+the test measured. But the corridor is not drawn on the bare canvas. When a pack
+carries elevation, the relief quads go down first, and over a sunlit cell the
+same stroke composites to **0.33 — brighter than the route, in nearly the route's
+own hue**, on exactly the maps that have terrain to get lost in. And flat ground
+is not the quiet case: a level cell returns a hillshade of 0.71, not 0, which
+still puts the old stroke at 0.30, above the route. There was no ordinary terrain
+map on which the measured backdrop was the real one. The colour is now `#22c55e`,
+which holds at 0.22
+against the brightest cell the shader can produce, and the test sweeps the whole
+hillshade range instead of sampling the one backdrop that flattered it.
+
+**The other half of the contract was unenforceable.** "Still bright enough to be
+seen" was `toBeGreaterThan(groundLuminance)` — satisfied by any colour one code
+value above the background, so a fix for the rule above could have been "make it
+black" with the suite still green. It is now a Weber contrast floor of 0.25 held
+against every backdrop, not the WCAG ratio the text tests in this repo use: that
+formula adds 0.05 to both terms to model screen flare, and this map runs between
+0.002 and 0.09 luminance, where the constant dominates and every ratio collapses
+toward 1:1 whatever the colours are. It would have called the night palette
+failing and a near-invisible line passing in the same breath. Measured under
+Weber the palette's tightest case is 0.44, so the floor leaves real headroom
+rather than tracing the current values.
+
+The lesson is the one this document keeps relearning: a test that measures a
+simplified version of the screen reports on a screen nobody is looking at. Both
+mutation checks were run in both directions — restoring `#86efac` fails the
+subordination rule and names the relief cell that does it; darkening the corridor
+toward the background fails the visibility floor; and renaming the shading
+constants fails the file loudly rather than letting it pass while parsing nothing.
+
 ## Severity 1 — position and time are silently wrong
 
 ### F1. `parseUsng` resolves the wrong 2 000 km northing band → ~4 000 km position error

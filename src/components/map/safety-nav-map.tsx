@@ -290,7 +290,7 @@ export function SafetyNavMap({
           if (nightMode === "red") return "#7f1d1d";
           if (nightMode === "nvg") return "#14532d";
           if (layer === "water") return "#38bdf8";
-          if (layer === "trails") return "#86efac";
+          if (layer === "trails") return "#22c55e";
           return "#64748b";
         };
         const pointColor = (layer: string) => {
