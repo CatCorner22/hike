@@ -98,14 +98,28 @@ export function workRestCycle(wbgtC: number, workRate: WorkRate): WorkRestCycle 
 export function estimateWbgtC(input: { tempC: number; rhPct: number; inSun: boolean }): number | null {
   const { tempC, rhPct, inSun } = input;
   if (!Number.isFinite(tempC) || !Number.isFinite(rhPct) || typeof inSun !== "boolean") return null;
-  if (tempC < -20 || tempC > 50 || rhPct < 5 || rhPct > 99) return null;
-  const wetBulbC =
-    tempC * Math.atan(0.151977 * Math.sqrt(rhPct + 8.313659)) +
-    Math.atan(tempC + rhPct) -
-    Math.atan(rhPct - 1.676331) +
-    0.00391838 * Math.pow(rhPct, 1.5) * Math.atan(0.023101 * rhPct) -
-    4.686035;
-  const globeC = tempC + (inSun ? 5 : 0);
+  if (tempC < -20 || tempC > 50 || rhPct < 5 || rhPct > 100) return null;
+  // Stull's fit is published for 5–99 % RH, excluding the combined cold-dry corner
+  // where it wobbles non-monotonically. At saturation no regression is needed — the
+  // wet bulb equals the dry bulb, and heat doctrine has no exemption for the most
+  // dangerous humidity, so RH 100 must not silently delete all guidance. In the
+  // cold-dry corner, clamping RH to the fit's floor removes the wobble; every value
+  // there is tens of degrees below the lowest heat category, so only monotonicity
+  // matters.
+  const fitRh = tempC < 10 ? Math.max(rhPct, 10) : rhPct;
+  const wetBulbC = rhPct > 99
+    ? tempC
+    : tempC * Math.atan(0.151977 * Math.sqrt(fitRh + 8.313659)) +
+      Math.atan(tempC + fitRh) -
+      Math.atan(fitRh - 1.676331) +
+      0.00391838 * Math.pow(fitRh, 1.5) * Math.atan(0.023101 * fitRh) -
+      4.686035;
+  // Black globes in full sun with light wind run 10–20 °C above air (Liljegren 2008);
+  // the old +5 °C put the sun increment at 1.0 °C WBGT, 1–2 full categories low in
+  // exactly the black-flag conditions this estimate exists to flag. +15 °C is the
+  // mid-range, giving a +3 °C WBGT sun-vs-shade difference consistent with published
+  // sun/shade deltas. Still an estimate; a real WBGT needs instruments.
+  const globeC = tempC + (inSun ? 15 : 0);
   // ISO 7243 outdoor form is 0.7*Tnwb + 0.2*Tg + 0.1*Ta; the globe and air weights were
   // transposed, which under-read WBGT in sun and could drop a heat category.
   return round1(0.7 * wetBulbC + (inSun ? 0.2 * globeC + 0.1 * tempC : 0.3 * tempC));
@@ -152,17 +166,27 @@ export function hypothermiaStage(input: {
   ) {
     return null;
   }
-  const severe = !conscious || (coreTempC != null && coreTempC < 28);
+  // `!conscious` counts only for a cold-exposed patient, for the same reason
+  // `!shivering` does below. Unconsciousness on its own describes head injury,
+  // syncope, seizure and hypoglycaemia at least as often as it describes
+  // hypothermia — and this branch's advice is "insulate and handle gently",
+  // which is actively wrong for a heat-stroke patient who needs immersion. A
+  // measured core temperature under 28 °C is evidence in itself and needs no
+  // corroborating history.
+  const severe = (!conscious && coldExposed) || (coreTempC != null && coreTempC < 28);
   // `!shivering` counts only for a cold-exposed patient. Without that guard every
   // comfortable, non-shivering person was staged "moderate hypothermia", and the
   // "none" branch below was unreachable.
   const shiveringStopped = coldExposed && !shivering;
   const moderate =
     !severe && (alteredMental || shiveringStopped || (coreTempC != null && coreTempC < 32));
+  // Active shivering is itself evidence of cold stress (ICAR HT1: conscious +
+  // shivering = mild) — it needs no coldExposed corroboration. Only STOPPED shivering
+  // is ambiguous, because on its own it also describes every warm, comfortable person.
   const mild =
     !severe &&
     !moderate &&
-    ((coldExposed && shivering) || (coreTempC != null && coreTempC < 35));
+    (shivering || (coreTempC != null && coreTempC < 35));
   if (severe) {
     return {
       stage: "severe",
@@ -170,7 +194,7 @@ export function hypothermiaStage(input: {
       actions: [
         "Call emergency services and evacuate urgently; protect airway and insulate from ground, wind, and moisture.",
         "Handle gently and keep horizontal: rough handling of a severely hypothermic casualty can trigger a fatal arrhythmia.",
-        "Do not declare death in the field: no one is dead until warm and dead. Start CPR only if no signs of life and trained to do so.",
+        "Check responsiveness and normal breathing carefully — severe hypothermia can make breathing slow and shallow. If unresponsive and not breathing normally or only gasping, call 911, get an AED, and start chest compressions at 100–120/min. Use hands-only CPR if untrained or unwilling to give breaths; if trained and willing, give 30 compressions and 2 breaths. Do not declare death in the field.",
       ],
     };
   }
@@ -213,14 +237,23 @@ export function layeringAdvice(tempC: number, windKph: number, isWet: boolean): 
   return advice;
 }
 
-/** Wilderness Medical Society heat-illness guidance: altered mental status in a hot person is heat stroke until proven otherwise. */
+/**
+ * Wilderness Medical Society heat-illness guidance: altered mental status in a
+ * hot person is heat stroke until proven otherwise.
+ *
+ * "In a hot person" is the load-bearing half, and this function used to skip
+ * it: altered mental status alone returned heat stroke, whose first action is
+ * cold-water immersion. Pass `heatExposed` for that branch to fire. A measured
+ * core temperature at or above 40 °C is evidence in itself.
+ */
 export function heatIllnessTriage(input: {
   coreTempC?: number;
   alteredMental: boolean;
   sweating: boolean;
   crampsOnly: boolean;
+  heatExposed?: boolean;
 }): HeatIllnessAssessment | null {
-  const { coreTempC, alteredMental, sweating, crampsOnly } = input;
+  const { coreTempC, alteredMental, sweating, crampsOnly, heatExposed = false } = input;
   if (
     (coreTempC != null && (!Number.isFinite(coreTempC) || coreTempC < 30 || coreTempC > 45)) ||
     typeof alteredMental !== "boolean" ||
@@ -229,7 +262,7 @@ export function heatIllnessTriage(input: {
   ) {
     return null;
   }
-  if (alteredMental) {
+  if ((alteredMental && heatExposed) || (coreTempC != null && coreTempC >= 40)) {
     return {
       condition: "stroke",
       severity: "critical",
@@ -240,7 +273,14 @@ export function heatIllnessTriage(input: {
       ],
     };
   }
-  if (crampsOnly) {
+  // Every branch below needs heat evidence too, for the same reason the stroke
+  // branch does. Cramps in a cold, wet hiker are not heat cramps, and sweating
+  // on its own describes everybody walking uphill — while the advice here
+  // ("rest in shade", "actively cool with water and airflow") is the opposite
+  // of what a cold patient needs. Without these guards the two aids could both
+  // return an active assessment for one patient: shivering plus sweating gave
+  // mild hypothermia beside heat exhaustion, with no exposure entered at all.
+  if (crampsOnly && heatExposed) {
     return {
       condition: "cramps",
       severity: "caution",
@@ -250,7 +290,7 @@ export function heatIllnessTriage(input: {
       ],
     };
   }
-  if (sweating || (coreTempC != null && coreTempC >= 38)) {
+  if ((sweating && heatExposed) || (coreTempC != null && coreTempC >= 38)) {
     return {
       condition: "exhaustion",
       severity: "warning",

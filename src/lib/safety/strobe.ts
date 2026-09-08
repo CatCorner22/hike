@@ -3,6 +3,7 @@
  * characters = 3, gap between repeats = 7. The tone and the haptic are both built from
  * these so they cannot drift apart.
  */
+import { vibratePattern } from "@/lib/platform/haptics";
 const UNIT_MS = 120;
 const DOT_MS = UNIT_MS;
 const DASH_MS = UNIT_MS * 3;
@@ -34,8 +35,8 @@ function sosVibrationPattern(): number[] {
 export const SOS_VIBRATION_PATTERN = sosVibrationPattern();
 
 export function vibrateSos() {
-  if (typeof navigator === "undefined" || !navigator.vibrate) return;
-  navigator.vibrate(SOS_VIBRATION_PATTERN);
+  // Through the platform seam: dead on iOS Safari, alive in the shell.
+  vibratePattern(SOS_VIBRATION_PATTERN);
 }
 
 function audioContextCtor(): typeof AudioContext | undefined {

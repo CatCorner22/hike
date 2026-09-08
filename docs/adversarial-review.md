@@ -1,4 +1,4 @@
-# Adversarial review — Hike
+# Adversarial review — Klandagi
 
 Scope: whole repository at `0809db7` (current `main`). Focus weighted toward the
 life-safety surface (`src/lib/safety/**`, `src/lib/geo/navigation.ts`,
@@ -552,7 +552,7 @@ cold offline navigate.
 the UTM grid, but the paper sheet interpolated the result straight into a template:
 
 ```
-=== HIKE PAPER BACKUP (hand to SAR) ===
+=== KLANDAGI PAPER BACKUP (hand to SAR) ===
 --- GRIDS ---
 Start USNG: null
 End USNG: null
@@ -1288,6 +1288,688 @@ trail distance beside the bearing — are each caught.
 
 
 ---
+
+## Sixteenth pass — altitude illness (`wilderness.ts`)
+
+### W1. Altitude could manufacture an emergency out of a headache
+
+`amsAssessment` already separates *exposure* (altitude, ascent rate) from *symptoms*, and
+its own comment gives the reason: scoring exposure as illness produced "a false alarm that
+teaches people to ignore the warning bar". That fix stopped exposure creating a diagnosis
+out of nothing — but severity was still thresholded on `exposure + symptoms`, so exposure
+could still drive the *level*:
+
+| symptoms | 1 500 m, +100 | 2 600 m, +200 | 3 500 m, +450 |
+|---|---|---|---|
+| headache | mild | mild | **severe — "Possible HACE/HAPE … descend immediately. This is an emergency."** |
+| headache + nausea | mild | moderate | **severe** |
+
+A headache at 3 500 m after a fast climb is the most common altitude symptom there is and
+is textbook **mild** AMS; the standard response is to stop ascending, rest and hydrate.
+Two hikers with identical symptoms were also handed diagnoses three steps apart on
+altitude alone.
+
+There is a second problem in that string. HACE is defined by ataxia or altered mental
+status; HAPE by breathlessness at rest — which this symptom list cannot record at all. So
+the emergency wording named two conditions, one of which the input can never establish,
+on symptoms that established neither.
+
+Fixed by driving severity from the symptoms and letting exposure escalate it **one step,
+not three**, and by reserving the HACE wording for the finding that earns it:
+
+| symptoms | result now |
+|---|---|
+| headache, 3 500 m, +450 | moderate — "do not go higher. Rest, hydrate, monitor closely." |
+| headache + nausea + dizziness | moderate at any altitude |
+| all five non-ataxia symptoms | severe — "Severe AMS — descend now", **no** HACE/HAPE claim, plus an action naming what would make it one |
+| ataxia | severe — "treat as HACE … this is an emergency", at every altitude, unchanged |
+| fatigue alone below 2 500 m | none, unchanged |
+
+An existing assertion pinned `headache` at 3 600 m as `severe`; like the `Start USNG` and
+`paceBeads(9).km === 1` assertions before it, it encoded the behaviour being fixed and was
+updated deliberately, with the reasoning recorded beside it. The test's intent — that
+symptoms produce a diagnosis — is preserved; only the severity moves.
+
+**This one is a judgement call in a medical area and is flagged as such.** It makes the
+app *less* alarming in a specific case, which is the direction that deserves scrutiny. The
+change aligns the ladder with ordinary wilderness-medicine practice (stop ascent for mild;
+descend for moderate and severe; emergency for HACE) and does not touch the ataxia path,
+which remains severe and unconditional.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 705/705 green, `npm run build`
+succeeds. Four mutations — thresholding on the combined score again, letting exposure
+escalate all the way to severe, restoring the HACE/HAPE wording for every severe case, and
+dropping the one-step escalation entirely — are each caught, so the tests pin both
+directions.
+
+
+---
+
+## Seventeenth pass — the track-point window (`backtrack.ts`)
+
+`gainLastHourM` and `rapidAscentWarning` decide whether the party is climbing fast enough
+to be at risk of altitude illness, and `stationaryMinutes` decides whether they have
+stopped moving. All three read the breadcrumb track through the same time window.
+
+### T1. One corrupt timestamp made "not moving" return NaN
+
+`sampleTime` guards `Date.parse` with `Number.isFinite`. `stationaryMinutes`, twenty
+lines above it in the same file, called `Date.parse` raw:
+
+```
+[40 min ago, 20 min ago, now]                 -> 40
+[40 min ago, "not-a-date",  now]              -> NaN
+```
+
+`Math.min(oldest, NaN)` is NaN and it propagates out. NaN compares false against every
+threshold, so the not-moving warning did not misfire — it **silently stopped firing**,
+which is the worse failure.
+
+### T2. One NaN altitude deleted the rapid-ascent warning
+
+`altitude != null` lets NaN through, and one NaN poisons `Math.min`. A real 900 m ascent:
+
+| track | `gainLastHourM` | warning |
+|---|---|---|
+| clean | 900 m | "You gained ~900 m in the last hour above 2,400 m…" |
+| one NaN altitude inserted | **NaN** | **null** |
+
+So a single bad altitude sample removed the altitude-illness warning entirely *and* zeroed
+the exposure that feeds `amsAssessment`. Fail-quiet, in the direction of under-warning.
+
+### T3. A future-dated point counted as "the last hour"
+
+The window test was `now - t <= windowMs`, which **any** future timestamp satisfies. A
+point dated 90 minutes ahead at 9 000 m was inside the window and became the newest
+sample:
+
+```
+You gained ~7000 m in the last hour above 2,400 m. Slow down and watch for altitude illness.
+```
+
+7 000 m in an hour is not a rate a human produces, and an impossible warning is how a party
+learns to disbelieve the warning bar — the same failure `amsAssessment`'s own comment cites.
+
+All three now share one guarded window: an unparseable timestamp drops the sample rather
+than fabricating recency, a timestamp beyond two minutes of clock skew ahead of `now` is
+rejected, and altitudes are filtered to finite values.
+
+### Also checked, and found sound
+
+`gainLastHourM` uses `last − min(window)` rather than summing positive deltas, so it does
+not accumulate GPS altitude jitter the way the recorder's naive sum once did — the
+residual bias from taking a minimum over a noisy series is on the order of 10–15 m against
+300 m thresholds. `readiness.ts` is sound.
+
+### Verification
+
+`tsc --noEmit` clean, `eslint` 0 errors, `vitest run` 710/710 green, `npm run build`
+succeeds. Five mutations are each caught — but only after a sixth test was added: the
+first round left "corrupt timestamps read as `now`" **surviving** inside the altitude
+window, covered only for `stationaryMinutes`. The gap was in the tests, not the fix, and
+is recorded here because a mutation that survives is the only evidence that a test suite
+is thinner than it looks.
+
+
+---
+
+## Eighteenth pass — the field-decision modules, by adversarial swarm
+
+Twenty-three agents (7 finders, 14 refuters, 2 tie-breakers) executed every export of
+`altitude`, `tccc`, `avalanche`, `decision-support`/`field-ops`, `thermal`, `water`,
+`load`/`gps-quality`, and `checkin`/`navlog` across hostile and realistic ranges.
+39 findings raised; 14 refuted under a default-refute discipline (each finding survived
+only if two independent refuters failed to kill it); 25 confirmed and fixed. Every fix
+carries a regression test, and reverting a sampled fix fails its test (verified by
+mutation). Highlights, worst first:
+
+- **ALPTRUTh "A" asked the wrong question** (`avalanche.ts`, S1): "Is a danger posted?"
+  double-counted "R" (Rating) and dropped McCammon's actual A — recent avalanches in the
+  past 48 h, the single strongest observable clue.
+- **No heat advisory in dry heat** (`field-ops.ts`, S1): `heatIndexC` rejected every
+  RH < 40 %, so 43 °C desert air produced no advisory at all. Now full NWS treatment:
+  the low- and high-RH adjustments, plus a joint dewpoint bound so impossible hot-humid
+  input can no longer render "Heat index 339 °C".
+- **Cold-water chemical wait was 1.5×, not the doubled contact time** (`water.ts`, S1):
+  CDC and halogen labels double the 30-min wait in cold water — 60 min, not 45.
+- **A future-dated or corrupt check-in reference silenced the overdue monitor**
+  (`checkin.ts`, S1 ×2): clock skew delayed the alarm by exactly the error (or forever),
+  a NaN interval disarmed it permanently, and one corrupt `recordedAt` row threw
+  `RangeError` through the panel render and the SAR dossier. All fail closed now; a
+  stale check-in from a previous outing no longer beats a fresh `armedAt`, re-arming
+  stamps a fresh session start (while keeping the readiness gate's byte-for-byte
+  round-trip), and `logCheckin` reports whether the write actually landed.
+- **The navigate screen's avalanche warning vanished above 45°** and
+  `slopeAnglesFromProfile` missed every end-aligned window — a 60 m headwall in the
+  last 80 m of a route read as 0°. Steeper-than-band terrain now warns, and the window
+  sweep evaluates both sample- and end-aligned starts (the maximum of a piecewise-linear
+  window average can occur only at those alignments).
+- `spo2Warning` silently dropped every warning below sea level; the sea-level
+  expectation is the conservative floor there (Badwater, Dead Sea, coastal GPS noise).
+- `estimateWbgtC`: RH 100 % no longer deletes all heat guidance (wet bulb = dry bulb at
+  saturation); full sun now adds ~3 °C WBGT (globe = air + 15 °C per Liljegren
+  mid-range) instead of 1 °C — 1–2 whole flag categories in exactly black-flag
+  conditions; the Stull cold-dry corner is clamped monotone.
+- `hypothermiaStage` staged an actively shivering patient as "no signs supplied" unless
+  a separate `coldExposed` flag was set — ICAR HT1 is conscious + shivering = mild, and
+  only *stopped* shivering needs corroboration.
+- `windChillWarning` went silent below 5 km/h wind at any temperature (calm -35 °C air
+  read as no cold hazard, contradicting `frostbiteMinutes`); it now falls back to
+  ambient temperature, which is what the ECCC bands apply in calm air.
+- `gpsAnomalyWarning` accepted any teleport across a gap longer than 20 s; the speed
+  test normalizes by dt, so only non-positive gaps are excluded now.
+- `tourniquetStatus` could display "120 min" beside "under 2 h" with the conversion
+  window open (display now floors); START red-tag reasoning no longer rounds RR 30.4
+  into "30 … is over 30"; nav-log bearings render in [0, 360); the phantom
+  `TRUSTED_STALE_FIX_MS` constant was removed rather than weakening `isTrustedFix`'s
+  deliberate display-only rule for stale fixes.
+
+Also fixed in this pass, from direct review of the PR #52 merge: an owner rotation
+(cleared cookies, rotated `SESSION_SECRET`) permanently disabled recording — the
+pending-stop reconciliation loop 404-ed forever with GPS held off, and the 30-second
+background flush treated the same 404 as permanent and destroyed the queued track, up
+to 100 points per batch. Recordings now re-home: the dead remote identity is forgotten,
+the idempotency key rotates, queued points move back under the stable local ID, and the
+whole recording replays under the current owner. `e2e/offline-navigation.mjs` also
+diagnoses a stuck service-worker install by naming the unservable precache URLs.
+
+## Nineteenth pass — survival-content accuracy vs public doctrine
+
+Inline claims audit of the static content cards against public standards (FCC Part
+95/97, USCG, NOAA SARSAT, ITU-R M.1677, the peacetime 9-line, WMS/AHA lay-rescuer
+guidance, NPS/IGBC wildlife doctrine, SAR litter-carry teaching). Verified sound:
+`comms.ts` (every frequency, licensing and SARSAT claim), `strobe.ts` (Morse unit
+ratios exact; the letter-gapped SOS is the decodable practical form), `sar-advanced.ts`
+(LZ ≤ 8° with walk-it hedge; 6/12 carriers at ~1 mph), `field.ts`, and the wildlife
+SOPs (including the deliberately contrasted run-from-moose vs never-run-from-bears).
+
+Fixed:
+- `sere.ts` — the downstream-travel line read **inverted** ("follow downstream only if
+  cliffs and waterfalls are likely"), recommending exactly the terrain that traps lost
+  hikers; and "treat MARCH" now names the app's canonical MARCH-PAWS sequence.
+- `medevac.ts` — the 9-line mixed wartime and peacetime forms: L6 rendered the wartime
+  "Security" line (meaningless to a civilian SAR dispatcher) while L9 already used the
+  peacetime terrain form. L6 is now the peacetime form — number and type of injuries —
+  absorbing the redundant MEDICAL trailer.
+- `wilderness.ts` — the first-aid card's C line opened with "start CPR now",
+  unconditioned on a card of standalone one-liners; CPR is now explicitly conditioned
+  on unresponsive + not breathing normally, with the contraindication stated.
+
+## Twentieth pass — the render surface, by adversarial swarm
+
+Five finder agents over `safety-panel.tsx` (2,144 lines, first end-to-end read) and
+`navigate/[planId]/page.tsx` by section, each finding then attacked by two
+independent refuters instructed to default to REFUTED; 26 findings, 20 confirmed by
+both refuters, 6 refuted. The theme is the named N3 class throughout: correct,
+pass-18-hardened safety math defeated at the render boundary — severity re-derived
+by substring instead of the lib's boolean, computed warning fields dropped, tested
+reconciliation layers unreachable from any JSX path.
+
+Confirmed and fixed (S1): a corrupt stored `returnAt` was reconstructed into an
+`Invalid Date` whose `.toISOString()` threw during render and in the 30-second
+monitor effect, taking the whole navigate screen down offline until storage was
+wiped — reconstruction is now guarded and the lib's fail-closed label surfaces
+instead. The CASEVAC card rendered "Non-walker — stay put" beside severe-AMS
+"descend immediately. This is an emergency." — the tested `medicalOverride` /
+`reconcileTriagePriority` layer built for exactly this conflict was dead code; the
+panel now wires severe `amsResult` into `casevacDecision`, producing one governing
+order.
+
+Confirmed and fixed (S2): the check-in monitor's fail-closed alarm states (corrupt
+interval, unreadable timestamp) rendered in the amber info tier because styling was
+keyed on `label.includes("OVERDUE")` — now keyed on the lib's `overdue` boolean.
+Both "I'm OK" buttons were disabled without a GPS fix while the overdue banner
+instructed tapping them — a check-in is proof of life, not a position report, and
+is no longer fix-gated. A storage-refused monitor arm silently reverted the
+checkbox — the refused write now states itself, and the arm-time is stamped in the
+optimistic state so a stale check-in cannot flash a false OVERDUE during the write.
+Frostbite/heat-stroke warnings rendered in the muted placeholder gray — the lib now
+grades the band (`windChillHazard`/`heatHazard`) and the render styles by that
+severity, never by sniffing text. The GPS-denied dead-reckon fix ignored the
+terrain pace factor the panel collects (25% overshoot in snow, on the position SOS
+transmits) — terrain now reaches the page's `drFix`. The GPS-DENIED banner and
+grid line quoted a private ±10% radius while the map ring, SOS message and rescue
+card carried `deadReckonUncertaintyM` (~4× wider after a kilometre) — one model
+everywhere now. The copied compass card labeled magnetometer headings "Source:
+GPS" and advised against GPS-freeze for a live compass — the fused source and a
+matching failure-mode caveat now flow from the page.
+
+Confirmed and fixed (S3): HACE-emergency and mild-caution AMS output shared one
+amber style (severe now uses the destructive tier); the "Check-in NOT SAVED"
+warning was erased by the next 30-second tick (now sticky state cleared only by a
+successful check-in); `gmAngleCard.staleness` — the 2030 declination-model expiry
+warning — was computed and dropped by every consumer (now rendered in the panel,
+the navigate grid line, and the compass card); the panel and `formatGmtCard`
+rounded 359.7° to a nonexistent "360° true" (now `roundBearing`); Est. time /
+Climb left kept route-forward figures beside a Backtrack-referent Remaining stat
+(they now follow the referent, flat-Naismith floor marked "+"); `snapHintRef` was
+maintained on every fix and read by nothing (deleted); `useBatteryStatus` carried
+an unrendered duplicate battery warning re-encoding the W3 silent 16–20% band
+(deleted — `useBatteryWarning` is the single source).
+
+Also mounted this pass: the `PositionQr` SAR handoff (QR of `buildSarHandoff`,
+scannable by any stock camera with zero connectivity) behind a toggle in the
+Advanced SAR tools.
+
+Refuted, no action: avalanche descent silencing (tree already applies `Math.abs`
+before the band gate, with descent tests); the NaN water banner (`waterReminder`
+fails closed on corrupt baselines). Four navigate-lifecycle findings (queue busy
+loop, double-tap double-start, refresh-timeout route destruction, premature
+offline-banner clear) were confirmed as real against the merged history and
+verified already fixed at HEAD — the refuters re-executed each repro green against
+current code.
+
+## Twenty-first pass — the iOS port, by adversarial swarm
+
+Six finder groups over the query-param routing migration, the fixed navigate shell,
+the platform seams, the Capacitor register layer, the dual builds and the shell
+runtime; every finding attacked by two independent skeptics instructed to default to
+REFUTED. Fourteen confirmed unanimously, two refuted. A first run's "refuted" labels
+were dead-agent artifacts — the skeptics had died on account session limits, leaving
+findings marked refuted with empty reason strings — so the whole set was re-verified
+on live agents before any of it was believed. That trap is worth naming: a swarm that
+dies mid-verification produces output shaped exactly like a verdict.
+
+**Routing migration (6, fixed in `89d9438`).** The home card titled "Upcoming plans"
+sorted descending, so it headlined the hike furthest away and truncated tomorrow's out
+of the list entirely. Legacy path-shaped URLs dead-ended with no redirect. The trail
+research brief and the GPX export anchor both bypassed `apiFetch`, so they resolved
+against `capacitor://localhost`, where no API exists — dead in the shell. Ids from
+`?id=`/`?target=` were interpolated into API paths without `encodeURIComponent` in two
+pages. And the home page rendered fetch *failures* as the empty state: "No recorded
+hikes yet" and first-hike onboarding, shown to someone whose requests had just failed.
+
+**The fixed navigate shell (6).** The offline reference content was unreachable
+offline: all eight safety panels loaded through `next/dynamic`, so their chunks were
+never named by the navigate document and the warm pass never precached them — opening
+the Safety panel with no service threw `ChunkLoadError` and replaced live navigation
+with the error screen. The cached shell could never be refreshed, because the worker
+answered even an explicit `no-store` fetch from cache. The version marker was a
+tautology — `isMarkedNavigateShell(...) || looksLikeNavigateHtml(...)`, whose second
+disjunct is already true by the time it runs — so the kill switch that lets a release
+reject shells stamped by an older one did nothing. Readiness applied no age rule at
+all while the worker expires cached assets at 30 days, so it reported routes trip-ready
+whose assets the worker would already refuse to serve. `/offline` and `/saved` were
+precached with `revision: null`, which keys an entry by URL alone and never refetches
+it, so the offline recovery surface stayed frozen at first install and went dead as
+soon as a deploy rotated its chunks. And the e2e probe matched on copy that had drifted
+from the app's strings, so a real prepare-failure crashed the probe instead of
+diagnosing it.
+
+**Platform seams (2 confirmed, 2 refuted).** `syncOverdueNotification` was called twice
+as `void` from a `datetime-local` onChange, each call on an independent chain — and a
+clear is one bridge hop where a set is four, so a later-issued clear finished first and
+the set's schedule landed after it: the store holding no deadline while the phone stayed
+armed on the one the hiker had just deleted. Syncs are serialized at the seam now.
+`downloadTextFile`'s adapter branch was `void adapter.saveText(...).catch(() =>
+undefined)`, so every native save failure was invisible — a Filesystem write that ran
+out of space still printed "Backup downloaded." — and the clipboard fallbacks those
+handlers were built around only ran on a synchronous throw, which never happens inside
+WKWebView. Meanwhile `saveTextFile`, which returns whether a save actually ran, had zero
+callers. It is the single path now.
+
+Refuted, but instructive. The claim that a discarded sync status makes the panel
+*misleading* does not hold: `deadlineMessage` is documented and implemented as a
+statement about storage, the helper text under the input scopes the promise to the
+in-app OVERDUE state, and no in-app copy anywhere mentions notifications — the
+denied-permission state is byte-identical to the shipped web behaviour. The gap is
+real but it is elsewhere, in `docs/app-store.md`'s promise of an alarm that "fires on
+the phone itself, even with the app closed"; the panel now surfaces a refused
+permission and the store copy is qualified.
+
+**The adapter-ordering finding, and what refuting it uncovered.** One skeptic held that
+adapters registering after the first mount effects makes the wake lock a permanent
+no-op; the other refuted it on the grounds that the navigate screen can never be the
+first-mounted component in the shell. Settling that disagreement against Capacitor's
+own source found something worse than the finding being adjudicated.
+
+`CapacitorRouter.route(for:)` answers **any** path with an empty file extension using
+the root document:
+
+```swift
+if pathUrl.pathExtension.isEmpty {
+    return basePath + "/index.html"
+}
+```
+
+`WebViewAssetHandler` routes every scheme request through it, and `MainViewController`
+did not override the `open func router()` hook. A `next build` with `output: "export"`
+and `trailingSlash: true` emits a separate document per route, none of whose paths
+carries an extension — so fifteen of the sixteen exported documents were unreachable by
+URL. The failure that matters is not a mistyped link: WKWebView's content process is
+killed under memory pressure, which a rendered map plus a live GPS watch on a long hike
+is exactly the load to provoke, and Capacitor answers that kill with `webView.reload()`.
+The reload re-requests `/navigate/?target=…` and is handed the home page. The hiker
+loses the navigation screen mid-hike, silently, at the moment they depend on it.
+`StaticExportRouter` replaces the stock router; `adversarial/probe-capacitor-routing.mjs`
+carries the same rule in JavaScript and runs it over the built export on every PR.
+
+Fixing it re-armed the finding the skeptics had split over — with deep loads working,
+`/navigate` really can be the first-mounted document — so adapter registration now
+notifies subscribers and the two one-shot samplers listen.
+
+**Found while verifying, not by any agent.** `npm run build:cap` was destroying the web
+build. `distDir: ".next-cap"` redirects the export, but Next still writes its compiled
+build to the default `.next` — so a capacitor build replaced whatever was there with one
+carrying `output: "export"`, `trailingSlash: true` and no API routes, and the next
+`next start` served that: every API call answering with a redirect or a 404 while the app
+looked like it was running. It reads as an application bug, and it cost three separate
+debugging cycles in this session before the cause was found. The build script now moves
+the web build aside the way it already moves the proxy, and the routing probe asserts
+that nothing misleading is left behind.
+
+## Twenty-second pass — ten stakeholder personas on the near-final iOS app
+
+A SAR incident commander, a wilderness EMT instructor, a thru-hiker, a scout trip
+leader, a senior iOS engineer, a land-navigation instructor, an accessibility
+designer, the emergency contact who receives the text, an App Store reviewer and a
+liability attorney, each grounded in the repo and in twelve screenshots of the
+running app at iPhone size, then a chair who re-verified every claimed
+ship-blocker against the tree before believing it. Fifteen survived. Two of them
+were found only because a persona looked at a screenshot rather than at code.
+
+**The compass pointed the wrong way in the shipped default.** `compass-hud.tsx`
+rotated the card by `-heading` and the needle by `+heading` in a group outside
+the card, so the needle read twice the heading against its own dial — 180 showed
+000. The map's heading cone was drawn apex-up inside the rotated scene with no
+rotation of its own, so it rendered exactly where map-north rendered: it pointed
+north in both modes and was correct only while walking due north. The north tick
+was drawn only when north was already up. Separately, `HeadingPlugin.load()` set
+`delegate` and `headingFilter` and never `headingOrientation`, which defaults to
+portrait and is not tracked for you — while `Info.plist` had opted the shell into
+landscape, widening a contract the JS was written against (`device-heading.ts`
+refuses a web sample unless screen orientation is exactly 0). The shell is
+portrait-only again and the plugin tracks orientation.
+
+**One fix in about 560 printed an invalid coordinate.** `toDms` and `toDdm`
+rounded a sexagesimal component and printed it without carrying, so
+`37.749999` became `37°44'60.0"N`. Measured on the shipped functions: 359 bad
+components in 200,000 CONUS samples. Those strings reach the SOS message, the
+rescue card, the QR handoff and the medevac 9-line, and a call-taker who cannot
+type `44'60"` reads it back as `44'06"` — 54 arcseconds, about 1.67 km. Neither
+function had a test anywhere in the repo after twenty-one passes.
+
+**The thermal aids could tell you to insulate and to immerse at the same time.**
+One shared "Altered mental status" checkbox fed both `hypothermiaStage` and
+`heatIllnessTriage`, and the panel rendered both, badged, side by side: moderate
+hypothermia beside heat stroke, opposite interventions, no exposure ever asked
+for. `thermal.ts`'s `severe` branch also lacked the `coldExposed` guard its
+sibling `shiveringStopped` had, so unticking "Conscious" alone — which describes
+head injury, syncope, seizure and hypoglycaemia — returned severe hypothermia. An
+invariant sweep written while fixing it found a second contradiction no persona
+reported: shivering plus sweating returned mild hypothermia beside heat
+exhaustion. Exposure is one exclusive required choice now, and with it
+unanswered the panel renders neither aid and says why.
+
+**Two `.slice()` calls deleted the guidance that matters most.** The wilderness
+first-aid card's seventh entry is the only anaphylaxis line in the codebase, and
+the bear card's seventh is "black bear, fight back; grizzly, play dead". Five
+reference cards were truncated in total; a truncated card looks complete.
+
+**The one line that starts a search carried tomorrow's date.** The overdue
+deadline was `deadline.toISOString()` on the printed leave-behind card, in the
+SMS the contact receives, and in the dossier — and every US evening return after
+about 1600 PDT crosses UTC midnight, printed two lines under a "Planned date"
+rendered as a local wall clock. Three personas found it independently. The local
+form was already stored and thrown away. Alongside it: the private Guardian link
+was built from `window.location.origin`, which is `capacitor://localhost` in the
+shell, so it could not open on the recipient's phone while the sender's own tap
+worked; and the pre-hike gate said "Set these before you leave: they are what
+lets someone find you" above four fields that no code path ever transmits.
+
+**The safety net switched off when the phone went in a pocket.** The navigate
+watch was foreground-only on the theory that the wake lock keeps fixes arriving,
+with `distanceFilter: 0` (the GNSS never sleeps) and no way to turn the wake lock
+off — the only surfaced control being a 10px string a screenshot showed truncated
+to "wake lock ne" by the SOS button. `reverseTrackLine` bridged recording gaps
+with a straight line and gave a confident bearing along it. And a
+`max-height: 3.25rem` in a `max-height: 480px` media query clipped the alert
+layer to one banner inside a `pointer-events: none` container, so rotating the
+phone deleted turnaround and daylight — the two warnings the product is built on
+— with no way to scroll to them.
+
+**The build could not have reached App Review.** The location purpose string
+claimed location never leaves the device, contradicted by `flushActivityPoints`;
+there was no privacy policy or terms page, and a Privacy Policy URL is a required
+submission field; the privacy manifest declared uploaded precise location as
+not-linked when it travels with a stable per-install identifier; and the
+install-from-Safari card rendered inside the shipped app on the exact screen the
+review notes send the reviewer to.
+
+Method note worth keeping: the chair was instructed to verify before promoting,
+and did drop claims that did not survive — the route-card copy preview that
+shows four lines and says "… copied" is honest, because the clipboard gets the
+whole card. A panel that cannot reject its own members is a panel that inflates.
+
+## Twenty-fourth pass — the omnibus production review
+
+Everything the previous twenty-three passes looked at was the app's own logic.
+This one asked a different question: does this thing work as a live deployment
+that people depend on. It found six defects, four of them in code written the
+same day, and it found them by running against a real Postgres 16 instead of the
+JSON fallback every CI job had used until the twenty-second.
+
+**A deployment could not say whether it worked.** With no health endpoint, a
+typo in `DATABASE_URL` produced a server that booted, served the landing page,
+and answered 503 on everything that mattered — discovered by a hiker at a
+trailhead. `GET /api/health` answers it in one unauthenticated request, and the
+same report prints in the first lines of the log, failures first. Verified
+against four broken deployments; each names itself (`ECONNREFUSED`, `ENOTFOUND`,
+`3D000 database "x" does not exist`) with the password nowhere in the response.
+
+**The upload of a finished hike was a thousand round trips.** Saving points
+issued a lookup and an insert per point and read the whole track on every batch.
+Measured: a 500-point batch took 886 ms co-located, which is twenty seconds and
+a gateway timeout against a database one internet hop away. One statement now,
+with the activity's open state still inside the INSERT: **53 ms**, flat past
+twelve thousand points.
+
+**Every wait on the database was unbounded.** `pg` defaults
+`connectionTimeoutMillis` to zero and nothing set a statement timeout, so a
+hung database meant a request that never answered. Measured against a listener
+that accepts the socket and never speaks: 503 in 3.0 s, 500 in 8.0 s, where
+before both hung. The pool also had no `error` listener, and an unhandled
+`error` event on an EventEmitter exits the process — a dropped idle socket would
+have taken down the navigate shell, which is the part that works with no
+database at all.
+
+**Guardian links were promised short-lived and kept forever.** Correctly hidden
+after expiry, never deleted. They are purged a week after they finish.
+
+**And the connection could be stripped.** No HSTS: the first request to a bare
+hostname can be plain http, and a trailhead's open wifi is exactly where a
+network answers it.
+
+### The four found by turning the same pass on the same day's work
+
+**Every GPS timestamp was wrong by the server's UTC offset.** The batched writer
+passed a JS `Date` into raw SQL; `pg` serializes it in the process's local zone
+with an offset, and `::timestamp` throws the offset away. At
+`TZ=America/Los_Angeles` a fix recorded at 12:00Z was stored and read back as
+04:00Z — the number a search team reads off a last known position. Invisible on
+a UTC runner, which is every runner this repo has, so the database CI job now
+runs at `TZ=America/Los_Angeles`.
+
+**The terrain sample budget could be exceeded on a long thin corridor.** An
+out-and-back ridge walk is that shape: 70 km by 200 m produced 1,234 samples
+against a budget of 1,200 — a fourth request to a free public service, for a
+grid that would then have failed its own validator.
+
+**A six-minute walk was described as "about an hour"**, and the hillshade was
+recomputed inside the canvas draw on every GPS fix.
+
+### What was added, and what it is honest about
+
+Power reserve, because a dead phone is the failure that ends a hike badly and
+the app's whole contribution had been to warn about it. Never automatic; offered
+below 25% and not while charging; the trade stated before the tap and a banner
+for as long as it is on, because a degraded position must never look like a good
+one.
+
+Relief shading on the offline map, from an elevation grid sampled over the
+corridor at prepare time — about six kilobytes and two extra requests to a
+service the app already used. North-west lighting, holes drawn as holes, a grid
+under 80% coverage refused outright. The honesty had to move in both directions:
+three surfaces had said "no shaded relief", and a relief sketch presented as a
+topo map is the more dangerous lie, so the guide, the readiness list, the store
+listing and a legend on the navigate screen all state the sample spacing and
+that no cliff narrower than it exists as far as the grid is concerned.
+
+A whole-account export, because everything on the server lived in one database
+with no way to take a copy — on a personal deployment that is one replaced
+container away from every plan and every finished hike.
+
+Every one of these is checked where it lives: `adversarial/database-probe.mjs`
+now covers 34 assertions that only a real database can decide — replayed
+batches, duplicates inside one batch, a finalized track, six concurrent
+overlapping uploads, timestamps either side of a DST boundary, retention, and
+export scoping.
+
+1,380 tests. API 19/19, database 34/34, CSP pass, e2e 8/8,
+offline-adversarial 25/25, routing 17/17, both builds, `npm audit` clean.
+
+## Twenty-third pass — the panel's fast-follows, and the backlog it flagged
+
+Every item the twenty-second pass ranked below a ship-blocker, worked through in
+order, plus the two backlog entries the chair singled out. No new swarm: the
+findings were already named, and what was missing was the work.
+
+**A grid reference said more than the app knew.** The grid line always printed
+ten digits — one-metre precision — whatever the fix behind it was, so a
+dead-reckoned position, which is the app's own estimate after the GPS is gone and
+can be hundreds of metres out, printed identically to a ±5 m satellite fix. The
+digit count now comes from the reported accuracy (1 m under ±10 m, 10 m under
+±100 m, 100 m under ±1 km, 1 km beyond) and a dead-reckoned fix is capped at
+100 m regardless of what accuracy it claims, because that figure describes the
+last real fix and not the estimate. Every grid line also states its datum: a
+reference without one is ambiguous by roughly 200 m in the lower 48 — WGS 84
+against NAD 27 — the same order as the error being reported.
+
+**The leave-behind card never said who to phone.** It had a field for the
+vehicle's license plate and none for the agency with jurisdiction. "Call 911" is
+right in a town and wrong on a trail, where a county sheriff or park dispatch
+runs the search and 911 costs a transfer. The profile carries the responding
+agency and its number, the card prints CALL FIRST at the top of the overdue
+block, and when nobody recorded one it says to ask before the hiker leaves —
+a question someone can still act on, unlike a blank.
+
+**The tourniquet clock could only start at "now", and offered conversion from
+minute zero.** A tourniquet goes on before a phone comes out, so the clock ran
+late by however long the casualty was being treated first — and the boundary
+that ran late with it is the 6 h one, the one that decides whether the limb is
+salvageable. The applied time is now correctable in place, clamped so it can
+never sit in the future and never more than a day back, and the 2 h and 6 h
+decision points print as wall-clock Zulu times. Conversion is gated on the
+conditions CoTCCC actually names — evacuation delayed, no shock, not an
+amputation, someone present to watch the wound — where before it was offered to
+anyone whose tourniquet was under two hours old, which meant a solo hiker who
+had just stopped a femoral bleed was invited to undo it two minutes later. An
+unticked box reads as "not confirmed", never as "confirmed false". And the mark
+no longer reads `TQ LIMB NOT ENTERED 1603Z`: there is no mark until a limb is
+recorded, though the time still reaches the casualty card.
+
+**Turnaround warnings ignored the pace the app had been measuring all along.**
+`pace.ts` was a flat 5 km/h — a fit walker on a good path with a day pack —
+while `guardian/status.ts` already computed the party's real speed and spent it
+only on the ETA sent to the people at home. A troop moving at 2 km/h was told six
+flat kilometres was seventy minutes when it was three hours. The measured pace
+now feeds the turnaround warning, the HUD tile and the panel readout, taking the
+slower of the book figure and the party's own, under the same gates as the
+family-facing ETA so the two screens cannot disagree about whether a pace is
+known. Every estimate says which estimator produced it.
+
+**A green check sat beside "context not saved."** One readiness row computed its
+pass mark from a different condition than its own title branched on — the only
+row in the list where the two disagreed — so VoiceOver read "Nearby coverage
+recorded; context not saved. Pass."
+
+**"Party size: 1" for a group of nine.** The field existed only behind the
+navigate gate, so a fresh install printed the default onto the leave-behind card
+and the SOS text as though somebody had stated it. It is now on the pre-hike
+checklist, the profile records whether anyone actually stated a number, and both
+cards say "not stated — ask the contact how many went out" when nobody did.
+
+**"Not set up: ICE contact is unusable: ICE phone is required., Planned return
+time."** The navigate banner joined the validator's own sentences with commas. A
+readiness gap now carries two strings — the validator's words for the field that
+fixes it, a short imperative for the sentence — so the seams are gone by
+construction rather than by whoever remembers to reword at the call site.
+
+**Status colour was hue without luminance.** Measured in the running app against
+the page background: `text-green-600` is 3.22:1 and `text-amber-600` is 3.20:1,
+both under AA's 4.5:1 for body text. The -700 shades measure 4.95:1 and 5.03:1.
+Separately, the SOS strobe's Stop control was the app's secondary grey on a
+background alternating white and black — 1.09:1 against the light frame,
+invisible half the time, on the one screen where panic is the expected state. It
+now carries its own colour and a double outline, and the strobe does not start by
+itself on a device that asked for reduced motion.
+
+**The trauma card was set in 12px type behind five collapsed sections**, asked
+for two dropdown answers before printing any action text, and its "Start
+tourniquet clock" button was 28 px tall. Tap targets across the app moved to
+Apple's 44 pt guidance — the default button was 32 px and "sm" was 28 px.
+
+**Sleep Focus was swallowing the alarm the app exists to raise.**
+`@capacitor/local-notifications` has no way to set an interruption level, so
+every overdue alarm shipped at `.active`, which iOS withholds during any Focus
+mode and can fold into a Scheduled Summary. The app now ships its own
+notification plugin setting `.timeSensitive`, with the entitlement that lets the
+mark break through, and asks for the permission on the pre-hike checklist rather
+than from inside a datetime picker's onChange where one reflexive "Don't Allow"
+cost the whole trip's alarm silently.
+
+**Every content-process kill left a CLLocationManager running.** The
+background-geolocation watcher id lived only in the JavaScript closure that
+created it. WKWebView kills its content process under memory pressure and
+Capacitor answers with `webView.reload()`; the page dies, the native manager does
+not, and the reloaded page opens another. One orphan per kill at navigation
+accuracy, against the battery that decides whether the hiker walks out. Ids now
+outlive the page in Preferences and are reclaimed at bootstrap before any adapter
+is published.
+
+**The submission notes told whoever files this app to answer "None" to every
+objectionable-content question.** Two taps from the home screen is a tourniquet
+conversion timer; one tab over is snare and deadfall construction. That is a
+2.3.6 metadata violation checkable by anyone who opens the Medical tab. The
+notes now describe the content question by question. The recorder also states,
+before the Start button, that recording keeps GPS running with the screen off and
+uses the battery noticeably faster — the notice guideline 2.5.4 asks for, and
+which no user-facing string in the app had ever carried.
+
+**"Subtract 15.0°" came out of a table of whole numbers.** The declination model
+is integers on ten-degree cells; at Yosemite Valley it returns 13.4° where the
+published field is about 12.4, and the navigate screen printed a tenth of a
+degree — roughly twenty times the precision the source supports, in the
+typography of a surveyed figure. Everything now leaves the model as whole degrees
+with its own error beside it ("subtract 15° ±2°"), and the uncertainty widens as
+the model ages. `headingDisagreement`, the check meant to catch a declination
+sign error, had a 45° threshold — a quadrant — while a sign error over the
+western US produces 12° to 27°. Every one passed under the gate built to catch
+it; the threshold is now 20°.
+
+**A four-day trip could never create a share link.** The guardian dialog disabled
+its own create button whenever the return time fell past the link's expiry, under
+"Choose a longer link", while the longest link on offer and the server's ceiling
+were both 72 hours. The ceiling is fourteen days, the picker offers "Through my
+return time", and the button is never disabled on the duration. The ETA sanity
+bound stayed at 72 hours — it had been sharing the constant, and a link covering
+a two-week expedition is a different claim from an ETA projected two weeks out
+from an hour of walking.
+
+**And the plugin added for the first of those was never compiled.** A pbxproj is
+a graph keyed by 24-hex identifiers with no integrity check of its own, and
+`OverduePlugin.swift` was added by hand with two identifiers
+`MainViewController.swift` already held. Xcode resolves duplicates to whichever
+it parsed first and drops the other, silently — the file was in the repo, listed
+in the Sources phase, and never built. The simulator lane caught it only because
+one line referenced the missing symbol; a plugin added without a call site would
+have vanished with no error at all. The project file is now checked like any
+other graph: every identifier defined once, every build file resolving to a real
+file reference, every Swift file on disk reaching the Sources phase.
+
+Sixteen fixes, each with a regression test and a mutation check. 1,328 tests.
 
 ## Severity 1 — position and time are silently wrong
 

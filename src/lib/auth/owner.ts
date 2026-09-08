@@ -128,12 +128,30 @@ export function readCookie(request: Request, name: string): string | null {
 }
 
 /**
- * The verified owner for this request, or null when there is no valid cookie.
+ * The verified owner for this request, or null when neither credential is valid.
  *
  * Reads the request directly rather than `next/headers` so it does not depend on async
  * request context — which keeps every route handler callable, and testable, on its own.
+ *
+ * Two transports, one token format:
+ * - `Authorization: Bearer <token>` — used by the native iOS shell. Its WKWebView runs
+ *   on `capacitor://localhost`, a different origin from the API, so the SameSite cookie
+ *   is never sent and, worse, the proxy only mints cookies on document navigations,
+ *   which a native client never performs. Without this header path a wrapped app can
+ *   never authenticate at all.
+ * - The `hike_owner` cookie — the browser path, unchanged.
+ *
+ * A present-but-invalid Bearer token deliberately falls through to the cookie rather
+ * than failing the request: the shell and the browser share one verification and one
+ * failure mode (no owner → 401), not two.
  */
 export async function resolveOwnerId(request: Request): Promise<string | null> {
+  const authorization = request.headers.get("authorization");
+  const bearer = authorization ? /^Bearer\s+(.+)$/i.exec(authorization) : null;
+  if (bearer) {
+    const fromBearer = await verifyOwnerToken(bearer[1].trim());
+    if (fromBearer) return fromBearer;
+  }
   return verifyOwnerToken(readCookie(request, OWNER_COOKIE));
 }
 

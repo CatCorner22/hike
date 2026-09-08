@@ -1,7 +1,7 @@
 {
-  "name": "Hike — Plan, Track & Navigate",
-  "short_name": "Hike",
-  "description": "Plan hikes, track activities, navigate trails, research conditions, and find camping.",
+  "name": "Klandagi — Plan, Track & Navigate",
+  "short_name": "Klandagi",
+  "description": "Safety-first wilderness decision support — plan hikes, prepare offline, navigate trails, and get home.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -19,6 +19,12 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

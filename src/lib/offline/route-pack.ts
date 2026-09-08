@@ -1,7 +1,30 @@
-import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
 import { bboxFromGeometry } from "@/lib/geo";
+import { haversineMeters } from "@/lib/geo/coords";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import type { PackWeather } from "@/lib/offline/pack-weather";
-import { corridorValidationError, type OfflineCorridor } from "@/lib/offline/corridor";
+import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
+import {
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
+import {
+  validHazardBrief,
+  type RouteHazardBrief,
+} from "@/lib/offline/hazard-brief";
+import {
+  validOfficialAlertSnapshot,
+  type RouteOfficialAlertSnapshot,
+} from "@/lib/offline/official-alerts";
+import {
+  validBailoutRoutes,
+  type PreparedBailoutRoute,
+} from "@/lib/offline/bailout-routes";
+import {
+  buildTerrainCorridorSpec,
+  validTerrainCorridor,
+  type TerrainCorridorSpec,
+} from "@/lib/offline/terrain-corridor";
 
 /**
  * Offline packs have an intentionally conservative ceiling.  A route above this
@@ -37,18 +60,36 @@ export interface RoutePack {
   version: number;
   weather?: PackWeather;
   /**
-   * Surrounding context (nearby roads, trails, water, shelters) for use when the
-   * hiker is off the route line.
-   *
-   * Deliberately optional, and deliberately added WITHOUT bumping
-   * ROUTE_PACK_VERSION. A version bump marks every already-saved pack "stale",
-   * which would tell a hiker who prepared correctly last night that their
-   * offline data is no longer trustworthy and push them to re-download it --
-   * possibly with no signal. An older pack without a corridor is still a
-   * complete, navigable Safety Map, so it stays valid and simply reports that no
-   * corridor is saved.
+   * Planned offline terrain corridor. Optional on legacy packs so they stay
+   * navigable; prepare-offline writes it on every new save.
    */
-  corridor?: OfflineCorridor;
+  corridor?: TerrainCorridorSpec;
+  /**
+   * OSM vector context for the planned corridor. Optional — prepare stores it
+   * when Overpass answers; legacy packs and failed fetches stay navigable.
+   */
+  corridorFeatures?: CorridorFeatureSet;
+  /**
+   * Along-route forecast snapshot at prepare time. Optional — prepare stores it
+   * when Open-Meteo answers; legacy packs and failed fetches stay navigable.
+   */
+  hazardBrief?: RouteHazardBrief;
+  /**
+   * Point-sampled NWS alerts and, when an exact unit code is verified, NPS
+   * notices. Absence means the sources were not checked, never "all clear."
+   */
+  officialAlerts?: RouteOfficialAlertSnapshot;
+  /**
+   * User-supplied bailout tracks that already meet this route. Optional —
+   * visiting the plan page must not invent connectors or drop a navigable pack.
+   */
+  bailoutRoutes?: PreparedBailoutRoute[];
+  /**
+   * Coarse elevation samples over the corridor, for relief shading on the
+   * offline map. Optional: a pack without it is navigable, it just draws the
+   * route on blank ground the way every pack did before this existed.
+   */
+  terrain?: TerrainGrid;
 }
 
 interface RoutePackAlias {
@@ -74,17 +115,30 @@ interface RoutePackDB extends DBSchema {
 }
 
 export type RoutePackStatus = "ready" | "stale" | "invalid" | "missing";
+export type RoutePackExtraField =
+  | "weather"
+  | "corridor"
+  | "corridorFeatures"
+  | "hazardBrief"
+  | "officialAlerts"
+  | "bailoutRoutes"
+  | "terrain"
+  | "bbox";
 export interface RoutePackLookup {
   pack: RoutePack | null;
   status: RoutePackStatus;
   /** Safe, user-facing reason when an untrusted cache record was rejected. */
   error?: string;
+  /** Optional extras dropped so a prepared route stays navigable. */
+  strippedExtras?: RoutePackExtraField[];
 }
-
-let dbPromise: Promise<IDBPDatabase<RoutePackDB>> | null = null;
 
 function canonicalIdForLegacyPack(pack: RoutePack): string {
   return pack.canonicalId || pack.aliases?.[0] || pack.id;
+}
+
+function legacyCachedAt(pack: RoutePack): string {
+  return typeof pack.cachedAt === "string" ? pack.cachedAt : "";
 }
 
 function validId(value: unknown): value is string {
@@ -109,6 +163,22 @@ function coordinateLines(geometry: GeoJSON.LineString | GeoJSON.MultiLineString)
   return geometry.type === "LineString" ? [geometry.coordinates] : geometry.coordinates;
 }
 
+/**
+ * Pack bboxes use the compact unwrapped interval from `bboxFromGeometry`.
+ * A dateline walk is stored as e.g. [179.8, -16.5, 180.2, -16.5] — not a
+ * world-spanning [-180, 180] box and not a wrapping min>max GeoJSON box.
+ */
+function validStoredRouteBbox(bbox: unknown): bbox is [number, number, number, number] {
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return false;
+  }
+  const [minLng, minLat, maxLng, maxLat] = bbox;
+  if (minLat < -90 || maxLat > 90 || minLat > maxLat || minLng > maxLng) return false;
+  if (maxLng - minLng >= 180) return false;
+  if (minLng < -181 || maxLng > 540) return false;
+  return true;
+}
+
 function finitePosition(position: unknown): position is GeoJSON.Position {
   return Array.isArray(position) &&
     position.length >= 2 &&
@@ -130,13 +200,10 @@ function validGeometry(geometry: unknown): geometry is GeoJSON.LineString | GeoJ
 }
 
 function distanceMeters(a: GeoJSON.Position, b: GeoJSON.Position): number {
-  const radians = Math.PI / 180;
-  const dLat = (Number(b[1]) - Number(a[1])) * radians;
-  const dLng = (Number(b[0]) - Number(a[0])) * radians;
-  const latA = Number(a[1]) * radians;
-  const latB = Number(b[1]) * radians;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(latA) * Math.cos(latB) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6_371_000 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+  return haversineMeters(
+    { lat: Number(a[1]), lng: Number(a[0]) },
+    { lat: Number(b[1]), lng: Number(b[0]) },
+  );
 }
 
 export function cumulativeDistancesForGeometry(
@@ -153,7 +220,7 @@ export function cumulativeDistancesForGeometry(
   return cumulative;
 }
 
-function validPackWeather(weather: unknown): weather is PackWeather {
+export function validPackWeather(weather: unknown): weather is PackWeather {
   if (!weather || typeof weather !== "object") return false;
   const candidate = weather as PackWeather;
   if (candidate.source !== "open-meteo" && candidate.source !== "manual") return false;
@@ -181,14 +248,19 @@ function validationError(pack: RoutePack | null | undefined): string | null {
       ? `Route has more than ${MAX_ROUTE_PACK_COORDINATES.toLocaleString()} coordinates and cannot be navigated safely offline.`
       : "Route geometry is invalid.";
   }
-  if (!Array.isArray(pack.bbox) || pack.bbox.length !== 4 || !pack.bbox.every(Number.isFinite) ||
-    pack.bbox[0] < -180 || pack.bbox[2] > 180 || pack.bbox[1] < -90 || pack.bbox[3] > 90 ||
-    pack.bbox[0] > pack.bbox[2] || pack.bbox[1] > pack.bbox[3]) return "Saved route bounds are invalid.";
+  if (!validStoredRouteBbox(pack.bbox)) return "Saved route bounds are invalid.";
   if (!Number.isFinite(pack.lengthMeters) || pack.lengthMeters < 0) return "Saved route length is invalid.";
   if (!Array.isArray(pack.cumulativeDistancesMeters) || pack.cumulativeDistancesMeters.length !== positionCount(pack.geometry) ||
     pack.cumulativeDistancesMeters.some((value) => !Number.isFinite(value) || value < 0) ||
     pack.cumulativeDistancesMeters.some((value, index, values) => index > 0 && value < values[index - 1])) {
     return "Saved route distance index is invalid.";
+  }
+  // Navigation reads total distance from `lengthMeters` and positions along the
+  // route from the index. If they disagree, every remaining-distance and
+  // halfway figure is measured against a length the route does not have.
+  const indexedLength = pack.cumulativeDistancesMeters[pack.cumulativeDistancesMeters.length - 1] ?? 0;
+  if (Math.abs(indexedLength - pack.lengthMeters) > Math.max(1, indexedLength * 0.005)) {
+    return "Saved route length disagrees with its distance index.";
   }
   if (!Array.isArray(pack.elevationProfile) || pack.elevationProfile.length > MAX_ELEVATION_PROFILE_POINTS ||
     pack.elevationProfile.some((point) => !Number.isFinite(point.distanceMeters) || !Number.isFinite(point.elevation) || point.distanceMeters < 0) ||
@@ -201,8 +273,27 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   if (pack.weather !== undefined && !validPackWeather(pack.weather)) {
     return "Saved route weather snapshot is invalid.";
   }
-  const corridorError = corridorValidationError(pack.corridor);
-  if (corridorError) return corridorError;
+  if (pack.corridor !== undefined && !validTerrainCorridor(pack.corridor, pack.id, pack.geometry)) {
+    return "Saved route terrain corridor is invalid.";
+  }
+  if (pack.corridorFeatures !== undefined) {
+    if (!pack.corridor) return "Saved route corridor features are missing a corridor record.";
+    if (!validCorridorFeatures(pack.corridorFeatures, pack.id, pack.corridor.bboxes)) {
+      return "Saved route corridor features are invalid.";
+    }
+  }
+  if (pack.hazardBrief !== undefined && !validHazardBrief(pack.hazardBrief, pack.id, pack.bbox)) {
+    return "Saved route hazard briefing is invalid.";
+  }
+  if (pack.officialAlerts !== undefined && !validOfficialAlertSnapshot(pack.officialAlerts, pack.id)) {
+    return "Saved route official alert snapshot is invalid.";
+  }
+  if (pack.bailoutRoutes !== undefined && !validBailoutRoutes(pack.bailoutRoutes, pack.id, pack.geometry)) {
+    return "Saved route bailout tracks are invalid.";
+  }
+  if (pack.terrain !== undefined && !validPackTerrain(pack.terrain, pack.bbox)) {
+    return "Saved route terrain grid is invalid.";
+  }
   const cachedAt = Date.parse(pack.cachedAt);
   if (!Number.isFinite(cachedAt) || cachedAt < Date.UTC(2020, 0, 1) || cachedAt > Date.now() + 5 * 60_000) {
     return "Saved route timestamp is invalid or the device clock is incorrect.";
@@ -215,9 +306,100 @@ function validationError(pack: RoutePack | null | undefined): string | null {
   return null;
 }
 
+/**
+ * A terrain grid belongs to the route it was stored with.
+ *
+ * Structural validity is `isUsableTerrainGrid`'s job; this adds the one thing
+ * that module cannot know — that the grid actually covers this pack's own
+ * corridor. A grid from a different route would shade the wrong hillside under
+ * the right line, which is worse than shading nothing.
+ */
+export function validPackTerrain(
+  terrain: unknown,
+  packBbox: [number, number, number, number] | undefined,
+): terrain is TerrainGrid {
+  if (!isUsableTerrainGrid(terrain)) return false;
+  if (!packBbox || !validStoredRouteBbox(packBbox)) return false;
+  const [minLng, minLat, maxLng, maxLat] = packBbox;
+  const [gMinLng, gMinLat, gMaxLng, gMaxLat] = terrain.bbox;
+  // A little slack for the rounding either side did on the way in and out.
+  const slack = 0.01;
+  return (
+    gMinLng <= minLng + slack
+    && gMinLat <= minLat + slack
+    && gMaxLng >= maxLng - slack
+    && gMaxLat >= maxLat - slack
+  );
+}
+
 /** Exported for direct persistence-boundary tests. */
 export function validateRoutePack(pack: RoutePack | null | undefined): string | null {
   return validationError(pack);
+}
+
+/**
+ * Optional extras must never take down a prepared Safety Map. Prepare still
+ * refuses to *write* a poisoned extra; load/list/import drop that extra and
+ * keep the route. Combined failures (offline + bit-flipped forecast + bad
+ * OSM + a distant bailout file) are the field case this exists for.
+ */
+export function sanitizeRoutePackForUse(pack: RoutePack): {
+  pack: RoutePack;
+  stripped: RoutePackExtraField[];
+} {
+  const next: RoutePack = { ...pack };
+  const stripped: RoutePackExtraField[] = [];
+
+  if (!validStoredRouteBbox(next.bbox)) {
+    const computed = bboxFromGeometry(next.geometry, 0.004);
+    if (computed && validStoredRouteBbox(computed)) {
+      next.bbox = computed;
+      stripped.push("bbox");
+    }
+  }
+
+  if (next.weather !== undefined && !validPackWeather(next.weather)) {
+    delete next.weather;
+    stripped.push("weather");
+  }
+
+  if (next.corridor !== undefined && !validTerrainCorridor(next.corridor, next.id, next.geometry)) {
+    delete next.corridor;
+    stripped.push("corridor");
+    if (next.corridorFeatures !== undefined) {
+      delete next.corridorFeatures;
+      stripped.push("corridorFeatures");
+    }
+  } else if (next.corridorFeatures !== undefined) {
+    const featuresOk = Boolean(next.corridor) &&
+      validCorridorFeatures(next.corridorFeatures, next.id, next.corridor!.bboxes);
+    if (!featuresOk) {
+      delete next.corridorFeatures;
+      stripped.push("corridorFeatures");
+    }
+  }
+
+  if (next.hazardBrief !== undefined && !validHazardBrief(next.hazardBrief, next.id, next.bbox)) {
+    delete next.hazardBrief;
+    stripped.push("hazardBrief");
+  }
+
+  if (next.officialAlerts !== undefined && !validOfficialAlertSnapshot(next.officialAlerts, next.id)) {
+    delete next.officialAlerts;
+    stripped.push("officialAlerts");
+  }
+
+  if (next.terrain !== undefined && !validPackTerrain(next.terrain, next.bbox)) {
+    delete next.terrain;
+    stripped.push("terrain");
+  }
+
+  if (next.bailoutRoutes !== undefined && !validBailoutRoutes(next.bailoutRoutes, next.id, next.geometry)) {
+    delete next.bailoutRoutes;
+    stripped.push("bailoutRoutes");
+  }
+
+  return { pack: next, stripped };
 }
 
 export function packOwnsAlias(pack: RoutePack, id: string): boolean {
@@ -236,7 +418,8 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   const packs: RoutePack[] = [];
   const aliases: RoutePackAlias[] = [];
   for (const [canonicalId, group] of groups) {
-    const source = group.find((record) => record.id === canonicalId) ?? [...group].sort((a, b) => b.cachedAt.localeCompare(a.cachedAt))[0];
+    const source = group.find((record) => record.id === canonicalId) ??
+      [...group].sort((a, b) => legacyCachedAt(b).localeCompare(legacyCachedAt(a)))[0];
     const aliasesForPack = uniqueAliases(canonicalId, group.flatMap((record) => [...(record.aliases ?? []), record.id]));
     const pack: RoutePack = { ...source, id: canonicalId, canonicalId, aliases: aliasesForPack };
     packs.push(pack);
@@ -245,41 +428,66 @@ export function collapseLegacyRoutePacks(records: RoutePack[]): { packs: RoutePa
   return { packs, aliases };
 }
 
-function getDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
-        if (!db.objectStoreNames.contains("aliases")) {
-          const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
-          aliases.createIndex("by-canonical", "canonicalId");
-        }
-        if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
-        if (oldVersion <= 0) return;
+/**
+ * A pack that made it into IndexedDB is the offline navigation source of truth,
+ * so the open itself must be resilient: never cache a failed open for the
+ * session, never hang forever on an upgrade another tab is blocking, and let go
+ * of our own connection when this tab is the one doing the blocking.
+ */
+const packDb = createIdbOpener<RoutePackDB>("hike-nav-packs", ROUTE_PACK_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
+    if (!db.objectStoreNames.contains("routePacks")) db.createObjectStore("routePacks", { keyPath: "id" });
+    if (!db.objectStoreNames.contains("aliases")) {
+      const aliases = db.createObjectStore("aliases", { keyPath: "alias" });
+      aliases.createIndex("by-canonical", "canonicalId");
+    }
+    if (!db.objectStoreNames.contains("lastFix")) db.createObjectStore("lastFix", { keyPath: "id" });
+    if (oldVersion <= 0) return;
 
-        const nativeTransaction = unwrap(transaction);
-        const packStore = nativeTransaction.objectStore("routePacks");
-        const aliasStore = nativeTransaction.objectStore("aliases");
-        const request = packStore.getAll();
-        request.onsuccess = () => {
-          const records = request.result as RoutePack[];
-          if (oldVersion === 1) {
-            const { packs, aliases } = collapseLegacyRoutePacks(records);
-            packStore.clear();
-            packs.forEach((pack) => packStore.put(pack));
-            aliases.forEach((alias) => aliasStore.put(alias));
-            return;
-          }
-          // v2/v3 already have one canonical record. Add the explicit identity
-          // field during the same versionchange transaction; older versions are
-          // deliberately stale and must be prepared again before use.
-          records.forEach((record) => packStore.put({ ...record, canonicalId: record.id }));
-        };
-      },
-    });
-  }
-  return dbPromise;
+    const nativeTransaction = unwrap(transaction);
+    const packStore = nativeTransaction.objectStore("routePacks");
+    const aliasStore = nativeTransaction.objectStore("aliases");
+    const request = packStore.getAll();
+    // A failed read must not abort the versionchange transaction: the schema
+    // upgrade itself has already happened above, and unmigrated legacy records
+    // read as "stale" and ask for a re-prepare — recoverable. An aborted
+    // upgrade re-runs and re-fails on every later open, which bricks every
+    // saved route on the device.
+    request.onerror = (event) => {
+      event.preventDefault();
+    };
+    request.onsuccess = () => {
+      try {
+        const records = request.result as RoutePack[];
+        if (oldVersion === 1) {
+          const { packs, aliases } = collapseLegacyRoutePacks(records);
+          packStore.clear();
+          // One poisoned record (missing id, unserializable value) must not
+          // take the rest of the migration down with it.
+          packs.forEach((pack) => {
+            try { packStore.put(pack); } catch { /* skip the poisoned record */ }
+          });
+          aliases.forEach((alias) => {
+            try { aliasStore.put(alias); } catch { /* skip the poisoned pointer */ }
+          });
+          return;
+        }
+        // v2/v3 already have one canonical record. Add the explicit identity
+        // field during the same versionchange transaction; older versions are
+        // deliberately stale and must be prepared again before use.
+        records.forEach((record) => {
+          try { packStore.put({ ...record, canonicalId: record.id }); } catch { /* skip */ }
+        });
+      } catch {
+        // Leave legacy records unmigrated; they surface as "stale" and the
+        // hiker is asked to prepare again, with the database still usable.
+      }
+    };
+  },
+});
+
+function getDb() {
+  return packDb.getDb();
 }
 
 export function buildRoutePack(input: {
@@ -290,7 +498,12 @@ export function buildRoutePack(input: {
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   weather?: PackWeather;
-  corridor?: OfflineCorridor;
+  corridor?: TerrainCorridorSpec;
+  corridorFeatures?: CorridorFeatureSet;
+  hazardBrief?: RouteHazardBrief;
+  officialAlerts?: RouteOfficialAlertSnapshot;
+  bailoutRoutes?: PreparedBailoutRoute[];
+  terrain?: TerrainGrid;
 }): RoutePack {
   if (!validId(input.id)) throw new Error("Route id is invalid.");
   if (!validGeometry(input.geometry)) {
@@ -300,48 +513,29 @@ export function buildRoutePack(input: {
       : "Route geometry is invalid — cannot navigate safely.");
   }
   const aliases = uniqueAliases(input.id, input.aliases);
+  const computedBbox = bboxFromGeometry(input.geometry, 0.004);
   const pack: RoutePack = {
     id: input.id,
     canonicalId: input.id,
     aliases,
     name: input.name,
     geometry: input.geometry,
-    bbox: input.bbox ?? bboxFromGeometry(input.geometry, 0.004) ?? [0, 0, 0, 0],
+    bbox: input.bbox && validStoredRouteBbox(input.bbox) ? input.bbox : computedBbox ?? [0, 0, 0, 0],
     elevationProfile: input.elevationProfile ?? [],
     lengthMeters: 0,
     cumulativeDistancesMeters: cumulativeDistancesForGeometry(input.geometry),
     cachedAt: new Date().toISOString(),
     version: ROUTE_PACK_VERSION,
     weather: input.weather,
-    corridor: input.corridor,
+    corridor: input.corridor ?? buildTerrainCorridorSpec({ routeId: input.id, geometry: input.geometry }),
+    corridorFeatures: input.corridorFeatures,
+    hazardBrief: input.hazardBrief,
+    officialAlerts: input.officialAlerts,
+    bailoutRoutes: input.bailoutRoutes,
+    terrain: input.terrain,
   };
   pack.lengthMeters = pack.cumulativeDistancesMeters.at(-1) ?? 0;
-  let error = validationError(pack);
-  if (error && pack.corridor) {
-    // The corridor is context; the route is the Safety Map. If the combined
-    // payload is rejected -- almost always the total size cap -- the corridor is
-    // dropped and the route is saved without it, with the loss stated. Throwing
-    // here instead would mean a hiker who asked for extra offline detail ends up
-    // with no offline route at all, which is the opposite of what they wanted.
-    const withoutCorridor: RoutePack = { ...pack, corridor: undefined };
-    const fallbackError = validationError(withoutCorridor);
-    if (!fallbackError) {
-      withoutCorridor.corridor = {
-        ...pack.corridor,
-        lines: [],
-        points: [],
-        coverage: "failed",
-        note: "Surrounding terrain was dropped because the pack exceeded the offline storage limit. The route line is saved and navigable.",
-      };
-      // Re-check: the marker itself must not be what breaks the pack.
-      error = validationError(withoutCorridor);
-      if (error) {
-        withoutCorridor.corridor = undefined;
-        error = validationError(withoutCorridor);
-      }
-      if (!error) return withoutCorridor;
-    }
-  }
+  const error = validationError(pack);
   if (error) throw new Error(error);
   return pack;
 }
@@ -405,11 +599,19 @@ export async function getRoutePackStatus(id: string): Promise<RoutePackLookup> {
   if (!db) return { pack: null, status: "missing" };
   const found = await findRoutePack(db, id);
   if (found.error) return { pack: null, status: "invalid", error: found.error };
-  const status = routePackStatus(found.pack);
+  if (!found.pack) return { pack: null, status: "missing" };
+  if (found.pack.version !== ROUTE_PACK_VERSION) {
+    return { pack: found.pack, status: "stale" };
+  }
+  const { pack, stripped } = sanitizeRoutePackForUse(found.pack);
+  const error = validationError(pack);
+  if (error) {
+    return { pack: null, status: "invalid", error };
+  }
   return {
-    pack: status === "ready" || status === "stale" ? found.pack : null,
-    status,
-    error: status === "invalid" ? validationError(found.pack) ?? "Saved route pack is invalid." : undefined,
+    pack,
+    status: "ready",
+    strippedExtras: stripped.length ? stripped : undefined,
   };
 }
 
@@ -421,11 +623,49 @@ export async function getRoutePack(id: string): Promise<RoutePack | null> {
 export async function listRoutePacks(): Promise<RoutePack[]> {
   const db = await getDb();
   if (!db) return [];
-  return (await db.getAll("routePacks")).filter((pack) => routePackStatus(pack) !== "invalid");
+  return (await db.getAll("routePacks")).flatMap((pack) => {
+    if (pack.version !== ROUTE_PACK_VERSION) {
+      return routePackStatus(pack) !== "invalid" ? [pack] : [];
+    }
+    const sanitized = sanitizeRoutePackForUse(pack).pack;
+    return validationError(sanitized) ? [] : [sanitized];
+  });
 }
 
 export async function hasRoutePack(id: string): Promise<boolean> {
   return (await getRoutePackStatus(id)).status === "ready";
+}
+
+/** Deletes one canonical payload and every alias pointer in one transaction. */
+export async function deleteRoutePack(id: string): Promise<boolean> {
+  if (!validId(id)) return false;
+  const db = await getDb();
+  if (!db) throw new Error("Offline route storage is unavailable in this browser.");
+  const tx = db.transaction(["routePacks", "aliases"], "readwrite");
+  try {
+    const aliasesStore = tx.objectStore("aliases");
+    const packStore = tx.objectStore("routePacks");
+    const pointer = await aliasesStore.get(id);
+    const canonicalId = pointer?.canonicalId ?? id;
+    const pack = await packStore.get(canonicalId);
+    if (!pack) {
+      if (pointer) await aliasesStore.delete(id);
+      await tx.done;
+      return false;
+    }
+    if ((pointer && !packOwnsAlias(pack, id)) || (!pointer && pack.id !== id)) {
+      throw new Error("Saved route identity is inconsistent. Nothing was deleted.");
+    }
+    const pointers = await aliasesStore.index("by-canonical").getAll(canonicalId);
+    await packStore.delete(canonicalId);
+    await Promise.all(pointers.map((alias) => aliasesStore.delete(alias.alias)));
+    await tx.done;
+    return true;
+  } catch (error) {
+    try { tx.abort(); } catch { /* already completed/aborted */ }
+    try { await tx.done; } catch { /* preserve original error */ }
+    throw error;
+  }
 }
 
 let lastFixWrite: Promise<void> = Promise.resolve();
@@ -479,7 +719,5 @@ export function packCandidateIds(navId: string): string[] {
 
 /** Test-only reset for fake-indexeddb; not used by the application. */
 export async function resetRoutePackDbForTests() {
-  const current = dbPromise;
-  dbPromise = null;
-  if (current) (await current).close();
+  await packDb.reset();
 }

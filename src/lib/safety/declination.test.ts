@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  declinationModelStalenessWarning,
   formatWalkBearing,
   gmAngleCard,
   gridConvergence,
@@ -121,5 +122,27 @@ describe("isFixNearRouteBbox", () => {
 
   it("rejects a last-known fix from another region", () => {
     expect(isFixNearRouteBbox(37.77, -122.42, yosemite)).toBe(false);
+  });
+});
+
+/**
+ * The declination grid is a 2025-epoch snapshot of a moving field. Past the 2030
+ * validity window the drift accumulates silently — a bearing error nothing on screen
+ * can reveal — so the module warns about itself instead of trusting a release note.
+ */
+describe("declination model staleness", () => {
+  it("stays silent through the validity window", () => {
+    expect(declinationModelStalenessWarning(new Date("2026-08-22T00:00:00Z"))).toBeNull();
+    expect(declinationModelStalenessWarning(new Date("2029-12-31T00:00:00Z"))).toBeNull();
+  });
+
+  it("warns from 2030 onward, and the card carries it", () => {
+    const warning = declinationModelStalenessWarning(new Date("2030-03-01T00:00:00Z"));
+    expect(warning).toMatch(/2025-epoch/);
+    expect(warning).toMatch(/current chart|NOAA/);
+    const card = gmAngleCard(39, -105, new Date("2031-06-01T00:00:00Z"));
+    expect(card.staleness).toMatch(/validity window/);
+    const fresh = gmAngleCard(39, -105, new Date("2026-08-22T00:00:00Z"));
+    expect(fresh.staleness).toBeNull();
   });
 });

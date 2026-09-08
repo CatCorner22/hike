@@ -2,18 +2,19 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { POST as createPlan } from "./plans/route";
-import { PATCH as updatePlan } from "./plans/[id]/route";
-import { GET as listActivitiesRoute, POST as createActivity } from "./activities/route";
-import { PATCH as updateActivity } from "./activities/[id]/route";
-import { GET as listPoints } from "./activities/[id]/points/route";
-import { GET as searchTrails } from "./trails/search/route";
-import { GET as listPlans, POST as createPlanRoute } from "./plans/route";
-import { GET as getPlan, DELETE as deletePlanRoute } from "./plans/[id]/route";
-import { GET as getActivity } from "./activities/[id]/route";
-import { POST as addPoints } from "./activities/[id]/points/route";
+import { POST as createPlan } from "./plans/route.api";
+import { PATCH as updatePlan } from "./plans/[id]/route.api";
+import { GET as listActivitiesRoute, POST as createActivity } from "./activities/route.api";
+import { PATCH as updateActivity } from "./activities/[id]/route.api";
+import { GET as listPoints } from "./activities/[id]/points/route.api";
+import { GET as searchTrails } from "./trails/search/route.api";
+import { GET as listPlans, POST as createPlanRoute } from "./plans/route.api";
+import { GET as getPlan, DELETE as deletePlanRoute } from "./plans/[id]/route.api";
+import { GET as getActivity } from "./activities/[id]/route.api";
+import { POST as addPoints } from "./activities/[id]/points/route.api";
+import { POST as mintSessionRoute } from "./session/route.api";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
-import { OWNER_COOKIE, newOwnerId, signOwnerToken } from "@/lib/auth/owner";
+import { OWNER_COOKIE, newOwnerId, signOwnerToken, verifyOwnerToken } from "@/lib/auth/owner";
 
 let directory: string;
 
@@ -94,6 +95,43 @@ describe("API input boundaries", () => {
       name: "Updated",
       notes: "Keep me",
     });
+  });
+
+  it("rejects unstructured waypoints instead of storing them", async () => {
+    const createdResponse = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Waypoints", waypoints: { not: "an-array" } }),
+      ),
+    );
+    expect(createdResponse.status).toBe(400);
+
+    const valid = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({
+          name: "Waypoints",
+          waypoints: [{ name: "Spring", lat: 36.1, lng: -84.1 }],
+        }),
+      ),
+    );
+    expect(valid.status).toBe(200);
+    const created = (await valid.json()) as { id: string; updatedAt: string; waypoints: unknown };
+
+    const patched = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${created.id}`,
+        "PATCH",
+        JSON.stringify({
+          updatedAt: created.updatedAt,
+          waypoints: [{ name: "x", lat: 91, lng: 0 }],
+        }),
+      ),
+      { params: Promise.resolve({ id: created.id }) },
+    );
+    expect(patched.status).toBe(400);
   });
 
   it("validates activity updates and returns 404 for orphan point lists", async () => {
@@ -247,6 +285,90 @@ describe("activity integrity races", () => {
     }));
     await writeFile(storePath, JSON.stringify(store));
   }
+
+  it("replays a committed activity create by client UUID without changing or duplicating it", async () => {
+    const clientActivityId = "44444444-4444-4444-8444-444444444444";
+    const first = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({
+          clientActivityId,
+          name: "Original activity",
+          startedAt: "2026-08-20T12:00:00.000Z",
+        }),
+      ),
+    );
+    expect(first.status).toBe(200);
+    const original = await first.json() as {
+      id: string;
+      name: string;
+      startedAt: string;
+      createdAt: string;
+    };
+    expect(original.id).toBe(clientActivityId);
+
+    const retry = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({
+          clientActivityId,
+          name: "Changed retry must be ignored",
+          startedAt: "2026-08-21T12:00:00.000Z",
+        }),
+      ),
+    );
+    expect(retry.status).toBe(200);
+    await expect(retry.json()).resolves.toMatchObject(original);
+
+    const listed = await listActivitiesRoute(getRequest("http://localhost/api/activities"));
+    const body = await listed.json() as { activities: Array<{ id: string }> };
+    expect(body.activities.filter((activity) => activity.id === clientActivityId)).toHaveLength(1);
+  });
+
+  it("fails closed when another owner presents the same activity idempotency key", async () => {
+    const clientActivityId = "55555555-5555-4555-8555-555555555555";
+    const first = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId }),
+        session,
+      ),
+    );
+    expect(first.status).toBe(200);
+
+    const collision = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId }),
+        otherSession,
+      ),
+    );
+    expect(collision.status).toBe(409);
+
+    const mine = await listActivitiesRoute(getRequest("http://localhost/api/activities", session));
+    const theirs = await listActivitiesRoute(getRequest("http://localhost/api/activities", otherSession));
+    expect((await mine.json()).activities).toHaveLength(1);
+    expect((await theirs.json()).activities).toHaveLength(0);
+  });
+
+  it("validates clientActivityId while keeping legacy creates non-idempotent", async () => {
+    const invalid = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ clientActivityId: "not-a-uuid" }),
+      ),
+    );
+    expect(invalid.status).toBe(400);
+
+    const first = await createActivity(jsonRequest("http://localhost/api/activities", "POST", "{}"));
+    const second = await createActivity(jsonRequest("http://localhost/api/activities", "POST", "{}"));
+    expect((await first.json()).id).not.toBe((await second.json()).id);
+  });
 
   it("returns the first point for concurrent tuple retries and client-key retries", async () => {
     const activity = await createOwnedActivity();
@@ -440,25 +562,26 @@ describe("activity integrity races", () => {
     );
     const plan = (await response.json()) as { id: string; updatedAt: string };
     const params = { params: Promise.resolve({ id: plan.id }) };
-    const [first, second] = await Promise.all([
-      updatePlan(
-        jsonRequest(
-          `http://localhost/api/plans/${plan.id}`,
-          "PATCH",
-          JSON.stringify({ name: "Name from tab A", notes: "Original notes", updatedAt: plan.updatedAt }),
-        ),
-        params,
+    const first = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ name: "Name from tab A", notes: "Original notes", updatedAt: plan.updatedAt }),
       ),
-      updatePlan(
-        jsonRequest(
-          `http://localhost/api/plans/${plan.id}`,
-          "PATCH",
-          JSON.stringify({ name: "Original", notes: "Notes from tab B", updatedAt: plan.updatedAt }),
-        ),
-        params,
+      params,
+    );
+    expect(first.status).toBe(200);
+    const firstBody = (await first.json()) as { updatedAt: string };
+    expect(firstBody.updatedAt).not.toBe(plan.updatedAt);
+    const second = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ name: "Original", notes: "Notes from tab B", updatedAt: plan.updatedAt }),
       ),
-    ]);
-    expect([first.status, second.status].sort()).toEqual([200, 409]);
+      params,
+    );
+    expect(second.status).toBe(409);
   });
 
   it("exposes every open activity separately from bounded activity history", async () => {
@@ -477,5 +600,131 @@ describe("activity integrity races", () => {
     const body = (await response.json()) as { openActivities: Array<{ id: string }> };
     expect(body.openActivities.map((activity) => activity.id)).toContain(open.id);
     expect(body.openActivities.map((activity) => activity.id)).not.toContain(closed.id);
+  });
+});
+
+describe("Explore OSM trail ids", () => {
+  it("creates plans and activities from osm-relation hrefs and rejects junk ids", async () => {
+    const invalid = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({ name: "Bad", trailId: "not-a-trail" }),
+      ),
+    );
+    expect(invalid.status).toBe(400);
+
+    const created = await createPlan(
+      jsonRequest(
+        "http://localhost/api/plans",
+        "POST",
+        JSON.stringify({
+          name: "Half Dome",
+          trailId: "osm-relation-123",
+          customGeometry: {
+            type: "LineString",
+            coordinates: [
+              [-119.5, 37.7],
+              [-119.4, 37.8],
+            ],
+          },
+        }),
+      ),
+    );
+    expect(created.status).toBe(200);
+    const plan = (await created.json()) as {
+      id: string;
+      trailId: string | null;
+      customGeometry: { type: string };
+      updatedAt: string;
+    };
+    expect(plan.trailId).toBe("osm-relation-123");
+    expect(plan.customGeometry.type).toBe("LineString");
+
+    const patched = await updatePlan(
+      jsonRequest(
+        `http://localhost/api/plans/${plan.id}`,
+        "PATCH",
+        JSON.stringify({ trailId: "osm-way-99", updatedAt: plan.updatedAt }),
+      ),
+      { params: Promise.resolve({ id: plan.id }) },
+    );
+    expect(patched.status).toBe(200);
+    await expect(patched.json()).resolves.toMatchObject({ trailId: "osm-way-99" });
+
+    const activity = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ trailId: "osm-relation-123" }),
+      ),
+    );
+    expect(activity.status).toBe(200);
+    await expect(activity.json()).resolves.toMatchObject({ trailId: "osm-relation-123" });
+
+    const badActivity = await createActivity(
+      jsonRequest(
+        "http://localhost/api/activities",
+        "POST",
+        JSON.stringify({ trailId: "trail-xyz" }),
+      ),
+    );
+    expect(badActivity.status).toBe(400);
+  });
+});
+
+
+describe("POST /api/session (native shell mint)", () => {
+  it("mints a verifiable owner token for a credential-less caller", async () => {
+    const response = await mintSessionRoute(new Request("http://x/api/session", { method: "POST" }));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    const { token } = (await response.json()) as { token: string };
+    expect(await verifyOwnerToken(token)).toBeTruthy();
+  });
+
+  /** A re-mint with a still-valid credential must not abandon the caller's data. */
+  it("is idempotent for an authenticated caller — same owner comes back", async () => {
+    const ownerId = newOwnerId();
+    const existing = await signOwnerToken(ownerId);
+    const viaBearer = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${existing}` },
+      }),
+    );
+    const bearerBody = (await viaBearer.json()) as { token: string };
+    expect(await verifyOwnerToken(bearerBody.token)).toBe(ownerId);
+
+    const viaCookie = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { cookie: `${OWNER_COOKIE}=${existing}` },
+      }),
+    );
+    const cookieBody = (await viaCookie.json()) as { token: string };
+    expect(await verifyOwnerToken(cookieBody.token)).toBe(ownerId);
+  });
+
+  it("an invalid credential yields a FRESH owner, not an error", async () => {
+    const response = await mintSessionRoute(
+      new Request("http://x/api/session", {
+        method: "POST",
+        headers: { authorization: `Bearer ${newOwnerId()}.forged-signature` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    const { token } = (await response.json()) as { token: string };
+    const owner = await verifyOwnerToken(token);
+    expect(owner).toBeTruthy();
+  });
+
+  it("a bearer-authenticated request reaches an owner route", async () => {
+    const mint = await mintSessionRoute(new Request("http://x/api/session", { method: "POST" }));
+    const { token } = (await mint.json()) as { token: string };
+    const list = await listPlans(
+      new Request("http://x/api/plans", { headers: { authorization: `Bearer ${token}` } }),
+    );
+    expect(list.status).toBe(200);
   });
 });

@@ -7,7 +7,6 @@ import {
   sanitizeFixTimestamp,
   sanitizeStoredFixTimestamp,
   TRUSTED_FIX_MS,
-  TRUSTED_STALE_FIX_MS,
 } from "./gps-quality";
 
 describe("gps quality", () => {
@@ -56,7 +55,7 @@ describe("gps quality", () => {
   // Regression: `stale` was accepted and then ignored — the first line of isTrustedFix
   // could never change the result, so it read as a safety check while being a no-op.
   it("gives a held-over fix a shorter leash than a live one", () => {
-    const age = (TRUSTED_FIX_MS + TRUSTED_STALE_FIX_MS) / 2;
+    const age = TRUSTED_FIX_MS * 0.75;
     expect(isTrustedFix(now - age, false, now)).toBe(true);
     expect(isTrustedFix(now - age, true, now)).toBe(false);
   });
@@ -77,5 +76,28 @@ describe("gps quality", () => {
     expect(sanitizeFixTimestamp(now / 1000, now)).toBe(now);
     expect(sanitizeFixTimestamp(now + 10 * 60_000, now)).toBe(now);
     expect(sanitizeFixTimestamp(now - 8_000, now)).toBe(now - 8_000);
+  });
+});
+
+/**
+ * `stale` is absolute — no age leash. The flag marks more than a brief dropout: it also
+ * covers fixes restored from a previous session and clock-suspect fixes whose broken
+ * timestamp was re-stamped to arrival time, which would read as fresh under any age
+ * check. A phantom TRUSTED_STALE_FIX_MS constant promised a 60 s stale leash the code
+ * never granted; the promise was removed rather than the protection.
+ */
+describe("stale is absolute, not an age leash", () => {
+  const now = 1_700_000_000_000;
+
+  it("refuses a stale fix at every age, including seconds-old", () => {
+    expect(isTrustedFix(now - 5_000, true, now)).toBe(false);
+    expect(isTrustedFix(now - 30_000, true, now)).toBe(false);
+    expect(isTrustedFix(now - 59_000, true, now)).toBe(false);
+  });
+
+  it("keeps the live leash and the future-fix rejection", () => {
+    expect(isTrustedFix(now - 90_000, false, now)).toBe(true);
+    expect(isTrustedFix(now - 121_000, false, now)).toBe(false);
+    expect(isTrustedFix(now + 5_000, false, now)).toBe(false);
   });
 });

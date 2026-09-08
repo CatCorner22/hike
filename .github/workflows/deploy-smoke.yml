@@ -1,0 +1,87 @@
+# Verifies a production deployment end to end.
+#
+# Two ways in. `deployment_status` fires automatically for hosts that create
+# GitHub deployments (Vercel does). Replit does not, so the manual trigger takes
+# a URL — without it this workflow would sit there looking healthy while never
+# running once, which is exactly the kind of silent gap the rest of this repo
+# exists to prevent.
+#
+# Self-minting: it creates its own session via POST /api/session, so no secrets
+# are needed here. Each assertion below is a regression guard on something that
+# once was, or must never become, broken:
+#  - session mint + bearer round-trip is the native iOS shell's ONLY auth path
+#  - CORS echo is what lets that shell talk to this API at all
+#  - the unauthed research probe guards the paid OpenAI/Tavily route staying closed
+name: Deploy smoke
+
+on:
+  deployment_status:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Base URL of the deployment to probe, no trailing slash (e.g. https://klandagi.replit.app)"
+        required: true
+        type: string
+
+jobs:
+  smoke:
+    # Automatic runs only for a successful production deployment; a manual run
+    # is always intentional, so it needs no such gate.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.deployment_status.state == 'success' &&
+       github.event.deployment_status.environment == 'Production')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe deployed API
+        env:
+          URL: ${{ inputs.url || github.event.deployment_status.environment_url }}
+        run: |
+          set -euo pipefail
+          fail() { echo "SMOKE FAIL: $1" >&2; exit 1; }
+
+          [ -n "$URL" ] || fail "no URL to probe (dispatch this workflow with one, or deploy to a host that reports deployments)"
+          case "$URL" in
+            https://*) ;;
+            *) fail "URL must be https:// — the iOS shell will not talk to anything else" ;;
+          esac
+          URL="${URL%/}"
+          echo "Target: $URL"
+
+          # Ask the deployment about itself before probing anything else. A 503
+          # here names the exact missing setting, which is a far better first
+          # line in a failure log than "trail search returned 500".
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' "$URL/api/health")
+          python3 -m json.tool /tmp/health.json || cat /tmp/health.json
+          [ "$code" = "200" ] || fail "health check returned $code — the body above names the failing check"
+          python3 - <<'PYCHECK' || fail "health check reported a problem"
+          import json, sys
+          report = json.load(open("/tmp/health.json"))
+          bad = [c for c in report["checks"] if c["status"] == "fail"]
+          if bad or not report.get("canStoreUserData"):
+              print("failing checks:", json.dumps(bad, indent=2))
+              sys.exit(1)
+          PYCHECK
+
+          code=$(curl -s -o /tmp/search.json -w '%{http_code}' "$URL/api/trails/search?q=test")
+          [ "$code" = "200" ] || fail "trail search returned $code"
+          head -c 200 /tmp/search.json; echo
+
+          code=$(curl -s -o /tmp/session.json -w '%{http_code}' -X POST "$URL/api/session")
+          [ "$code" = "200" ] || fail "session mint returned $code"
+          TOKEN=$(python3 -c "import json;print(json.load(open('/tmp/session.json'))['token'])") || fail "no token in session response"
+
+          code=$(curl -s -o /tmp/plans.json -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$URL/api/plans")
+          [ "$code" = "200" ] || fail "bearer-authed plans returned $code"
+
+          allow=$(curl -s -o /dev/null -D - -X OPTIONS \
+            -H "Origin: capacitor://localhost" \
+            -H "Access-Control-Request-Method: GET" \
+            -H "Access-Control-Request-Headers: authorization" \
+            "$URL/api/plans" | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)
+          echo "$allow" | grep -q "capacitor://localhost" || fail "CORS preflight did not echo capacitor://localhost"
+
+          code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/research/should-be-unauthorized")
+          [ "$code" = "401" ] || fail "unauthed research returned $code (expected 401 — paid route must stay closed)"
+
+          echo "All smoke checks passed."

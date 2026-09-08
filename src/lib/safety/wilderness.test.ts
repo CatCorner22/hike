@@ -4,6 +4,7 @@ import {
   avalancheTerrainWarning,
   bearSafetyCard,
   snakeBiteSop,
+  wildernessFirstAidCard,
   wildlifeEncounterSop,
 } from "./wilderness";
 
@@ -73,9 +74,21 @@ describe("amsAssessment", () => {
     }
   });
 
-  it("does report illness once altitude-exposed symptoms are present", () => {
+  /**
+   * The 3 600 m case asserted "severe" on main and is changed here deliberately.
+   *
+   * PR #38 added the gate above — ordinary symptoms are not AMS without meaningful
+   * altitude exposure — but did not touch the severity thresholds, which ran on
+   * symptoms *plus* exposure. So a single headache at 3 600 m after a 500 m/hr climb
+   * scored 8 and came back "Possible HACE/HAPE ... descend immediately. This is an
+   * emergency." A headache at that elevation is the most common altitude symptom there
+   * is and is textbook mild AMS; the standard advice is to stop ascending, rest and
+   * hydrate. Exposure still escalates it — the fast climb makes it moderate rather than
+   * mild — but altitude alone must not manufacture an emergency.
+   */
+  it("does report altitude-exposed symptoms at a severity the symptoms support", () => {
     expect(amsAssessment({ altitudeM: 3600, gainLastHourM: 500, symptoms: ["headache"] }).level).toBe(
-      "severe",
+      "moderate",
     );
     expect(amsAssessment({ altitudeM: 2600, symptoms: ["headache"] }).level).toBe("mild");
   });
@@ -91,6 +104,44 @@ describe("amsAssessment", () => {
     const r = amsAssessment({ altitudeM: 3200, symptoms: ["ataxia"] });
     expect(r.level).toBe("severe");
     expect(r.warning).toMatch(/HACE|HAPE|descend/i);
+  });
+
+  it("never calls an emergency on altitude alone", () => {
+    for (const altitudeM of [2600, 3100, 3600, 4200, 5500]) {
+      for (const gainLastHourM of [0, 320, 500, 900]) {
+        for (const symptoms of [["headache"], ["nausea"], ["fatigue"], ["headache", "nausea"]] as const) {
+          const result = amsAssessment({ altitudeM, gainLastHourM, symptoms: [...symptoms] });
+          expect(result.level, `${altitudeM} m +${gainLastHourM} ${symptoms.join("+")}`).not.toBe("severe");
+          expect(result.warning ?? "").not.toMatch(/HACE|HAPE/);
+        }
+      }
+    }
+  });
+
+  it("escalates by one step for exposure, never three", () => {
+    // 1 500 m is below the exposure gate entirely, so compare two exposed altitudes.
+    const low = amsAssessment({ altitudeM: 2600, symptoms: ["headache", "nausea"] });
+    const high = amsAssessment({ altitudeM: 4200, gainLastHourM: 500, symptoms: ["headache", "nausea"] });
+    expect(low.level).toBe("mild");
+    expect(high.level).toBe("moderate");
+  });
+
+  /** Ataxia is what makes it HACE; HAPE needs breathlessness at rest, which is not an input here. */
+  it("reserves the HACE wording for ataxia and still descends on a heavy symptom load", () => {
+    const hace = amsAssessment({ altitudeM: 3000, symptoms: ["headache", "ataxia"] });
+    expect(hace.level).toBe("severe");
+    expect(hace.warning).toMatch(/HACE/);
+    expect(hace.warning).toMatch(/emergency/i);
+
+    const heavy = amsAssessment({
+      altitudeM: 3000,
+      symptoms: ["headache", "nausea", "dizziness", "insomnia", "fatigue"],
+    });
+    expect(heavy.level).toBe("severe");
+    expect(heavy.warning).toMatch(/descend now/i);
+    expect(heavy.warning).not.toMatch(/HACE|HAPE/);
+    // It must still tell them what would make it one.
+    expect(heavy.actions.join(" ")).toMatch(/HACE\/HAPE/);
   });
 });
 
@@ -139,10 +190,57 @@ describe("wilderness cards", () => {
     expect(snakeBiteSop().join(" ")).toMatch(/Do NOT cut/);
   });
 
+  it("gives lay rescuers action-first CPR guidance without a pulse check", () => {
+    const card = wildernessFirstAidCard().join(" ");
+
+    expect(card).toMatch(/check responsiveness/i);
+    expect(card).toMatch(/not breathing normally or only gasping/i);
+    expect(card).toMatch(/call 911/i);
+    expect(card).toMatch(/AED/i);
+    expect(card).toMatch(/100–120\/min/i);
+    expect(card).toMatch(/hands-only CPR if untrained or unwilling/i);
+    expect(card).toMatch(/30 compressions and 2 breaths/i);
+    expect(card).not.toMatch(/5 compressions|(?:check|feel for|if no) (?:a )?pulse|only if .*trained/i);
+  });
+
   it("differs grizzly vs black bear response", () => {
     const black = wildlifeEncounterSop("bear_black").join(" ");
     const griz = wildlifeEncounterSop("bear_grizzly").join(" ");
     expect(black).toMatch(/fight back/i);
     expect(griz).toMatch(/play dead/i);
+  });
+});
+
+/**
+ * The first-aid card is read as standalone one-liners under stress. The C line used to
+ * open with "start CPR now" — unconditioned, which is wrong-harmful for a breathing
+ * casualty. CPR is conditioned on unresponsive + not breathing normally, always.
+ */
+describe("first-aid card CPR conditioning", () => {
+  it("never instructs CPR without the responsiveness/breathing condition", () => {
+    const cpr = wildernessFirstAidCard().find((line) => /CPR/.test(line)) ?? "";
+    expect(cpr).toMatch(/if unresponsive and not breathing normally/i);
+    expect(cpr).not.toMatch(/^C — Circulation: start CPR now/);
+    expect(cpr).toMatch(/Do not start CPR on someone who is breathing normally/);
+  });
+});
+
+/**
+ * `slopeFromProfile` returns a signed grade; the sign-blind `< 25` comparison
+ * silenced the avalanche warning on every descent — the classic trigger case, with
+ * the runout below you. Judged on magnitude now, like slopeWarning beside it.
+ */
+describe("avalancheTerrainWarning on descents", () => {
+  it("warns the same for a descent as for the equivalent climb", () => {
+    const climb = avalancheTerrainWarning({ slopePct: 40, month: 1, snowOnGround: true });
+    const descent = avalancheTerrainWarning({ slopePct: -40, month: 1, snowOnGround: true });
+    expect(climb).not.toBeNull();
+    expect(descent).toEqual(climb);
+    expect(avalancheTerrainWarning({ slopePct: -50 })).toMatch(/avalanche terrain/);
+  });
+
+  it("keeps the quiet band and rejects non-finite grades", () => {
+    expect(avalancheTerrainWarning({ slopePct: -20 })).toBeNull();
+    expect(avalancheTerrainWarning({ slopePct: Number.NaN })).toBeNull();
   });
 });

@@ -100,11 +100,47 @@ async function assertOwnershipIsolation(browser, page, planId) {
 }
 
 async function waitForServiceWorker(page) {
-  await page.waitForFunction(
-    () => navigator.serviceWorker?.controller != null,
-    null,
-    { timeout: 30_000 },
-  );
+  try {
+    await page.waitForFunction(
+      () => navigator.serviceWorker?.controller != null,
+      null,
+      { timeout: 30_000 },
+    );
+  } catch (error) {
+    // A worker stuck in "installing" is almost always a precache entry the
+    // server cannot serve (for example a `next start` that predates the last
+    // build, so sw.js references assets the running server 404s). Serwist's
+    // install then never settles and the bare timeout says nothing — probe the
+    // manifest and name the broken URLs so the failure is diagnosable.
+    const diagnosis = await page.evaluate(async () => {
+      const registration = await navigator.serviceWorker?.getRegistration();
+      const state = {
+        installing: registration?.installing?.state ?? null,
+        waiting: registration?.waiting?.state ?? null,
+        active: registration?.active?.state ?? null,
+      };
+      const swSource = await fetch("/sw.js").then((r) => r.text()).catch(() => "");
+      const urls = [...swSource.matchAll(/'url':'([^']+)'/g)].map((m) => m[1]);
+      const broken = [];
+      for (const url of urls) {
+        const status = await fetch(url, { cache: "no-store" })
+          .then((r) => r.status)
+          .catch(() => "network-error");
+        if (status !== 200) broken.push(`${url} -> ${status}`);
+      }
+      return { state, precacheEntries: urls.length, broken };
+    }).catch(() => null);
+    if (diagnosis) {
+      error.message += `\nservice worker state: ${JSON.stringify(diagnosis.state)}`
+        + `\nprecache entries: ${diagnosis.precacheEntries}, unservable: ${diagnosis.broken.length}`
+        + (diagnosis.broken.length
+          ? `\n${diagnosis.broken.slice(0, 10).join("\n")}`
+            + "\nsw.js was built from a different build than the running server is serving —"
+            + " rebuild, then restart `next start` so both come from the same build."
+          : "");
+    }
+    throw error;
+  }
 }
 
 /**
@@ -248,7 +284,7 @@ async function run() {
     // Establish the owner cookie and same-origin context before creating data.
     await page.goto(`${BASE}/plan`, { waitUntil: "domcontentloaded" });
     const planId = await createPlan(page, GEOMETRY);
-    const navUrl = `${BASE}/navigate/plan-${planId}`;
+    const navUrl = `${BASE}/navigate?target=plan-${planId}`;
 
     const isolation = await assertOwnershipIsolation(browser, page, planId);
     log("A0 device-scoped ownership isolates", isolation.ok ? "PASS" : "FAIL", isolation.detail);
@@ -310,7 +346,7 @@ async function run() {
     const planId = await createPlan(page, GEOMETRY);
 
     // Visit the plan detail screen online and register the SW.
-    await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
     await waitForServiceWorker(page);
     await page.waitForTimeout(1200);
 
@@ -321,10 +357,8 @@ async function run() {
         () => null,
       );
       void mod;
-      // The app's own modules are not importable by path from here, so drive
-      // the documented public button instead if present.
       const btn = [...document.querySelectorAll("button")].find((b) =>
-        /prepare offline|update offline pack/i.test(b.textContent || ""),
+        /prepare offline|update offline (?:pack|route)/i.test(b.textContent || ""),
       );
       if (btn) {
         btn.click();
@@ -334,30 +368,118 @@ async function run() {
       return { via: "none" };
     }, GEOMETRY);
 
-    // Wait for the REAL precondition, not a fixed sleep: preparing warms the navigate
-    // shell over the network, and cutting the connection while that fetch is still in
-    // flight (slower CI runners lose this race at 3 s) aborts it — the cold offline
-    // open then lands on the fallback page and B3 fails for a harness reason.
-    const navShellUrl = `${BASE}/navigate/plan-${planId}`;
-    const shellDeadline = Date.now() + 30_000;
-    let shellCached = false;
-    while (Date.now() < shellDeadline) {
-      shellCached = await page.evaluate(async (url) => {
-        try {
-          const cache = await caches.open("hike-navigate-shell");
-          const response = await cache.match(url, { ignoreSearch: true, ignoreVary: true });
-          if (!response) return false;
-          const marked =
-            response.headers.get("x-hike-navigate-shell") === "hike-navigate-shell-v2";
-          const html = await response.clone().text();
-          return marked || html.includes("hike-navigate-shell-v2");
-        } catch {
-          return false;
-        }
-      }, navShellUrl);
-      if (shellCached) break;
-      await page.waitForTimeout(500);
+    if (prepared.via === "button") {
+      // Wait on the stable attribute the component emits for BOTH outcomes,
+      // not on copy. Matching message text meant a real prepare failure whose
+      // wording had changed timed out and crashed the probe instead of failing
+      // it with the reason on screen.
+      await page.waitForSelector('[data-offline-result="complete"]', { timeout: 35_000 });
     }
+
+    async function waitForVerifiedShell(url) {
+      const deadline = Date.now() + 45_000;
+      while (Date.now() < deadline) {
+        const ok = await page.evaluate(async (target) => {
+          const MARKER = "hike-navigate-shell-v2";
+          try {
+            const cache = await caches.open("hike-navigate-shell");
+            const response = await cache.match(target, { ignoreSearch: true, ignoreVary: true });
+            if (!response) return false;
+            if (response.headers.get("x-hike-navigate-shell") === MARKER) return true;
+            const html = await response.clone().text();
+            return html.includes(MARKER);
+          } catch {
+            return false;
+          }
+        }, url);
+        if (ok) return true;
+        await page.waitForTimeout(500);
+      }
+      return false;
+    }
+
+    async function inspectPreparedOfflineFiles(url) {
+      return page.evaluate(async ({ target }) => {
+        const marker = "hike-navigate-shell-v2";
+        const result = {
+          ok: false,
+          shellValid: false,
+          manifestValid: false,
+          expectedAssets: 0,
+          cachedAssets: 0,
+          missingAssets: [],
+          reason: "",
+        };
+        try {
+          const shellCache = await caches.open("hike-navigate-shell");
+          const shell = await shellCache.match(target, { ignoreSearch: true, ignoreVary: true });
+          if (!shell) {
+            result.reason = "route-specific shell is missing";
+            return result;
+          }
+          const html = await shell.clone().text();
+          // One fixed, plan-agnostic shell: the document proves shell identity
+          // with the constant marker; the plan travels in ?target= and its data
+          // is the route pack in IndexedDB (checked by B2), not this document.
+          result.shellValid =
+            (shell.headers.get("x-hike-navigate-shell") === marker || html.includes(marker)) &&
+            html.includes('data-hike-navigate-shell="shell"') &&
+            /<!doctype html|<html[\s>]/i.test(html);
+          const manifestUrl = new URL("/__klandagi__/navigate-manifest/shell", location.origin).toString();
+          const manifestResponse = await shellCache.match(manifestUrl, { ignoreVary: true });
+          const manifest = manifestResponse ? await manifestResponse.json().catch(() => null) : null;
+          const unique = Array.isArray(manifest?.assetUrls) && new Set(manifest.assetUrls).size === manifest.assetUrls.length;
+          result.manifestValid = Boolean(
+            manifest &&
+            manifest.version === 2 &&
+            manifest.marker === marker &&
+            manifest.routeId === "shell" &&
+            new URL(manifest.shellUrl).pathname === "/navigate" &&
+            unique &&
+            manifest.assetUrls.length > 0 &&
+            manifest.assetUrls.every((asset) => {
+              const parsed = new URL(asset);
+              return parsed.origin === location.origin && parsed.pathname.startsWith("/_next/static/");
+            }),
+          );
+          if (!result.manifestValid) {
+            result.reason = "route asset manifest is missing or invalid";
+            return result;
+          }
+          result.expectedAssets = manifest.assetUrls.length;
+          const assetCache = await caches.open("hike-navigate-assets");
+          for (const asset of manifest.assetUrls) {
+            const hit = await assetCache.match(asset, { ignoreVary: true });
+            if (hit?.ok) result.cachedAssets += 1;
+            else result.missingAssets.push(asset);
+          }
+          result.ok = result.shellValid && result.manifestValid && result.missingAssets.length === 0;
+          result.reason = result.ok
+            ? "route shell, manifest, and every listed app asset verified"
+            : !result.shellValid
+              ? "cached shell does not prove the requested route"
+              : `${result.missingAssets.length} manifest assets are missing`;
+          return result;
+        } catch (error) {
+          result.reason = String(error);
+          return result;
+        }
+      }, { target: url });
+    }
+
+    const navShellUrl = `${BASE}/navigate?target=plan-${planId}`;
+    let shellCached = await waitForVerifiedShell(navShellUrl);
+    if (!shellCached && prepared.via === "button") {
+      log("B1 retry prepare", "....", "verified shell missing after save — warming again");
+      await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click();
+      // Wait on the stable attribute the component emits for BOTH outcomes,
+      // not on copy. Matching message text meant a real prepare failure whose
+      // wording had changed timed out and crashed the probe instead of failing
+      // it with the reason on screen.
+      await page.waitForSelector('[data-offline-result="complete"]', { timeout: 35_000 });
+      shellCached = await waitForVerifiedShell(navShellUrl);
+    }
+    const cacheAudit = await inspectPreparedOfflineFiles(navShellUrl);
     const cacheKeys = await page.evaluate(async () => {
       try {
         const cache = await caches.open("hike-navigate-shell");
@@ -367,10 +489,18 @@ async function run() {
         return [];
       }
     });
+    const assetCacheCount = await page.evaluate(async () => {
+      try {
+        const cache = await caches.open("hike-navigate-assets");
+        return (await cache.keys()).length;
+      } catch {
+        return 0;
+      }
+    });
     log(
       "B1 prepare offline",
-      prepared.via !== "none" ? "PASS" : "SKIP",
-      `via ${prepared.via}; navigate shell cached=${shellCached}; keys=${cacheKeys.join(" | ")}`,
+      prepared.via !== "none" && shellCached && cacheAudit.ok ? "PASS" : "FAIL",
+      `via ${prepared.via}; shell cached=${shellCached}; manifest assets=${cacheAudit.cachedAssets}/${cacheAudit.expectedAssets}; ${cacheAudit.reason}; cache entries=${assetCacheCount}; keys=${cacheKeys.join(" | ")}`,
     );
     const prepareScreenText =
       (await page.locator("body").innerText().catch(() => "")) || "";
@@ -396,6 +526,23 @@ async function run() {
     log("B2 route packs in IndexedDB", packCount > 0 ? "PASS" : "FAIL", `count=${packCount}`);
 
     // Now go offline and cold-open the navigate screen for the first time.
+    await page.waitForFunction(
+      () => Boolean(navigator.serviceWorker?.controller),
+      null,
+      { timeout: 15_000 },
+    );
+    // Do not introduce an update/activation handoff immediately before going
+    // offline. The hiker flow uses the already-active worker that just verified
+    // this pack; forcing update() here made the test race a second worker.
+    await page.waitForFunction(async () => {
+      const registration = await navigator.serviceWorker?.ready;
+      return Boolean(
+        navigator.serviceWorker?.controller &&
+        registration?.active?.state === "activated" &&
+        !registration.installing &&
+        !registration.waiting,
+      );
+    }, null, { timeout: 15_000 });
     await context.setOffline(true);
 
     // Prove the network is actually cut before judging B3, rather than assuming
@@ -418,36 +565,82 @@ async function run() {
     if (workerStillOnline) {
       log(
         "B3b offline is not enforced for the service worker",
-        "WARN",
+        "FAIL",
         "setOffline did not cut the worker's network, so B3 below does not prove the cached shell was used. Run the CI job, or stop the server before the cold open, to test this for real.",
       );
     }
-    const navUrl = `${BASE}/navigate/plan-${planId}`;
-    let navError = null;
-    await page
-      .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
-      .catch((e) => {
-        navError = e.message.split("\n")[0];
-      });
-    await page.waitForTimeout(2500);
-    if (!navError) await completeReadinessIfShown(page);
-
-    const cold = navError
-      ? { ok: false, excerpt: `navigation threw: ${navError}` }
-      : await assessNavigateScreen(page);
+    const navUrl = `${BASE}/navigate?target=plan-${planId}`;
+    async function coldNavigateOnce() {
+      let navError = null;
+      let navigationResponse = null;
+      let response = null;
+      // Diagnosed from CI (see the nav-diag record in B3a): a same-document History
+      // update — Next's own router bookkeeping settling after the prepare interaction —
+      // can supersede the provisional cross-document navigation on a slow renderer.
+      // goto then resolves null, the browser never leaves the plan page, and the worker
+      // sees no fetch at all. Detect the non-navigation and re-issue the goto: the
+      // field equivalent of a swallowed tap is tapping again. Every occurrence is
+      // logged, so the CI record still shows how often the race fires.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        response = await page
+          .goto(navUrl, { waitUntil: "domcontentloaded", timeout: 20_000 })
+          .catch((e) => {
+            navError = e.message.split("\n")[0];
+            return null;
+          });
+        if (navError || page.url().startsWith(navUrl)) break;
+        log(
+          "B3 note",
+          "....",
+          `navigation superseded by a same-document update (still on ${page.url()}); re-issuing goto`,
+        );
+      }
+      if (response) {
+        navigationResponse = {
+          url: response.url(),
+          status: response.status(),
+          source:
+            response.headers()["x-hike-navigate-shell"] ??
+            response.headers()["x-hike-offline-shell"] ??
+            null,
+        };
+      }
+      await page.waitForTimeout(2500);
+      if (!navError) await completeReadinessIfShown(page);
+      return navError
+        ? { ok: false, excerpt: `navigation threw: ${navError}`, navigationResponse }
+        : { ...(await assessNavigateScreen(page)), navigationResponse };
+    }
+    const cold = await coldNavigateOnce();
+    const usedVerifiedShell =
+      cold.navigationResponse?.source === "hike-navigate-shell-v2";
+    const verifiedColdStart = !workerStillOnline && cold.ok && usedVerifiedShell;
     log(
       "B3 cold offline navigate",
-      cold.ok ? (workerStillOnline ? "PASS*" : "PASS") : "FAIL",
-      workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt,
+      verifiedColdStart ? "PASS" : "FAIL",
+      `${workerStillOnline ? `${cold.excerpt} [*network not actually cut — see B3b]` : cold.excerpt} | response=${JSON.stringify(cold.navigationResponse)}`,
     );
-    if (!cold.ok) {
+    if (!verifiedColdStart) {
       // B1 already proved the shell is in Cache Storage, so a failure here means the
       // service worker's own lookup disagreed with the probe's. Report the state it
       // would have seen rather than leaving the next reader to guess: this scenario
       // passes locally and has only ever failed on a slower CI runner.
       const why = await page
         .evaluate(async (url) => {
-          const out = { controller: null, registration: null, cacheNames: [], shellKeys: [], entry: null };
+          const out = { finalUrl: null, title: null, shellMiss: null, navDecision: null, controller: null, registration: null, cacheNames: [], shellKeys: [], entry: null };
+          // Where did the browser actually END UP, and what did the worker actually
+          // DECIDE? The failing CI runs show content this handler never serves, so
+          // these two facts are the ground truth everything else hangs off.
+          out.finalUrl = location.href;
+          out.title = document.title;
+          out.shellMiss = document.body?.getAttribute?.("data-shell-miss") ?? null;
+          try {
+            const diag = await caches.open("klandagi-nav-diag");
+            const record = await diag.match("/__klandagi__/nav-diag/last");
+            out.navDecision = record ? await record.json() : "no record — handler never ran";
+          } catch (error) {
+            out.navDecision = `threw: ${String(error)}`;
+          }
           try {
             out.controller = navigator.serviceWorker?.controller?.scriptURL ?? null;
             const reg = await navigator.serviceWorker?.getRegistration?.();
@@ -472,6 +665,8 @@ async function run() {
               out.entry = {
                 status: hit.status,
                 contentType: hit.headers.get("content-type"),
+                contentEncoding: hit.headers.get("content-encoding"),
+                contentLength: hit.headers.get("content-length"),
                 markerHeader: hit.headers.get("x-hike-navigate-shell"),
                 bytes: body.length,
                 markerInBody: body.includes("hike-navigate-shell-v2"),
@@ -488,9 +683,12 @@ async function run() {
           return out;
         }, navUrl)
         .catch((error) => ({ evaluateFailed: String(error) }));
-      log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 1200));
+      log("B3a why the shell was not served", "....", JSON.stringify(why).slice(0, 2000));
     }
-    results.push(["B: cold offline navigate", cold.ok]);
+    results.push([
+      "B: cold offline navigate via verified shell",
+      verifiedColdStart && shellCached && cacheAudit.ok,
+    ]);
 
     // Storage durability.
     //

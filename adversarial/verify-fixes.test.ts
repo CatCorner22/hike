@@ -171,8 +171,10 @@ describe("VERIFY: user-facing formatters never show NaN or Infinity", () => {
 describe("VERIFY: tourniquet threshold exact", () => {
   it("classifies on raw elapsed, not rounded", () => {
     const now = Date.now();
-    const justUnder = tourniquetStatus(now - 119.999 * 60_000, now);
-    const justOver = tourniquetStatus(now - 120.001 * 60_000, now);
+    // Conversion criteria affirmed, so the only variable left is the clock.
+    const cleared = { evacuationDelayed: true, inShock: false, amputation: false, alone: false };
+    const justUnder = tourniquetStatus(now - 119.999 * 60_000, now, cleared);
+    const justOver = tourniquetStatus(now - 120.001 * 60_000, now, cleared);
     console.log("119.999m:", JSON.stringify(justUnder));
     console.log("120.001m:", JSON.stringify(justOver));
     expect(justUnder?.conversionWindow).toBe(true);

@@ -57,6 +57,13 @@ export class LocalStoreCorruptionError extends Error {
   }
 }
 
+export class ActivityIdCollisionError extends Error {
+  constructor() {
+    super("Activity idempotency key is unavailable.");
+    this.name = "ActivityIdCollisionError";
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -142,7 +149,32 @@ function storePath() {
   );
 }
 
+export class LocalStoreDisabledError extends Error {
+  constructor() {
+    super(
+      "JSON file store is disabled in production. Set DATABASE_URL, or set " +
+        "ALLOW_LOCAL_STORE_IN_PRODUCTION=true for a single-node fallback.",
+    );
+    this.name = "LocalStoreDisabledError";
+  }
+}
+
+/**
+ * The JSON file is a single-process fallback for local development and CI.
+ * Production must not silently write plans and GPS tracks to an ephemeral disk
+ * that no other instance can see — that masquerades as persistence.
+ */
+export function isLocalStoreEnabled(): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  return process.env.ALLOW_LOCAL_STORE_IN_PRODUCTION === "true";
+}
+
+function assertLocalStoreEnabled(): void {
+  if (!isLocalStoreEnabled()) throw new LocalStoreDisabledError();
+}
+
 async function readStore(): Promise<LocalStore> {
+  assertLocalStoreEnabled();
   const file = storePath();
   try {
     const info = await stat(file);
@@ -175,6 +207,7 @@ async function readStore(): Promise<LocalStore> {
 }
 
 async function writeStore(store: LocalStore) {
+  assertLocalStoreEnabled();
   const file = storePath();
   await mkdir(path.dirname(file), { recursive: true });
   const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
@@ -195,10 +228,21 @@ function mutateStore<T>(
   mutation: (store: LocalStore) => T | Promise<T>,
 ): Promise<T> {
   const result = mutationQueue.then(async () => {
-    const store = await readStore();
-    const value = await mutation(store);
-    await writeStore(store);
-    return value;
+    const store = structuredClone(await readStore());
+    try {
+      const value = await mutation(store);
+      await writeStore(store);
+      return value;
+    } catch (error) {
+      // The mutation ran in place on the cached store. If the write (or the
+      // mutation itself, mid-edit) failed, that cache now holds data the disk
+      // never accepted — while its mtime/size stamps still match the unchanged
+      // file, so reads would serve the phantom rows until restart and OCC
+      // checks would 409 against revisions that were never persisted. Drop it;
+      // the next read reloads the durable file.
+      cache = null;
+      throw error;
+    }
   });
   mutationQueue = result.then(
     () => undefined,
@@ -252,6 +296,14 @@ export async function createPlan(input: {
   });
 }
 
+/** OCC tokens must move even when two writes land in the same millisecond. */
+export function nextIsoTimestamp(previous?: string): string {
+  const now = Date.now();
+  const prior = previous ? Date.parse(previous) : Number.NaN;
+  const next = Number.isFinite(prior) && now <= prior ? prior + 1 : now;
+  return new Date(next).toISOString();
+}
+
 export async function updatePlan(id: string, ownerId: string, updates: Partial<StoredPlan>) {
   return mutateStore((store) => {
     const index = store.plans.findIndex((p) => p.id === id && p.ownerId === ownerId);
@@ -261,7 +313,7 @@ export async function updatePlan(id: string, ownerId: string, updates: Partial<S
       ...updates,
       id,
       ownerId,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nextIsoTimestamp(store.plans[index].updatedAt),
     };
     return store.plans[index];
   });
@@ -288,17 +340,40 @@ export async function getActivity(id: string, ownerId: string) {
   return store.activities.find((a) => a.id === id && a.ownerId === ownerId) ?? null;
 }
 
+/**
+ * Creation-only lookup that never exposes another owner's row. The caller may replay
+ * `activity` or fail closed on `collision`; it must not serialize collision details.
+ */
+export async function replayActivityCreate(id: string, ownerId: string): Promise<
+  | { status: "missing" }
+  | { status: "owned"; activity: StoredActivity }
+  | { status: "collision" }
+> {
+  const store = await readStore();
+  const activity = store.activities.find((candidate) => candidate.id === id);
+  if (!activity) return { status: "missing" };
+  if (activity.ownerId !== ownerId) return { status: "collision" };
+  return { status: "owned", activity };
+}
+
 export async function createActivity(input: {
   ownerId: string;
+  clientActivityId?: string;
   trailId?: string | null;
   planId?: string | null;
   name?: string | null;
   startedAt: string;
 }) {
   return mutateStore((store) => {
+    const id = input.clientActivityId ?? crypto.randomUUID();
+    const existing = store.activities.find((activity) => activity.id === id);
+    if (existing) {
+      if (existing.ownerId !== input.ownerId) throw new ActivityIdCollisionError();
+      return existing;
+    }
     const now = new Date().toISOString();
     const activity: StoredActivity = {
-      id: crypto.randomUUID(),
+      id,
       ownerId: input.ownerId,
       planId: input.planId ?? null,
       trailId: input.trailId ?? null,

@@ -12,7 +12,10 @@ const trail = {
   elevationProfile: [],
 };
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 const context = await browser.newContext();
 await context.addInitScript(() => {
   const callbacks = new Map();
@@ -53,7 +56,7 @@ await page.route("**/api/activities**", async (route) => {
 });
 
 try {
-  await page.goto(`${BASE}/trails/pause-probe`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/trails/detail?id=pause-probe`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Start recording" }).waitFor({ timeout: 15_000 });
   await page.getByRole("button", { name: "Start recording" }).click();
   await page.getByRole("button", { name: "Pause" }).waitFor();
@@ -76,8 +79,8 @@ try {
     distanceMeters: finish?.body?.stats?.distanceMeters,
     durationSeconds: finish?.body?.stats?.durationSeconds,
   }));
-  if (!(finish?.body?.stats?.distanceMeters > 800)) {
-    throw new Error(`Expected paused movement to be counted; received ${JSON.stringify(finish)}`);
+  if ((finish?.body?.stats?.distanceMeters ?? 0) > 100) {
+    throw new Error(`Paused movement must not count as hiking distance; received ${JSON.stringify(finish)}`);
   }
 } finally {
   await browser.close();

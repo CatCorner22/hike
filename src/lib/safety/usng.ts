@@ -91,11 +91,16 @@ export function latLngToUtm(lat: number, lng: number): UtmCoord | null {
   };
 }
 
-export function formatUtm(lat: number, lng: number): string | null {
+export function formatUtm(lat: number, lng: number, resolutionM = 1): string | null {
   const u = latLngToUtm(lat, lng);
   if (!u) return null;
   // UTM reports here use the MGRS latitude band, never an ambiguous hemisphere suffix.
-  return `${u.zone}${u.band} ${Math.round(u.easting)} ${Math.round(u.northing)}`;
+  // Metres are conventional for UTM, but the VALUE is still a precision claim:
+  // rounding to the same resolution the grid digits carry keeps one line from
+  // quietly contradicting the other on a dead-reckoned fix.
+  const step = Number.isFinite(resolutionM) && resolutionM > 1 ? resolutionM : 1;
+  const round = (value: number) => Math.round(value / step) * step;
+  return `${u.zone}${u.band} ${round(u.easting)} ${round(u.northing)}`;
 }
 
 export function formatUsng(lat: number, lng: number, digits = 4): string | null {
@@ -113,6 +118,33 @@ export function formatUsng(lat: number, lng: number, digits = 4): string | null 
 
 export function formatMgrs10(lat: number, lng: number): string | null {
   return formatUsng(lat, lng, 5);
+}
+
+/**
+ * The datum every grid in this app is expressed in.
+ *
+ * A grid reference without a datum is not a position. WGS 84 and NAD 27 differ
+ * by roughly 200 m across the continental US, so a rescuer plotting a WGS 84
+ * grid on an older NAD 27 quad searches the wrong side of a ridge. GPS is WGS 84
+ * natively and nothing here reprojects, so every grid line says so.
+ */
+export const GRID_DATUM = "WGS 84";
+
+/**
+ * How many digits per axis a position of this accuracy can honestly carry.
+ *
+ * USNG digits are a precision claim: 5 digits is one metre, 4 is ten, 3 is a
+ * hundred, 2 is a kilometre. Printing ten-digit MGRS off a dead-reckoned fix
+ * with hundreds of metres of uncertainty states a position a thousand times
+ * more precisely than it is known — and a rescuer reads the digits, not the
+ * caveat above them. Round the claim down to the uncertainty.
+ */
+export function gridDigitsForAccuracy(accuracyM: number | null | undefined): number {
+  if (accuracyM == null || !Number.isFinite(accuracyM) || accuracyM <= 0) return 4;
+  if (accuracyM <= 10) return 5;
+  if (accuracyM <= 100) return 4;
+  if (accuracyM <= 1_000) return 3;
+  return 2;
 }
 
 function squareLetters(u: UtmCoord) {
@@ -273,21 +305,46 @@ export function formatDdm(lat: number, lng: number): string {
   return `${toDdm(lat, "N", "S")} ${toDdm(lng, "E", "W")}`;
 }
 
+/**
+ * Rounding a sexagesimal component can push it to exactly 60, which is not a
+ * coordinate. `(37.749999 - 37) * 60 = 44.99994`, and its seconds round to
+ * `60.0` — so the old code emitted `37°44'60.0"N`, roughly once in every 560
+ * CONUS fixes. That string reaches the SOS text message, the rescue card, the
+ * QR handoff and the medevac 9-line; a call-taker who cannot type it does the
+ * natural thing and reads it back as 44'06", which is 54 arcseconds of
+ * latitude — about 1.67 km, typically the wrong side of a drainage.
+ *
+ * So round first, then carry, exactly as you would by hand.
+ */
+function carry(units: number[], base: number): number[] {
+  const out = [...units];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    if (out[i] < base) break;
+    out[i] -= base;
+    out[i - 1] += 1;
+  }
+  return out;
+}
+
 function toDms(value: number, pos: string, neg: string) {
   const hemi = value >= 0 ? pos : neg;
   const abs = Math.abs(value);
-  const deg = Math.floor(abs);
+  let deg = Math.floor(abs);
   const minFloat = (abs - deg) * 60;
-  const min = Math.floor(minFloat);
-  const sec = (minFloat - min) * 60;
+  let min = Math.floor(minFloat);
+  // Round the seconds to the precision we print BEFORE deciding whether they
+  // overflow, or the carry misses exactly the cases that produce "60.0".
+  let sec = Math.round((minFloat - min) * 60 * 10) / 10;
+  [deg, min, sec] = carry([deg, min, sec], 60);
   return `${deg}°${String(min).padStart(2, "0")}'${sec.toFixed(1)}"${hemi}`;
 }
 
 function toDdm(value: number, pos: string, neg: string) {
   const hemi = value >= 0 ? pos : neg;
   const abs = Math.abs(value);
-  const deg = Math.floor(abs);
-  const min = (abs - deg) * 60;
+  let deg = Math.floor(abs);
+  let min = Math.round((abs - deg) * 60 * 1000) / 1000;
+  [deg, min] = carry([deg, min], 60);
   return `${deg}°${min.toFixed(3)}'${hemi}`;
 }
 

@@ -105,11 +105,14 @@ describe("adversarial swarm: check-in and weather age", () => {
     expect(status?.label).toMatch(/OVERDUE/);
   });
 
-  it("refuses heat/cold advice from pack weather older than 18 hours", () => {
+  it("refuses heat/cold advice after the single six-hour limit", () => {
     expect(
       isPackWeatherFresh({
         source: "open-meteo",
         cachedAt: "2020-01-01T00:00:00.000Z",
+        fetchedAt: "2020-01-01T00:00:00.000Z",
+        lat: 40,
+        lng: -105,
         tempC: 40,
       }, now),
     ).toBe(false);
@@ -117,6 +120,9 @@ describe("adversarial swarm: check-in and weather age", () => {
       isPackWeatherFresh({
         source: "open-meteo",
         cachedAt: new Date(now - 60 * 60_000).toISOString(),
+        fetchedAt: new Date(now - 60 * 60_000).toISOString(),
+        lat: 40,
+        lng: -105,
         tempC: 12,
       }, now),
     ).toBe(true);

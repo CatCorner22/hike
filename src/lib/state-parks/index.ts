@@ -1,3 +1,5 @@
+import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
+
 export interface StateParkCampground {
   externalId: string;
   name: string;
@@ -25,9 +27,14 @@ async function fetchGeoJsonCampgrounds(
   state: string,
 ): Promise<StateParkCampground[]> {
   try {
-    const response = await fetch(url, { next: { revalidate: 604800 } });
+    const response = await fetchWithTimeout(url, { next: { revalidate: 604800 } }, 8_000);
     if (!response.ok) return [];
-    const data = await response.json();
+    const data = await readJsonCapped<{
+      features?: Array<{
+        properties: Record<string, unknown>;
+        geometry?: { coordinates: [number, number] };
+      }>;
+    }>(response);
     const features = data.features || [];
 
     return features
@@ -40,6 +47,7 @@ async function fetchGeoJsonCampgrounds(
         if (!coords) return null;
 
         const [lng, lat] = coords;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
         const name =
           (props.SITE_NAME as string) ||
           (props.camping_unit_name as string) ||
@@ -124,8 +132,18 @@ export function stateCampgroundToRecord(camp: StateParkCampground) {
     description: camp.description ?? null,
     amenities: camp.amenities ?? null,
     reservationUrl: camp.reservationUrl ?? null,
-    permitRequired: camp.campingType === "backcountry",
+    // “Backcountry” describes setting, not a permit rule. The source adapters
+    // do not expose a reliable permit field, so absence remains unknown.
+    permitRequired: null as boolean | null,
+    accessStatus: "unknown" as const,
+    permitStatus: "unknown" as const,
     fees: null,
-    metadata: { state: camp.state },
+    metadata: {
+      state: camp.state,
+      evidence: {
+        access: { status: "unknown", sourceUrl: camp.reservationUrl, inferred: false },
+        permit: { status: "unknown", sourceUrl: camp.reservationUrl, inferred: false },
+      },
+    },
   };
 }

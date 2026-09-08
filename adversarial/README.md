@@ -13,6 +13,8 @@ Four assessments, 40 confirmed findings, all fixed:
 | [FINDINGS-geo-time.md](FINDINGS-geo-time.md) | 1 critical, 4 high, 3 medium | A dateline route produced a 359.8°-wide bbox, so a fix 20,000 km away read as on-route and **suppressed the off-route warning** |
 | [FINDINGS-safety.md](FINDINGS-safety.md) | 2 critical, 5 high, 5 medium, 1 low | Severe altitude illness said "DESCEND NOW" while CASEVAC said "stay put" for the same casualty |
 | [FINDINGS-offline-perf.md](FINDINGS-offline-perf.md) | 1 critical, 4 high, 6 medium | A corrupted alias pointer made `/navigate/<id>` load **someone else's route** |
+| [FINDINGS-OFFLINE-NAV.md](FINDINGS-OFFLINE-NAV.md) | Consolidated | Full offline navigation adversarial pass — probes, fixes, remaining limits |
+| [FINDINGS-STORAGE.md](FINDINGS-STORAGE.md) | 1 critical, 2 high, 1 medium | Evicted pack still claimed saved; JSON fallback overwrite |
 | [FINDINGS-api.md](FINDINGS-api.md) | 1 critical, 2 high, 3 medium, 3 low | Unauthenticated read/write/delete of any plan or GPS track by UUID |
 
 ## Regression tests
@@ -26,25 +28,40 @@ them is a bug that already happened once:
 - `xss-probe.test.ts` — URL sinks and the LLM prompt-injection surface
 - `api-owner-store.test.ts` — device-scoped ownership isolation
 
-## Probes (run manually)
+## Probes
 
-Need a production server, because the service worker is disabled in dev:
+Most probes need a production server because the service worker is disabled in dev. The
+`offline-navigation` CI job runs the full wired set after `npm run build` and
+`next start --port 3111` (see `.github/workflows/ci.yml`).
+
+Reproduce locally:
 
 ```bash
 npm run build
+SESSION_SECRET="$(openssl rand -base64 32)" \
 OWNER_TOKEN_SECRET="$(openssl rand -base64 32)" \
-  ALLOW_LOCAL_STORE_IN_PRODUCTION=true \
-  npx next start --port 3111 &
+ALLOW_LOCAL_STORE_IN_PRODUCTION=true \
+npx next start --port 3111 &
+export BASE=http://127.0.0.1:3111
 ```
 
-| Probe | What it does |
-| --- | --- |
-| `node adversarial/api-probe.mjs` | Fuzzing, injection, size limits, IDOR, response hygiene |
-| `node adversarial/offline-adversarial.mjs` | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew |
-| `node adversarial/gps-adversarial.mjs` | Teleports, frozen fixes, null island, antimeridian positions |
-| `node adversarial/retest-concurrency.mjs` | 50 parallel writes; must retain 50/50 |
-| `node adversarial/csp-check.mjs` | Confirms the CSP does not break the map |
-| `npx vitest run adversarial/perf.bench.ts` | Scale benchmarks; writes `perf-results.json` |
+Restart the server after every rebuild — a stale `next start` on the same port serves the
+previous build’s chunks and the service worker install will hang on 404 precache entries.
+
+| Probe | CI | What it does |
+| --- | --- | --- |
+| `node e2e/offline-navigation.mjs` | yes | Cold/warm offline navigate, ownership, durable storage UX |
+| `node adversarial/offline-adversarial.mjs` | yes | Corrupt IndexedDB, alias attacks, cache poisoning, quota, clock skew, stacked extra poison |
+| `npx vitest run adversarial/probe-stacked-failures.test.ts` | unit job | Offline + poisoned extras + stale GPS + dateline + clock skew + invented exits |
+| `node adversarial/gps-adversarial.mjs` | yes | Teleports, frozen fixes, null island, antimeridian positions |
+| `node adversarial/probe-storage-browser.mjs` | yes | Eviction UI, schema errors, corrupt pack refusal |
+| `node adversarial/probe-storage-local.mjs` | yes | JSON fallback corruption, point-queue limits |
+| `node adversarial/probe-new-activity-pause.mjs` | yes | Pause/resume must not count movement while paused |
+| `node adversarial/api-probe.mjs` | yes | Fuzzing, injection, size limits, IDOR, response hygiene |
+| `node adversarial/retest-concurrency.mjs` | yes | 50 parallel writes; must retain 50/50 |
+| `node adversarial/csp-check.mjs` | yes | Confirms the CSP does not break the map |
+| `node adversarial/probe-storage-weather-stall.mjs` | manual | Pack save completes when weather fetch stalls |
+| `npx vitest run adversarial/perf.bench.ts` | bench job | Scale benchmarks; writes `perf-results.json` |
 
 ## Performance baselines
 

@@ -61,17 +61,13 @@ async function bodyText(page) {
 }
 
 async function waitForSaveResult(page) {
-  await page.waitForFunction(
-    () => /Route saved\.|Could not save|QuotaExceeded|VersionError|requested version|route pack failed/i.test(document.body.innerText),
-    null,
-    { timeout: 25_000 },
-  );
+  await page.locator('[data-offline-result="complete"]').waitFor({ state: "visible", timeout: 25_000 });
   return bodyText(page);
 }
 
 async function preparePlan(page, id) {
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
-  const button = page.getByRole("button", { name: /prepare offline|update offline pack/i });
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
+  const button = page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i });
   await button.waitFor({ state: "visible", timeout: 12_000 });
   await button.click();
   return waitForSaveResult(page);
@@ -86,7 +82,7 @@ async function disableWeather(page) {
 
 async function disableShellWarmup(page) {
   await page.route(
-    `${BASE}/navigate/**`,
+    `${BASE}/navigate**`,
     (route) => route.fulfill({ status: 503, contentType: "text/plain", body: "probe: shell unavailable" }),
   );
 }
@@ -94,7 +90,6 @@ async function disableShellWarmup(page) {
 async function seedPack(page, navId, mutate = (pack) => pack, extras = []) {
   const pack = mutate(packFixture(navId, GEOMETRY.coordinates));
   await page.evaluate(async ({ source, stores, pack, extras }) => {
-    // eslint-disable-next-line no-eval
     (0, eval)(source);
     const db = await openEnsuringStores("hike-nav-packs", stores);
     const tx = db.transaction(["routePacks", "aliases"], "readwrite");
@@ -142,8 +137,13 @@ async function scenarioPersistenceRefused(browser) {
   await disableShellWarmup(page);
   const id = await createPlan("storage refusal");
   const text = await preparePlan(page, id);
-  const warning = /Browser storage is not persistent, so this pack may be evicted under storage pressure\./.test(text);
-  const readiness = /Storage marked persistent.*The browser may evict this pack under storage pressure\./.test(text);
+  const persistenceRow = page.locator('[data-offline-check="storage-persistence"]');
+  const persistenceText = (await persistenceRow.innerText()).replace(/\s+/g, " ").trim();
+  const persistenceStatus = await persistenceRow.getAttribute("data-offline-status");
+  const warning = /The browser may remove this saved route when device storage is low\./.test(text);
+  const readiness = persistenceStatus === "warning"
+    && /Saved routes less likely to be removed/.test(persistenceText)
+    && /The browser may remove saved data when device storage is low\./.test(persistenceText);
   result("persist-refused-visible", warning && readiness, `message=${warning}; readiness-row=${readiness}`);
   await context.close();
 }
@@ -158,23 +158,42 @@ async function scenarioQuota(browser) {
   await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
   await session.send("Storage.overrideQuotaForOrigin", { origin: ORIGIN, quotaSize: 1 });
   const id = await createPlan("quota one byte");
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
-  const action = page.getByRole("button", { name: /prepare offline|update offline pack/i });
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
+  const action = page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i });
   await action.click();
   let completed = true;
   try {
-    await page.waitForFunction(
-      () => /Route saved\.|Could not save|QuotaExceeded|VersionError|requested version/i.test(document.body.innerText),
-      null,
-      { timeout: 10_000 },
-    );
+    await page.locator('[data-offline-result="complete"]').waitFor({ state: "visible", timeout: 10_000 });
   } catch {
     completed = false;
   }
-  const text = await bodyText(page);
-  const failed = /QuotaExceeded|quota|not enough space|Could not save/i.test(text) && !/Route saved\./i.test(text);
+  const resultText = completed
+    ? (await page.locator('[data-offline-result="complete"]').innerText()).replace(/\s+/g, " ").trim()
+    : "";
+  const stored = await page.evaluate(async ({ packId, alias }) => {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open("hike-nav-packs");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const tx = db.transaction(["routePacks", "aliases"], "readonly");
+        const packRequest = tx.objectStore("routePacks").get(packId);
+        const aliasRequest = tx.objectStore("aliases").get(alias);
+        tx.oncomplete = () => {
+          db.close();
+          resolve({ pack: packRequest.result != null, alias: aliasRequest.result != null });
+        };
+        tx.onerror = () => reject(tx.error);
+      };
+    });
+  }, { packId: `plan-${id}`, alias: id });
+  const routeStatus = await page.locator('[data-offline-check="route-pack"]').getAttribute("data-offline-status");
+  const failed = /Offline storage is full\. Reconnect, sync or remove recordings, then re-download this route before relying on this device\./.test(resultText)
+    && routeStatus === "warning"
+    && !stored.pack
+    && !stored.alias;
   const button = await action.innerText();
-  result("quota-exhaustion-no-false-ready", completed && failed && /Prepare offline/i.test(button), `completed=${completed}; failed=${failed}; button=${JSON.stringify(button)}; excerpt=${JSON.stringify(text.slice(-360))}`);
+  result("quota-exhaustion-no-false-ready", completed && failed && /Prepare offline/i.test(button), `completed=${completed}; failed=${failed}; stored=${JSON.stringify(stored)}; button=${JSON.stringify(button)}; result=${JSON.stringify(resultText)}`);
   // CDP uses -1 to remove an override; zero is itself a zero-byte quota.
   await session.send("Storage.overrideQuotaForOrigin", { origin: ORIGIN, quotaSize: -1 }).catch(() => {});
   await context.close();
@@ -186,10 +205,16 @@ async function scenarioLiveEvictionClaim(browser) {
   const id = await createPlan("live eviction");
   await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
   await seedPack(page, `plan-${id}`);
-  await page.goto(`${BASE}/plan/${id}`, { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => /Route geometry and safety data are saved on this device\./.test(document.body.innerText), null, { timeout: 12_000 });
-  const before = await bodyText(page);
-  const wasSaved = /Route pack saved.*Route geometry and safety data are saved on this device\./.test(before);
+  await page.goto(`${BASE}/plan/detail?id=${id}`, { waitUntil: "domcontentloaded" });
+  await page.waitForFunction(() => {
+    const row = document.querySelector('[data-offline-check="route-pack"]');
+    return row?.getAttribute("data-offline-status") === "ready"
+      && /The marked route and its safety information are saved on this device\./.test(row.textContent ?? "");
+  }, null, { timeout: 12_000 });
+  const routeRow = page.locator('[data-offline-check="route-pack"]');
+  const before = (await routeRow.innerText()).replace(/\s+/g, " ").trim();
+  const wasSaved = await routeRow.getAttribute("data-offline-status") === "ready"
+    && /Route saved.*The marked route and its safety information are saved on this device\./.test(before);
   // Simulate an eviction/corrupted-IDB event by emptying the two persistent
   // stores while React is still showing the post-save readiness state.
   await page.evaluate(async () => {
@@ -211,15 +236,22 @@ async function scenarioLiveEvictionClaim(browser) {
   // relies on the page's affirmative claim.
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.waitForFunction(
-    () => /Route pack missing — re-download before relying on this device/.test(document.body.innerText),
+    () => {
+      const row = document.querySelector('[data-offline-check="route-pack"]');
+      return row?.getAttribute("data-offline-status") === "warning"
+        && /Route missing — prepare it again while online/.test(row.textContent ?? "");
+    },
     null,
     { timeout: 12_000 },
   );
-  const text = await bodyText(page);
-  const button = await page.getByRole("button", { name: /prepare offline|update offline pack/i }).innerText();
-  const stillClaimsSaved = /Route pack saved.*Route geometry and safety data are saved on this device\./.test(text)
-    && /Update offline pack/i.test(button);
-  const safeAfterEviction = /Route pack missing — re-download before relying on this device/.test(text)
+  await page.getByRole("button", { name: /prepare offline/i }).waitFor({ state: "visible", timeout: 12_000 });
+  const text = (await routeRow.innerText()).replace(/\s+/g, " ").trim();
+  const status = await routeRow.getAttribute("data-offline-status");
+  const button = await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).innerText();
+  const stillClaimsSaved = status === "ready"
+    || /Route saved.*The marked route and its safety information are saved on this device\./.test(text);
+  const safeAfterEviction = status === "warning"
+    && /Route missing — prepare it again while online/.test(text)
     && !stillClaimsSaved
     && /Prepare offline/i.test(button);
   result("eviction-live-ui-claim", wasSaved && safeAfterEviction, `initial=${wasSaved}; safe-after-eviction=${safeAfterEviction}; button=${JSON.stringify(button)}`);
@@ -253,7 +285,8 @@ async function scenarioAliasWriteQuota(browser) {
       };
     });
   });
-  result("alias-write-quota-visible-and-atomic", /synthetic storage full/.test(text) && rows === 0, `rows=${rows}; excerpt=${JSON.stringify(text.slice(-260))}`);
+  const actionable = /Offline storage is full.*re-download this route before relying on this device\./is.test(text);
+  result("alias-write-quota-visible-and-atomic", actionable && rows === 0, `actionable=${actionable}; rows=${rows}; excerpt=${JSON.stringify(text.slice(-260))}`);
   await context.close();
 }
 
@@ -271,7 +304,7 @@ async function scenarioCorruption(browser) {
     const id = await createPlan(`corrupt ${name}`);
     await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
     await seedPack(page, `plan-${id}`, mutate);
-    await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
     const text = await bodyText(page);
     result(`corrupt-${name}-refused`, expected.test(text) && /Cannot navigate offline/.test(text), JSON.stringify(text.slice(-250)));
@@ -300,7 +333,7 @@ async function scenarioCorruption(browser) {
       };
     });
   }, `plan-${id}`);
-  await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
   const text = await bodyText(page);
   result("orphan-alias-refused", /No offline route pack and no network\./.test(text), JSON.stringify(text.slice(-250)));
@@ -323,20 +356,24 @@ async function scenarioSchema(browser) {
     await page.goto(`${BASE}/manifest.webmanifest`, { waitUntil: "domcontentloaded" });
     await databaseAtVersion(page, version, stores);
     const id = await createPlan(`schema ${name}`);
-    await page.goto(`${BASE}/navigate/plan-${id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`${BASE}/navigate?target=plan-${id}`, { waitUntil: "domcontentloaded" });
     await page.waitForFunction(() => /Cannot navigate offline/.test(document.body.innerText), null, { timeout: 15_000 });
     const text = await bodyText(page);
     const shown = expected.test(text);
-    result(`schema-${name}-visible-error`, shown && !/Route saved\./.test(text), JSON.stringify(text.slice(-280)));
+    result(`schema-${name}-visible-error`, shown && !/Route saved(?:\s|\.|$)/.test(text), JSON.stringify(text.slice(-280)));
     await context.close();
   }
 }
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  });
   try {
     cookie = await ownerCookie();
     await scenarioPersistenceRefused(browser);
+    await scenarioAliasWriteQuota(browser);
     if (process.env.RUN_CDP_QUOTA === "1") await scenarioQuota(browser);
     await scenarioLiveEvictionClaim(browser);
     await scenarioCorruption(browser);

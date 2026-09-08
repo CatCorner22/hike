@@ -13,7 +13,6 @@ const pack = { ...packFixture(NAV_ID, route), name: 'Duress audit route — West
 
 async function installPack(page) {
   await page.evaluate(async ({ source, stores, pack: fixture }) => {
-    // eslint-disable-next-line no-eval
     eval(source);
     const db = await openEnsuringStores('hike-nav-packs', stores);
     await new Promise((resolve, reject) => {
@@ -46,7 +45,7 @@ async function newNavPage(browser, { width = 414, height = 896, forcedColors = '
   }
   await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
   await installPack(page);
-  await page.goto(`${BASE}/navigate/${NAV_ID}`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`${BASE}/navigate?target=${NAV_ID}`, { waitUntil: 'domcontentloaded' });
   const gate = await clearReadinessGate(page);
   await page.locator('canvas').first().waitFor({ state: 'visible', timeout: 15000 });
   await page.getByText(/OFF TRAIL/i).first().waitFor({ state: 'visible', timeout: 15000 });
@@ -99,7 +98,10 @@ async function viewportIssues(page) {
  });
 }
 
-const browser=await chromium.launch({headless:true});
+const browser=await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 const results={generatedAt:new Date().toISOString(), base:BASE, scenarios:{}};
 try {
   let {context,page,gate}=await newNavPage(browser);

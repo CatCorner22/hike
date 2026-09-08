@@ -44,9 +44,22 @@ afterEach(() => {
 
 describe("point sync failure handling", () => {
   it("keeps recording beyond the old 2,000-point global cutoff when storage is available", async () => {
-    await queue(2_001);
-    expect(await getPendingPointCount()).toBe(2_001);
-  });
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    const count = vi.spyOn(db, "countFromIndex").mockImplementation(async (_store, index) => {
+      // Pretend the device already holds the retired 2,000-point global cutoff.
+      return index === "by-synced" ? 2_000 : 0;
+    });
+
+    await expect(queueActivityPoint({
+      activityId: ACTIVITY,
+      lat: 37.7,
+      lng: -119.6,
+      recordedAt: new Date(1_700_000_000_000),
+    })).resolves.toBeUndefined();
+    count.mockRestore();
+    expect(await getPendingPointCount()).toBe(1);
+  }, 15_000);
 
   it.each([
     ["generous", ROUTE_PACK_STORAGE_RESERVE_BYTES + 10_000, true],
@@ -209,6 +222,35 @@ describe("point sync failure handling", () => {
     expect((await flushPendingPoints()).pending).toBe(2);
   });
 
+  it("never uploads a device-local activity ID before its server mapping exists", async () => {
+    const localId = "local-activity";
+    const remoteId = "33333333-3333-4333-8333-333333333333";
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    await db.put("localActivities", {
+      id: localId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+    });
+    await queue(1, localId);
+    const request = respondWith(404);
+    vi.stubGlobal("fetch", request);
+
+    expect(await flushPendingPoints()).toMatchObject({ pending: 1, dropped: 0 });
+    expect(request).not.toHaveBeenCalled();
+
+    await db.put("localActivities", {
+      id: localId,
+      remoteId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+    });
+    const accepted = respondWith(200);
+    vi.stubGlobal("fetch", accepted);
+    expect(await flushPendingPoints()).toMatchObject({ pending: 0, synced: 1 });
+    expect(String(accepted.mock.calls[0][0])).toContain(`/activities/${remoteId}/points`);
+  });
+
   /**
    * Regression: a permanent failure used to `break` and leave the points queued with
    * `synced: 0` forever. `deleteSyncedPointsOlderThan` only prunes `synced: 1`, so they
@@ -246,6 +288,19 @@ describe("point sync failure handling", () => {
     expect(result.pending).toBe(0);
   });
 
+  it("drops a novel point rejected after finalization instead of retrying forever", async () => {
+    await queue(2);
+    const finalized = respondWith(409);
+    vi.stubGlobal("fetch", finalized);
+
+    const result = await flushPendingPoints();
+    expect(result).toMatchObject({ dropped: 2, pending: 0, synced: 0 });
+
+    const callsAfterFirstFlush = finalized.mock.calls.length;
+    await flushPendingPoints();
+    expect(finalized.mock.calls.length).toBe(callsAfterFirstFlush);
+  });
+
   it("does not drop points on 401, which resolves on the next navigation", async () => {
     await queue(2);
     vi.stubGlobal("fetch", respondWith(401));
@@ -268,5 +323,129 @@ describe("point sync failure handling", () => {
     expect(result.dropped).toBe(2);
     expect(result.synced).toBe(3);
     expect(result.pending).toBe(0);
+  });
+});
+
+/**
+ * The 30-second background flush and the re-homing path (activity-sync) share this
+ * queue. A 404 during an owner change — cleared cookies, rotated SESSION_SECRET — used
+ * to be treated as permanent here, so the background flush destroyed the only copy of
+ * the track before re-homing ever ran. Now a 404 discards only true orphans: points
+ * whose activity no local recording references any more.
+ */
+describe("owner-change 404s do not destroy re-homeable recordings", () => {
+  const LOCAL_ID = "44444444-4444-4444-8444-444444444444";
+  const REMOTE_ID = "55555555-5555-4555-8555-555555555555";
+
+  async function putLocalRow(row: Record<string, unknown>) {
+    const db = await getOfflineDb();
+    if (!db) throw new Error("fake IndexedDB unavailable");
+    await db.put("localActivities", {
+      id: LOCAL_ID,
+      startedAt: "2026-08-20T12:00:00.000Z",
+      pendingStop: false,
+      ...row,
+    });
+  }
+
+  it("keeps every point of a live recording and stops after one 404", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID });
+    await queue(202, REMOTE_ID);
+    const gone = respondWith(404);
+    vi.stubGlobal("fetch", gone);
+
+    const result = await flushPendingPoints();
+
+    expect(result.dropped).toBe(0);
+    expect(result.pending).toBe(202);
+    expect(await getPendingPointCount()).toBe(202);
+    // Three batches were queued (100+100+2); the 404 must stop the flush after the first.
+    expect(gone).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the kept points to the activity queue, which re-homes and syncs them", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID, endedAt: "2026-08-20T13:00:00.000Z", pendingStop: true });
+    await queue(2, REMOTE_ID);
+    const posted: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes(REMOTE_ID)) return new Response("nope", { status: 404 });
+      if (url === "/api/activities" && init?.method === "POST") {
+        return new Response(JSON.stringify({ id: "remote-rehomed" }), { status: 200 });
+      }
+      if (url === "/api/activities/remote-rehomed/points" && init?.method === "POST") {
+        const body = JSON.parse(String(init.body)) as { clientPointId?: string };
+        if (body.clientPointId) posted.push(body.clientPointId);
+        return new Response("{}", { status: 200 });
+      }
+      if (url === "/api/activities/remote-rehomed" && init?.method === "PATCH") {
+        return new Response("{}", { status: 200 });
+      }
+      return new Response("{}", { status: 200 });
+    }));
+
+    const result = await flushPendingPoints();
+    expect(result.dropped).toBe(0);
+
+    // The re-homed replay is scheduled outside the flush's single-flight guard.
+    await vi.waitFor(async () => {
+      expect(await getPendingPointCount()).toBe(0);
+    });
+    expect(posted).toHaveLength(2);
+  });
+
+  it("still discards points for an activity this device fully completed", async () => {
+    await putLocalRow({ remoteId: REMOTE_ID, endedAt: "2026-08-20T13:00:00.000Z", pendingStop: false });
+    await queue(2, REMOTE_ID);
+    vi.stubGlobal("fetch", respondWith(404));
+
+    const result = await flushPendingPoints();
+    expect(result.dropped).toBe(2);
+    expect(result.pending).toBe(0);
+  });
+});
+
+/**
+ * The flush's completion used to dispatch "hike-points-queued" unconditionally, and
+ * usePointSync flushes ON that event — after the single-flight guard was already
+ * cleared. flush → event → flush, forever: an invisible busy loop burning battery in
+ * exactly the app that tells hikers to conserve it. A flush that changes nothing must
+ * be silent; one that syncs or drops points notifies once, and the single follow-up
+ * flush that triggers goes quiet on its own.
+ */
+describe("flush completion events cannot self-retrigger forever", () => {
+  function windowRecorder() {
+    const dispatched: string[] = [];
+    vi.stubGlobal("window", {
+      dispatchEvent: (event: Event) => {
+        dispatched.push(event.type);
+        return true;
+      },
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    vi.stubGlobal("Event", class { constructor(public type: string) {} });
+    vi.stubGlobal("CustomEvent", class { constructor(public type: string, public detail?: unknown) {} });
+    return dispatched;
+  }
+
+  it("stays silent on a flush that changes nothing", async () => {
+    const dispatched = windowRecorder();
+    vi.stubGlobal("fetch", respondWith(200));
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(0);
+  });
+
+  it("notifies exactly once when points actually synced, so one follow-up flush then quiescence", async () => {
+    const dispatched = windowRecorder();
+    await queue(2);
+    dispatched.length = 0; // queueing notifies legitimately; the flush is under test
+    vi.stubGlobal("fetch", respondWith(200));
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(1);
+    // The follow-up flush a listener would run now finds nothing and stays silent.
+    dispatched.length = 0;
+    await flushPendingPoints();
+    expect(dispatched.filter((type) => type === "hike-points-queued")).toHaveLength(0);
   });
 });

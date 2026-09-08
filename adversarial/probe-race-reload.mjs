@@ -22,14 +22,17 @@ async function api(path, method = "GET", body) {
 const plan = await api("/api/plans", "POST", { name: "reload lifecycle probe", customGeometry: geometry });
 if (plan.status !== 200) throw new Error(`plan creation failed: ${plan.status}`);
 const [name, value] = cookie.split("=");
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try {
   const context = await browser.newContext({ permissions: ["geolocation"], geolocation: { latitude: 37.7749, longitude: -119.5383, accuracy: 5 } });
   await context.addCookies([{ name, value, domain: new URL(BASE).hostname, path: "/", httpOnly: true, sameSite: "Lax" }]);
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${BASE}/plan/${plan.body.id}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
+  await page.goto(`${BASE}/plan/detail?id=${plan.body.id}`, { waitUntil: "domcontentloaded", timeout: 20_000 });
   const start = page.getByRole("button", { name: "Start recording" });
   await start.waitFor({ state: "visible", timeout: 20_000 });
   await start.click();

@@ -21,13 +21,16 @@ const planResponse = await fetch(`${BASE}/api/plans`, {
 });
 const plan = await planResponse.json();
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 try {
   const context = await browser.newContext();
   await context.addCookies([{ name, value: value.join("="), domain: new URL(BASE).hostname, path: "/", httpOnly: true, secure: false, sameSite: "Lax" }]);
   const page = await context.newPage();
   await page.route("https://api.open-meteo.com/**", () => new Promise(() => {}));
-  await page.goto(`${BASE}/plan/${plan.id}`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${BASE}/plan/detail?id=${plan.id}`, { waitUntil: "domcontentloaded" });
   const button = page.getByRole("button", { name: /prepare offline/i });
   await button.waitFor({ state: "visible", timeout: 12_000 }).catch(async (error) => {
     throw new Error(`prepare button unavailable: ${(await page.locator("body").innerText()).slice(0, 500)}; ${error.message}`);
@@ -37,7 +40,7 @@ try {
   const body = await page.locator("body").innerText();
   console.log(
     `PASS weather-stall-keeps-saving — preparing=${/Preparing/.test(body)}; `
-      + `saved=${/Route saved\./.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
+      + `saved=${/Route saved(?:\s|\.|$)/.test(body)}; error=${/Could not save|quota|failed/i.test(body)}`,
   );
   await context.close();
 } finally {

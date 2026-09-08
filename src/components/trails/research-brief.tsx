@@ -2,245 +2,197 @@
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertTriangle, Calendar, Car, Dog, Tent, Users } from "lucide-react";
-import type { TrailResearchBrief } from "@/lib/research/schema";
+import { AlertTriangle, Calendar, Car, Clock3, Dog, Tent, Users } from "lucide-react";
 import {
-  classifyResearchClaim,
-  classifyResearchSourceUrl,
-  researchSourceFreshness,
-  type ResearchEvidenceClass,
-  type ResearchFreshness,
-} from "@/lib/research/provenance";
-import { safeSourceUrl } from "@/lib/research/schema";
+  researchBriefFieldTrust,
+  researchFreshness,
+  safeSourceUrl,
+  type TrailResearchBrief,
+} from "@/lib/research/schema";
+import { httpsUrl } from "@/lib/urls";
 
 interface ResearchBriefProps {
   brief: TrailResearchBrief;
 }
 
-const evidenceClassStyle: Record<ResearchEvidenceClass, string> = {
-  official: "border-emerald-700/30 bg-emerald-700/10 text-emerald-800 dark:text-emerald-300",
-  community: "border-sky-700/30 bg-sky-700/10 text-sky-800 dark:text-sky-300",
-  "ai-inferred": "border-amber-700/30 bg-amber-700/10 text-amber-900 dark:text-amber-200",
-  unverified: "border-destructive/40 bg-destructive/10 text-destructive",
-};
-
-const freshnessStyle: Record<ResearchFreshness, string> = {
-  fresh: "border-emerald-700/30 bg-emerald-700/10 text-emerald-800 dark:text-emerald-300",
-  aging: "border-amber-700/30 bg-amber-700/10 text-amber-900 dark:text-amber-200",
-  stale: "border-destructive/40 bg-destructive/10 text-destructive",
-  unknown: "border-destructive/40 bg-destructive/10 text-destructive",
-};
-
-function visibleSourceLabel(source: TrailResearchBrief["sources"][number]): string {
-  return typeof source.label === "string" && source.label.trim().length > 0
-    ? source.label
-    : "Unlabeled source";
-}
-
-function ClaimEvidence({
-  sourceUrls,
-  sources,
-}: {
-  sourceUrls: unknown;
-  sources: TrailResearchBrief["sources"];
-}) {
-  if (!Array.isArray(sourceUrls)) {
-    return <Badge variant="destructive">Not verified</Badge>;
-  }
-
-  const citedUrls = new Set(
-    sourceUrls
-      .map((url) => safeSourceUrl(url))
-      .filter((url): url is string => url !== null),
-  );
-  const citedSources = sources.filter((source) => citedUrls.has(source.url));
-  if (citedSources.length === 0) {
-    return <Badge variant="destructive">Not verified</Badge>;
-  }
-
-  return (
-    <Badge variant="outline" className="max-w-full whitespace-normal">
-      AI cites: {citedSources.map(visibleSourceLabel).join(", ")}
-    </Badge>
-  );
-}
-
-function SectionTitle({
-  children,
-  sourceUrls,
-  sources,
-}: {
-  children: React.ReactNode;
-  sourceUrls: unknown;
-  sources: TrailResearchBrief["sources"];
-}) {
-  return (
-    <div className="mb-1 flex flex-wrap items-center gap-2">
-      <h4 className="text-sm font-medium">{children}</h4>
-      <ClaimEvidence sourceUrls={sourceUrls} sources={sources} />
-    </div>
-  );
-}
-
 export function ResearchBrief({ brief }: ResearchBriefProps) {
-  const claimSources = brief.claimSources;
-  const claimEvidenceClass = classifyResearchClaim();
+  const freshness = researchFreshness(brief.lastResearchedAt);
+  const trust = researchBriefFieldTrust(brief);
+  const seasons = trust.bestSeasons ? brief.bestSeasons : [];
+  const crowdLevel = trust.crowdLevel ? brief.crowdLevel : "unknown";
+  const conditions = trust.conditions ? brief.conditions : null;
+  const summary = trust.summary
+    ? brief.summary
+    : "This cached brief predates source verification. Refresh it before relying on any research claim.";
+  const difficulty = trust.difficultyReality
+    ? brief.difficultyReality
+    : "Unknown — verified difficulty evidence is unavailable.";
+  const hazards = trust.hazards ? brief.hazards : [];
+  const parking = trust.parking
+    ? brief.parking
+    : "Unknown — verified parking evidence is unavailable.";
+  const permits = trust.permits ? brief.permits : null;
+  const dogPolicy = trust.dogPolicy ? brief.dogPolicy : null;
+  const campingNearby = trust.campingNearby ? brief.campingNearby : [];
+  const trustedSourceUrls = new Set(trust.sourceUrls);
+  const sources = brief.sources.filter((source) => {
+    const url = safeSourceUrl(source.url);
+    return Boolean(url && trustedSourceUrls.has(url));
+  });
+  const provenance = trust.cacheReusable && brief.provenance?.mode === "source_synthesis"
+    ? "Source-backed synthesis"
+    : trust.cacheReusable && brief.provenance?.mode === "mapped_metadata_only"
+      ? "Mapped metadata only"
+      : "Unverified brief — refresh";
 
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-lg">Trail Research</CardTitle>
-        <Alert className="border-amber-700/30 bg-amber-700/10">
-          <AlertTriangle className="h-4 w-4 text-amber-800 dark:text-amber-200" />
-          <div className="flex flex-wrap items-center gap-2">
-            <AlertTitle>AI-inferred research — not verified fact</AlertTitle>
-            <Badge variant="outline" className={evidenceClassStyle[claimEvidenceClass]}>
-              {claimEvidenceClass}
-            </Badge>
-          </div>
-          <AlertDescription>
-            Verify route conditions, closures, permits, and hazards directly with the land manager before departure.
-          </AlertDescription>
-        </Alert>
-        <p className="text-sm text-muted-foreground">{brief.summary}</p>
-        <ClaimEvidence sourceUrls={claimSources?.summary} sources={brief.sources} />
+        <p className="text-sm text-muted-foreground">{summary}</p>
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Badge variant="secondary">{provenance}</Badge>
+          <Badge variant={freshness.stale ? "destructive" : "outline"}>
+            <Clock3 className="h-3 w-3" />
+            {freshness.label}
+          </Badge>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Check time is not a live-condition timestamp; source pages and rules may be older or have changed.
+        </p>
+        {trust.cacheReusable && brief.provenance?.parkCode && brief.provenance.parkName && (
+          <p className="text-xs text-muted-foreground">
+            NPS unit verified: {brief.provenance.parkName} ({brief.provenance.parkCode}).
+          </p>
+        )}
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Badge variant="secondary">
             <Users className="mr-1 h-3 w-3" />
-            Crowds: {brief.crowdLevel}
+            Crowds: {crowdLevel}
           </Badge>
-          {brief.bestSeasons.map((season) => (
-            <Badge key={season} variant="outline">
+          {seasons.length > 0 ? (
+            seasons.map((season) => (
+              <Badge key={season} variant="outline">
+                <Calendar className="mr-1 h-3 w-3" />
+                {season}
+              </Badge>
+            ))
+          ) : (
+            <Badge variant="outline">
               <Calendar className="mr-1 h-3 w-3" />
-              {season}
+              Season evidence unavailable
             </Badge>
-          ))}
-          <ClaimEvidence sourceUrls={claimSources?.bestSeasons} sources={brief.sources} />
-          <ClaimEvidence sourceUrls={claimSources?.crowdLevel} sources={brief.sources} />
+          )}
         </div>
 
         <div>
-          <SectionTitle sourceUrls={claimSources?.difficultyReality} sources={brief.sources}>
-            Difficulty reality
-          </SectionTitle>
-          <p className="text-sm text-muted-foreground">{brief.difficultyReality}</p>
+          <h4 className="mb-1 text-sm font-medium">Difficulty reality</h4>
+          <p className="text-sm text-muted-foreground">{difficulty}</p>
         </div>
 
-        {brief.hazards.length > 0 && (
-          <div>
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <h4 className="flex items-center gap-1 text-sm font-medium">
-                <AlertTriangle className="h-4 w-4 text-amber-500" />
-                Hazards
-              </h4>
-              <ClaimEvidence sourceUrls={claimSources?.hazards} sources={brief.sources} />
-            </div>
+        <div>
+          <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+            <AlertTriangle className="h-4 w-4 text-amber-500" />
+            Hazards
+          </h4>
+          {hazards.length > 0 ? (
             <ul className="list-inside list-disc text-sm text-muted-foreground">
-              {brief.hazards.map((h) => (
+              {hazards.map((h) => (
                 <li key={h}>{h}</li>
               ))}
             </ul>
-          </div>
-        )}
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div>
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <h4 className="flex items-center gap-1 text-sm font-medium">
-                <Car className="h-4 w-4" />
-                Parking
-              </h4>
-              <ClaimEvidence sourceUrls={claimSources?.parking} sources={brief.sources} />
-            </div>
-            <p className="text-sm text-muted-foreground">{brief.parking}</p>
-          </div>
-          {brief.permits && (
-            <div>
-              <SectionTitle sourceUrls={claimSources?.permits} sources={brief.sources}>
-                Permits
-              </SectionTitle>
-              <p className="text-sm text-muted-foreground">{brief.permits}</p>
-            </div>
-          )}
-          {brief.dogPolicy && (
-            <div>
-              <div className="mb-1 flex flex-wrap items-center gap-2">
-                <h4 className="flex items-center gap-1 text-sm font-medium">
-                  <Dog className="h-4 w-4" />
-                  Dogs
-                </h4>
-                <ClaimEvidence sourceUrls={claimSources?.dogPolicy} sources={brief.sources} />
-              </div>
-              <p className="text-sm text-muted-foreground">{brief.dogPolicy}</p>
-            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No hazard evidence was returned. This is not evidence that the route is hazard-free.
+            </p>
           )}
         </div>
 
-        {brief.campingNearby.length > 0 && (
+        <div>
+          <h4 className="mb-1 text-sm font-medium">Source-reported conditions</h4>
+          <p className="text-sm text-muted-foreground">
+            {conditions
+              ? `${conditions} Verify current conditions with the land manager before departure.`
+              : "Unknown — no source-backed condition report was available."}
+          </p>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <div className="mb-1 flex flex-wrap items-center gap-2">
-              <h4 className="flex items-center gap-1 text-sm font-medium">
-                <Tent className="h-4 w-4" />
-                Camping nearby
-              </h4>
-              <ClaimEvidence sourceUrls={claimSources?.campingNearby} sources={brief.sources} />
-            </div>
+            <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <Car className="h-4 w-4" />
+              Parking
+            </h4>
+            <p className="text-sm text-muted-foreground">{parking}</p>
+          </div>
+          <div>
+            <h4 className="mb-1 text-sm font-medium">Permits</h4>
+            <p className="text-sm text-muted-foreground">
+              {permits ?? "Unknown — verify current permit rules with the land manager."}
+            </p>
+          </div>
+          <div>
+            <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <Dog className="h-4 w-4" />
+              Dogs
+            </h4>
+            <p className="text-sm text-muted-foreground">
+              {dogPolicy ?? "Unknown — verify current pet rules with the land manager."}
+            </p>
+          </div>
+        </div>
+
+        {campingNearby.length > 0 && (
+          <div>
+            <h4 className="mb-1 flex items-center gap-1 text-sm font-medium">
+              <Tent className="h-4 w-4" />
+              Camping nearby
+            </h4>
             <ul className="list-inside list-disc text-sm text-muted-foreground">
-              {brief.campingNearby.map((c) => (
+              {campingNearby.map((c) => (
                 <li key={c}>{c}</li>
               ))}
             </ul>
           </div>
         )}
 
-        {brief.sources.length > 0 && (
-          <div>
-            <h4 className="mb-2 text-sm font-medium">Source provenance</h4>
-            <ul className="space-y-2">
-              {brief.sources.map((source) => {
-                const href = safeSourceUrl(source.url);
-                const freshness = researchSourceFreshness(source.retrievedAt);
-                const sourceLabel = visibleSourceLabel(source);
-                const evidenceClass = classifyResearchSourceUrl(source.url);
+        <div>
+          <h4 className="mb-1 text-sm font-medium">Sources and provenance</h4>
+          {sources.length > 0 ? (
+            <ul className="space-y-1 text-sm">
+              {sources.map((source) => {
+                const href = httpsUrl(source.url);
+                if (!href) return <li key={source.url}>{source.title}</li>;
+                const provider = source.provider === "nps"
+                  ? "NPS"
+                  : source.provider === "openstreetmap"
+                    ? "OpenStreetMap"
+                    : source.provider === "web"
+                      ? "Web"
+                      : "Legacy";
                 return (
-                  <li key={`${source.url}-${sourceLabel}`} className="rounded-md border p-3 text-sm">
-                    <div className="flex flex-wrap items-center gap-2">
-                      {href ? (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {sourceLabel}
-                        </a>
-                      ) : (
-                        <span className="font-medium">{sourceLabel}</span>
-                      )}
-                      <Badge variant="outline" className={evidenceClassStyle[evidenceClass]}>
-                        {evidenceClass}
-                      </Badge>
-                      <Badge variant="outline" className={freshnessStyle[freshness]}>
-                        {freshness}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 break-all text-xs text-muted-foreground">
-                      {href ?? "URL could not be verified for safe linking."}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {freshness === "unknown"
-                        ? "Retrieved: unknown or invalid time"
-                        : `Retrieved: ${source.retrievedAt}`}
-                    </p>
+                  <li key={href}>
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline"
+                    >
+                      {source.title}
+                    </a>
+                    <span className="ml-2 text-xs text-muted-foreground">{provider}</span>
                   </li>
                 );
               })}
             </ul>
-          </div>
-        )}
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              No web or land-manager source was available for this brief.
+            </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

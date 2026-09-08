@@ -25,7 +25,7 @@ export function smeacBrief(input: {
     `M — MISSION: ${reportField(input.mission ?? "Complete planned hike and return by overdue time; send SOS if overdue or injured.")}`,
     `E — EXECUTION: ${reportField(input.execution ?? "Stay on packed route. Handrail trail. Rally at last RP / LKP if split.")}`,
     `A — ADMIN/LOG: ${reportField(input.admin ?? "Water, layers, headlamp, SOS sheet on this phone. ICE filled.")}${input.returnAt ? ` Return ${reportField(input.returnAt)}` : ""}`,
-    `C — COMMAND/SIGNAL: ${reportField(input.command ?? "PACE: SMS ICE → share grid → voice 9-line → stay put + beacon. Challenge/password if night regroup.")}`,
+    `C — COMMAND/SIGNAL: ${reportField(input.command ?? "PACE: try SMS ICE → share grid → voice 9-line when service exists → stay put + activate physical PLB/satellite SOS if carried. Phone locator does not transmit. Challenge/password if night regroup.")}`,
     input.profile?.iceName || input.profile?.icePhone
       ? `ICE: ${reportField(input.profile?.iceName, 100)} ${reportField(input.profile?.icePhone, 100)}`
       : "",

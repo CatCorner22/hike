@@ -3,7 +3,6 @@ import { fetchElevationProfile } from "@/lib/geo";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
 import { searchTrails } from "@/lib/osm/overpass";
 
-const originalFetch = globalThis.fetch;
 afterEach(() => vi.unstubAllGlobals());
 
 describe("supply external data request controls", () => {

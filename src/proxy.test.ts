@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 import { OWNER_COOKIE, signOwnerToken, verifyOwnerToken } from "@/lib/auth/owner";
@@ -46,6 +48,7 @@ describe("proxy owner minting", () => {
       { "sec-fetch-dest": "image" },
       { accept: "*/*" },
       { accept: "application/json" },
+      { accept: "text/html" },
       {},
     ];
     for (const headers of cases) {
@@ -82,6 +85,10 @@ describe("proxy owner minting", () => {
   it("passes the request through when no secret is configured", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SESSION_SECRET", "");
+    // The legacy alias must be cleared too, or a machine that exports it (for
+    // example a CI or agent VM with real secrets) silently mints anyway and
+    // this test asserts against the wrong scenario.
+    vi.stubEnv("OWNER_TOKEN_SECRET", "");
     // Must not throw: failing the whole app closed here would take the offline
     // navigate shell down with it. The route handlers refuse instead.
     const response = await proxy(request("/plan", { "sec-fetch-dest": "document" }));
@@ -110,7 +117,17 @@ describe("session responses are not shareable", () => {
   it("keeps owner-scoped pages out of shared caches even with a session", async () => {
     vi.stubEnv("SESSION_SECRET", SECRET);
     const token = await signOwnerToken("owner-1", SECRET);
-    for (const path of ["/plan", "/plan/abc", "/activities", "/navigate/plan-abc"]) {
+    // The real page paths under query-param routing, plus legacy path shapes —
+    // the prefix rule must cover both so a stale bookmark still stays private.
+    for (const path of [
+      "/plan",
+      "/plan/detail?id=abc",
+      "/plan/abc",
+      "/activities",
+      "/activities/detail?id=abc",
+      "/navigate?target=plan-abc",
+      "/navigate/plan-abc",
+    ]) {
       const response = await proxy(
         request(path, {
           accept: "text/html",
@@ -137,5 +154,73 @@ describe("session responses are not shareable", () => {
     );
     // No private/no-store forced here: the guide is the same for everyone.
     expect(response.headers.get("cache-control") ?? "").not.toMatch(/no-store/);
+  });
+});
+
+describe("single identity proxy", () => {
+  it("does not leave a competing root middleware or proxy file", () => {
+    const root = path.resolve(import.meta.dirname, "..");
+    expect(existsSync(path.join(root, "middleware.ts"))).toBe(false);
+    expect(existsSync(path.join(root, "proxy.ts"))).toBe(false);
+  });
+});
+
+describe("CORS for the native shell", () => {
+  /**
+   * The shell fetches from capacitor://localhost with a Bearer header. Without these
+   * headers WebKit blocks the response before auth is consulted. The grant must echo
+   * only allowlisted origins, and must NOT include Allow-Credentials — the cookie stays
+   * unreachable cross-origin by design.
+   */
+  it("answers a preflight from an allowed origin", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost/api/plans", {
+        method: "OPTIONS",
+        headers: {
+          origin: "capacitor://localhost",
+          "access-control-request-method": "POST",
+          "access-control-request-headers": "authorization,content-type",
+        },
+      }),
+    );
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+    expect(response.headers.get("access-control-allow-headers")).toContain("authorization");
+    expect(response.headers.get("access-control-allow-credentials")).toBeNull();
+    expect(response.headers.get("vary")).toMatch(/origin/i);
+  });
+
+  it("stamps the allow-origin header on an actual API response", async () => {
+    const response = await proxy(
+      new NextRequest("http://localhost/api/plans", {
+        headers: { origin: "capacitor://localhost" },
+      }),
+    );
+    expect(response.headers.get("access-control-allow-origin")).toBe("capacitor://localhost");
+  });
+
+  it("grants nothing to an origin outside the allowlist", async () => {
+    for (const origin of ["https://evil.example", "http://localhost:3000"]) {
+      const preflight = await proxy(
+        new NextRequest("http://localhost/api/plans", {
+          method: "OPTIONS",
+          headers: { origin, "access-control-request-method": "GET" },
+        }),
+      );
+      expect(preflight.headers.get("access-control-allow-origin"), origin).toBeNull();
+      const actual = await proxy(
+        new NextRequest("http://localhost/api/plans", { headers: { origin } }),
+      );
+      expect(actual.headers.get("access-control-allow-origin"), origin).toBeNull();
+    }
+  });
+
+  it("leaves non-API and originless requests untouched", async () => {
+    const page = await proxy(
+      new NextRequest("http://localhost/guide", { headers: { origin: "capacitor://localhost" } }),
+    );
+    expect(page.headers.get("access-control-allow-origin")).toBeNull();
+    const plain = await proxy(new NextRequest("http://localhost/api/plans"));
+    expect(plain.headers.get("access-control-allow-origin")).toBeNull();
   });
 });

@@ -25,6 +25,20 @@ export const campgroundSourceEnum = pgEnum("campground_source", [
   "osm",
 ]);
 
+export const campgroundAccessStatusEnum = pgEnum("campground_access_status", [
+  "allowed",
+  "restricted",
+  "private",
+  "unknown",
+]);
+
+export const campgroundPermitStatusEnum = pgEnum("campground_permit_status", [
+  "required",
+  "not_required",
+  "seasonal",
+  "unknown",
+]);
+
 export const crowdLevelEnum = pgEnum("crowd_level", [
   "low",
   "moderate",
@@ -111,6 +125,38 @@ export const activityPoints = pgTable("activity_points", {
     .on(table.activityId, table.recordedAt, table.lat, table.lng),
 ]);
 
+/**
+ * A deliberately small, revocable view that a hiker can expose to a guardian.
+ *
+ * The bearer token itself is never stored. Public readers present the random token
+ * from the URL fragment and the server compares its SHA-256 hash. The JSON payload is
+ * bounded by the API to route progress, ETA, battery and route deviation; precise GPS,
+ * ICE and medical data do not belong in a public-link table.
+ */
+export const guardianShares = pgTable("guardian_shares", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  ownerId: text("owner_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  routeName: text("route_name").notNull(),
+  overdueAt: timestamp("overdue_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  latestStatus: jsonb("latest_status").$type<{
+    progressPercent?: number | null;
+    etaAt?: string | null;
+    batteryPercent?: number | null;
+    deviationMeters?: number | null;
+  }>(),
+  /** Server time from the last update that committed successfully. */
+  lastUpdateAt: timestamp("last_update_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("guardian_shares_token_hash_unique").on(table.tokenHash),
+  index("guardian_shares_owner_id_idx").on(table.ownerId),
+  index("guardian_shares_expires_at_idx").on(table.expiresAt),
+]);
+
 export const campgrounds = pgTable("campgrounds", {
   id: uuid("id").primaryKey().defaultRandom(),
   externalId: text("external_id").notNull().unique(),
@@ -125,7 +171,10 @@ export const campgrounds = pgTable("campgrounds", {
   description: text("description"),
   amenities: jsonb("amenities"),
   reservationUrl: text("reservation_url"),
-  permitRequired: boolean("permit_required").default(false),
+  /** Legacy compatibility only. New UI and filters use evidence-bearing permitStatus. */
+  permitRequired: boolean("permit_required"),
+  accessStatus: campgroundAccessStatusEnum("access_status").default("unknown").notNull(),
+  permitStatus: campgroundPermitStatusEnum("permit_status").default("unknown").notNull(),
   fees: jsonb("fees"),
   metadata: jsonb("metadata"),
   cachedAt: timestamp("cached_at").defaultNow().notNull(),
@@ -136,3 +185,4 @@ export type HikePlan = typeof hikePlans.$inferSelect;
 export type Activity = typeof activities.$inferSelect;
 export type Campground = typeof campgrounds.$inferSelect;
 export type TrailResearch = typeof trailResearch.$inferSelect;
+export type GuardianShare = typeof guardianShares.$inferSelect;

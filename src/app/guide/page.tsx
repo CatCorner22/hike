@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,7 @@ import {
 } from "lucide-react";
 
 export const metadata: Metadata = {
-  title: "How to use Hike",
+  title: `How to use ${APP_NAME}`,
   description: "Plan a hike, save it for offline, navigate on the trail, and get help if something goes wrong.",
 };
 
@@ -28,7 +29,7 @@ export default function GuidePage() {
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       <section className="rounded-2xl bg-gradient-to-br from-green-600 to-emerald-800 p-6 text-white">
-        <h1 className="text-2xl font-bold tracking-tight">How to use Hike</h1>
+        <h1 className="text-2xl font-bold tracking-tight">How to use {APP_NAME}</h1>
         <p className="mt-2 text-sm text-green-50">
           Five minutes now saves a bad hour on the trail. The one rule that matters:{" "}
           <strong>save your route while you still have signal.</strong> Everything else is
@@ -39,7 +40,7 @@ export default function GuidePage() {
       <Card id="start">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <ClipboardList className="h-5 w-5 text-green-600" />
+            <ClipboardList className="h-5 w-5 text-green-700 dark:text-green-400" />
             1 · At home — plan the hike
           </CardTitle>
         </CardHeader>
@@ -49,12 +50,16 @@ export default function GuidePage() {
               Explore
             </Link>{" "}
             finds real trails by name or by map area. Open one to see its length, climb,
-            and elevation profile, and press <strong>Research</strong> for an AI summary of
-            seasons, hazards, parking, and permits — double-check anything important
-            against the park&apos;s own site.
+            and elevation profile. Research loads on its own; use <strong>Refresh</strong>{" "}
+            to update the AI summary of seasons, hazards, parking, and permits — double-check
+            anything important against the park&apos;s own site.{" "}
+            <strong>Pioneer</strong> watches the same prep (offline pack, research freshness,
+            ICE, return time) and speaks only as observations. You cannot chat with it.
+            Local gauges still run when the model is dark. It never calculates a coordinate
+            or a bearing.
           </p>
           <p>
-            Press <strong>Create plan</strong> on a trail (or{" "}
+            Press <strong>Add to plan</strong> on a trail (or{" "}
             <Link href="/plan" className="font-medium text-primary hover:underline">
               Plans → New plan
             </Link>{" "}
@@ -75,7 +80,7 @@ export default function GuidePage() {
       <Card id="offline">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Download className="h-5 w-5 text-green-600" />
+            <Download className="h-5 w-5 text-green-700 dark:text-green-400" />
             2 · Before you lose signal — the step that matters
           </CardTitle>
         </CardHeader>
@@ -91,16 +96,44 @@ export default function GuidePage() {
             Do this <em>before</em> you drive out of coverage. Navigation cannot download a
             route it has never seen.
           </p>
+          <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
+            <strong>What the offline map is, and is not.</strong> Klandagi draws your route,
+            your track, nearby trails, roads, water and landmarks, and shades the relief from
+            elevation samples taken when you prepared the route — usually a hundred to a few
+            hundred metres apart. That is enough to see where the ridges and the drainages
+            are. It is not a topo map: there are no contour lines, no imagery, and a cliff
+            narrower than the sample spacing does not exist as far as the shading is
+            concerned. Carry a paper topo. This app is not one.
+          </p>
+          <p className="rounded-md border border-amber-700/40 bg-amber-700/5 p-3 text-foreground">
+            <strong>Klandagi follows one phone, not a party.</strong> The party size you
+            enter is printed on the leave-behind card and the SOS text so a searcher knows
+            how many people to look for. Nothing tracks the others: if the group splits up,
+            this app cannot tell anyone, and the return-time alarm belongs to this phone
+            alone.
+          </p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <strong>Install the app</strong> when the browser offers &quot;Add to Home
-              Screen&quot; — an installed app keeps its offline storage far more reliably.
+              Screen&quot; — installation can make the app easier to retain and reopen, but
+              it does not guarantee that saved data will remain on the device.
             </li>
             <li>
               Don&apos;t clear the browser&apos;s site data before a trip: that deletes
               saved routes, and your plans are tied to this browser.
             </li>
-            <li>Start with a full battery. The navigate screen keeps the display on.</li>
+            <li>
+              Start with a full battery. The navigation screen requests a wake lock, but
+              the browser or battery policy can still let the display sleep.
+            </li>
+            <li>
+              Already-saved routes live on{" "}
+              <Link href="/saved" className="font-medium text-primary hover:underline">
+                the Saved page
+              </Link>
+              . That list is stored on this device and offers file backup/export; it is not
+              cloud sync and is separate from these preparation steps.
+            </li>
           </ul>
         </CardContent>
       </Card>
@@ -108,7 +141,7 @@ export default function GuidePage() {
       <Card id="navigate">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Compass className="h-5 w-5 text-green-600" />
+            <Compass className="h-5 w-5 text-green-700 dark:text-green-400" />
             3 · On the trail — navigate
           </CardTitle>
         </CardHeader>
@@ -129,8 +162,10 @@ export default function GuidePage() {
               turns red, vibrates, and shows the compass bearing back to the trail.
             </li>
             <li>
-              <strong>Backtrack</strong> retraces your own breadcrumb trail — the fastest
-              way out is usually the way you came.
+              <strong>Backtrack</strong> draws the breadcrumbs this phone successfully
+              recorded. Confirm the line is continuous and that retracing it is still
+              safe; GPS, battery, browser limits, weather, fire, water, or terrain can
+              make a saved track incomplete or unsafe to follow.
             </li>
             <li>
               GPS drops in canyons and heavy trees. The app holds your last known position
@@ -164,20 +199,25 @@ export default function GuidePage() {
           <ul className="list-disc space-y-1 pl-5">
             <li>
               <strong className="text-foreground">Lost?</strong> Stop walking. Open the
-              Safety panel — it shows your exact coordinates in every format rescuers use,
-              and Backtrack leads you along your own trail.
+              Safety panel — it shows the phone&apos;s current or last-known position in
+              several common coordinate formats, together with fix age and accuracy.
+              Backtrack draws the breadcrumbs this phone successfully recorded; gaps can
+              occur when GPS, battery, or browser recording fails.
             </li>
             <li>
               <strong className="text-foreground">Need help?</strong> The{" "}
               <strong>Share location</strong> button writes a complete message — position,
-              route, your ICE details — ready to send the moment one bar of signal
-              appears. Text messages get through when calls can&apos;t.
+              route, and your ICE details — ready for you to send when service is
+              available. SMS may sometimes work when a voice call does not, but delivery
+              is never guaranteed; look for an acknowledgement.
             </li>
             <li>
               <strong className="text-foreground">Need to be found?</strong>{" "}
-              <strong>SOS beacon</strong> strobes the screen and loops a distress tone.
-              Volume up. Three of anything — whistle blasts, light flashes — is the
-              universal distress signal.
+              <strong>Sound &amp; flash locator</strong> strobes the screen and loops a
+              distress tone. It does not contact 911, SAR, or transmit your location.
+              Volume up. Three repeated whistle blasts or light flashes are a widely
+              recognized distress convention, but responders may use different local
+              procedures.
             </li>
             <li>
               <strong className="text-foreground">Hurt, cold, or at altitude?</strong> The
@@ -200,7 +240,7 @@ export default function GuidePage() {
       <Card id="faq">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Phone className="h-5 w-5 text-green-600" />
+            <Phone className="h-5 w-5 text-green-700 dark:text-green-400" />
             Quick answers
           </CardTitle>
         </CardHeader>
@@ -213,11 +253,11 @@ export default function GuidePage() {
               research need a connection.
             </p>
             <p className="mt-1">
-              <strong>Activity recording is different:</strong> you have to press{" "}
-              <strong>Start recording</strong> while you still have signal. Once it has
-              started it keeps recording with no signal and uploads the track when you get
-              back in range. If you are already out of range, use Navigate — its
-              breadcrumbs are saved on the phone and need no connection at all.
+              <strong>Activity recording can start offline.</strong> Press{" "}
+              <strong>Start recording</strong> even without signal — points queue on this
+              phone and upload when you are back in range. If the server rejects the start
+              while you still have signal, the app says so instead of pretending you are
+              offline.
             </p>
           </div>
           <div>
@@ -233,13 +273,20 @@ export default function GuidePage() {
           <div>
             <p className="font-medium text-foreground">Where are my plans stored?</p>
             <p>
-              They belong to this browser on this phone — there&apos;s no account to sign
-              into. Clearing cookies or switching browsers starts you fresh (already-saved
-              offline routes keep working either way).
+              On {APP_NAME}&apos;s own server, under an anonymous device identity — there is
+              no account to sign into and no email address involved, but the plans
+              themselves are not only on this phone. Finished tracks upload the same way
+              once you are back in range, so losing the phone does not lose the hike.
+              Clearing cookies or switching browsers starts you fresh (already-saved
+              offline routes keep working either way). The{" "}
+              <Link href="/privacy" className="underline underline-offset-2">
+                privacy page
+              </Link>{" "}
+              lists exactly what leaves the phone.
             </p>
           </div>
           <div className="flex items-start gap-2">
-            <BatteryCharging className="mt-0.5 h-4 w-4 shrink-0 text-green-600" />
+            <BatteryCharging className="mt-0.5 h-4 w-4 shrink-0 text-green-700 dark:text-green-400" />
             <p>
               <span className="font-medium text-foreground">Battery discipline:</span>{" "}
               airplane mode with GPS on, screen dim, and the app warns you at 20% with what

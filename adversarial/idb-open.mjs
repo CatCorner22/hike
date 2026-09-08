@@ -78,13 +78,29 @@ export function packFixture(id, coordinates) {
   }
   const lngs = coordinates.map((c) => c[0]);
   const lats = coordinates.map((c) => c[1]);
+  const normalized = lngs
+    .map((lng) => ((lng + 180) % 360 + 360) % 360 - 180)
+    .sort((a, b) => a - b);
+  let largestGap = -1;
+  let gapAfter = 0;
+  for (let i = 0; i < normalized.length; i += 1) {
+    const next = i === normalized.length - 1 ? normalized[0] + 360 : normalized[i + 1];
+    const gap = next - normalized[i];
+    if (gap > largestGap) {
+      largestGap = gap;
+      gapAfter = i;
+    }
+  }
+  const minLng = normalized[(gapAfter + 1) % normalized.length];
+  const end = normalized[gapAfter];
+  const maxLng = end < minLng ? end + 360 : end;
   return {
     id,
     canonicalId: id,
     aliases: [id],
     name: id,
     geometry: { type: "LineString", coordinates },
-    bbox: [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)],
+    bbox: [minLng, Math.min(...lats), maxLng, Math.max(...lats)],
     cumulativeDistancesMeters: cumulative,
     elevationProfile: [],
     gpx: "",

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ROUTE_PACK_VERSION,
   buildRoutePack,
+  deleteRoutePack,
   getRoutePack,
   getRoutePackStatus,
   listRoutePacks,
@@ -108,6 +109,23 @@ describe("route pack aliases and migration", () => {
     expect(await listRoutePacks()).toHaveLength(1);
   });
 
+  it("deletes a canonical pack and all of its aliases without touching another pack", async () => {
+    await saveRoutePack(buildRoutePack({
+      id: "plan-delete",
+      aliases: ["delete-alias", "trail-delete"],
+      name: "Delete me",
+      geometry,
+    }));
+    await saveRoutePack(buildRoutePack({ id: "plan-keep", name: "Keep me", geometry }));
+
+    await expect(deleteRoutePack("delete-alias")).resolves.toBe(true);
+    await expect(getRoutePack("plan-delete")).resolves.toBeNull();
+    await expect(getRoutePack("delete-alias")).resolves.toBeNull();
+    await expect(getRoutePack("trail-delete")).resolves.toBeNull();
+    await expect(getRoutePack("plan-keep")).resolves.toMatchObject({ name: "Keep me" });
+    expect(await recordCount()).toBe(1);
+  });
+
   it("migrates v1 duplicate alias records without losing the pack", async () => {
     const canonical = {
       ...buildRoutePack({
@@ -184,6 +202,182 @@ describe("route pack integrity boundaries", () => {
       elevationProfile: [{ distanceMeters: 2, elevation: 1 }, { distanceMeters: 2, elevation: 2 }],
     })).toContain("elevation");
     expect(validateRoutePack({ ...pack, gpx: "x".repeat(3 * 1024 * 1024) })).toContain("too large");
+  });
+
+  it("rejects a stored length that disagrees with the distance index", () => {
+    const pack = buildRoutePack({ id: "plan-length", name: "Length route", geometry });
+    expect(validateRoutePack(pack)).toBeNull();
+    expect(validateRoutePack({ ...pack, lengthMeters: 0 })).toContain("distance index");
+    expect(validateRoutePack({ ...pack, lengthMeters: pack.lengthMeters * 3 })).toContain(
+      "distance index",
+    );
+  });
+
+  it("persists corridor OSM features and still accepts packs without them", async () => {
+    const { parseCorridorOverpassResponse } = await import("@/lib/osm/corridor-overpass");
+    const pack = buildRoutePack({ id: "plan-features", name: "Feature route", geometry });
+    const features = parseCorridorOverpassResponse({
+      routeId: "plan-features",
+      bboxes: pack.corridor!.bboxes,
+      elements: [{
+        type: "node",
+        id: 99,
+        tags: { amenity: "shelter", name: "Hut" },
+        lat: geometry.coordinates[0][1],
+        lon: geometry.coordinates[0][0],
+      }],
+    });
+    const withFeatures = buildRoutePack({
+      id: "plan-features",
+      name: "Feature route",
+      geometry,
+      corridor: pack.corridor,
+      corridorFeatures: features,
+    });
+    await saveRoutePack(withFeatures);
+    const loaded = await getRoutePack("plan-features");
+    expect(loaded?.corridorFeatures?.featureCount).toBe(1);
+    expect(validateRoutePack({ ...withFeatures, corridorFeatures: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withFeatures,
+      corridorFeatures: { ...features, routeId: "someone-else" },
+    })).toContain("corridor features");
+  });
+
+  it("persists a hazard briefing and still accepts packs without one", async () => {
+    const { buildHazardBrief } = await import("@/lib/offline/hazard-brief");
+    const brief = buildHazardBrief({
+      routeId: "plan-hazard",
+      samples: [{
+        distanceMeters: 0,
+        lat: geometry.coordinates[0][1],
+        lng: geometry.coordinates[0][0],
+        hours: [{
+          time: "2026-08-21T12:00",
+          tempC: 18,
+          rhPct: 40,
+          precipMm: 0,
+          precipProb: 10,
+          windKph: 8,
+          gustKph: 12,
+          weatherCode: 1,
+        }],
+      }],
+      now: Date.now() - 60_000,
+    });
+    const withBrief = buildRoutePack({
+      id: "plan-hazard",
+      name: "Hazard route",
+      geometry,
+      hazardBrief: brief,
+    });
+    await saveRoutePack(withBrief);
+    const loaded = await getRoutePack("plan-hazard");
+    expect(loaded?.hazardBrief?.samples).toHaveLength(1);
+    expect(validateRoutePack({ ...withBrief, hazardBrief: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, routeId: "someone-else" },
+    })).toContain("hazard briefing");
+    expect(validateRoutePack({
+      ...withBrief,
+      hazardBrief: { ...brief, disclaimer: "Live weather. Safe to go." },
+    })).toContain("hazard briefing");
+  });
+
+  it("persists official alert provenance and strips a poisoned source URL", async () => {
+    const retrievedAt = new Date(Date.now() - 60_000).toISOString();
+    const snapshot = {
+      version: 1 as const,
+      routeId: "plan-alerts",
+      retrievedAt,
+      sources: [{
+        source: "nws" as const,
+        status: "checked" as const,
+        checkedAt: retrievedAt,
+        detail: "NWS active alerts checked at 1 route sample.",
+        pointsChecked: 1,
+      }],
+      alerts: [{
+        id: "https://api.weather.gov/alerts/example",
+        source: "nws" as const,
+        title: "Flood Warning",
+        severity: "severe" as const,
+        urgency: "immediate" as const,
+        certainty: "observed" as const,
+        sourceUrl: "https://api.weather.gov/alerts/example",
+        sampleDistanceMeters: 0,
+      }],
+    };
+    const pack = buildRoutePack({
+      id: "plan-alerts",
+      name: "Official alerts route",
+      geometry,
+      officialAlerts: snapshot,
+    });
+    await saveRoutePack(pack);
+    expect((await getRoutePack("plan-alerts"))?.officialAlerts?.alerts).toHaveLength(1);
+    expect(validateRoutePack({ ...pack, officialAlerts: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...pack,
+      officialAlerts: {
+        ...snapshot,
+        alerts: [{ ...snapshot.alerts[0], sourceUrl: "https://evil.example/forged" }],
+      },
+    })).toContain("official alert");
+  });
+
+  it("persists user-supplied bailout tracks and still accepts packs without them", async () => {
+    const { prepareBailoutRoute } = await import("@/lib/offline/bailout-routes");
+    const prepared = prepareBailoutRoute({
+      routeId: "plan-exit",
+      name: "Spur",
+      geometry: {
+        type: "LineString",
+        coordinates: [geometry.coordinates[0], [geometry.coordinates[0][0], geometry.coordinates[0][1] + 0.01]],
+      },
+      main: geometry,
+    });
+    expect("route" in prepared).toBe(true);
+    if (!("route" in prepared)) return;
+    const withRoutes = buildRoutePack({
+      id: "plan-exit",
+      name: "Exit route",
+      geometry,
+      bailoutRoutes: [prepared.route],
+    });
+    await saveRoutePack(withRoutes);
+    const loaded = await getRoutePack("plan-exit");
+    expect(loaded?.bailoutRoutes).toHaveLength(1);
+    expect(validateRoutePack({ ...withRoutes, bailoutRoutes: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...withRoutes,
+      bailoutRoutes: [{ ...prepared.route, routeId: "someone-else" }],
+    })).toContain("bailout tracks");
+  });
+
+  it("persists a terrain corridor and still accepts legacy packs without one", async () => {
+    const pack = buildRoutePack({ id: "plan-corridor", name: "Corridor route", geometry });
+    expect(pack.corridor?.routeId).toBe("plan-corridor");
+    expect(pack.corridor?.bufferMeters).toBeGreaterThan(0);
+    await saveRoutePack(pack);
+    const loaded = await getRoutePack("plan-corridor");
+    expect(loaded?.corridor?.routeId).toBe("plan-corridor");
+    expect(loaded?.corridor?.layers).toContain("hillshade");
+
+    expect(validateRoutePack({ ...pack, corridor: undefined })).toBeNull();
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, routeId: "someone-elses-trail" },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bufferMeters: 50_000 },
+    })).toContain("terrain corridor");
+    expect(validateRoutePack({
+      ...pack,
+      corridor: { ...pack.corridor!, bboxes: [[0, 0, 0, 0]] },
+    })).toContain("terrain corridor");
   });
 
   it("aborts the payload transaction when an alias write throws synchronously", async () => {

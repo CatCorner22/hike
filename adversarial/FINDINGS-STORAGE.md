@@ -1,5 +1,9 @@
 # Storage — adversarial findings
 
+> **Status (2026-08-21):** All four findings below are fixed and verified by
+> `probe-storage-browser.mjs` and `probe-storage-local.mjs` (8/8 and 6/6 pass).
+> See [FINDINGS-OFFLINE-NAV.md](FINDINGS-OFFLINE-NAV.md) for the consolidated analysis.
+
 ## Summary
 
 **1 CRITICAL, 2 HIGH, 1 MEDIUM.** The pack payload validator and atomic pack/alias transaction are strong, and persistent-storage refusal is visibly warned. The main unsafe gap is freshness: after IndexedDB contents disappear in an open plan page, the UI still positively says the map is on the device. The JSON fallback also accepts a valid but malformed envelope and overwrites recoverable plans.

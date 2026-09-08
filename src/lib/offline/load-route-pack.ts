@@ -1,10 +1,19 @@
+import { isOnline } from "@/lib/platform/network";
 import {
   buildRoutePack,
   getRoutePackStatus,
   packCandidateIds,
+  packOwnsAlias,
   saveRoutePack,
+  validPackTerrain,
+  validPackWeather,
   type RoutePack,
 } from "@/lib/offline/route-pack";
+import { validCorridorFeatures } from "@/lib/offline/corridor-features";
+import { validHazardBrief } from "@/lib/offline/hazard-brief";
+import { validOfficialAlertSnapshot } from "@/lib/offline/official-alerts";
+import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
+import { validTerrainCorridor } from "@/lib/offline/terrain-corridor";
 import { isValidGeometry } from "@/lib/geo/navigation";
 
 function sleep(ms: number) {
@@ -32,10 +41,62 @@ export async function loadCachedRoutePack(
   return null;
 }
 
+/** Keep Prepare extras when a plan/trail page rebuilds a pack from the server. */
+export function enrichRoutePack(base: RoutePack, existing?: RoutePack | null): RoutePack {
+  if (!existing) return base;
+  const corridor = existing.corridor && validTerrainCorridor(existing.corridor, base.id, base.geometry)
+    ? existing.corridor
+    : undefined;
+  const keepWeather = (weather: RoutePack["weather"]) =>
+    weather && validPackWeather(weather) ? weather : undefined;
+  const keepFeatures = (features: RoutePack["corridorFeatures"]) =>
+    corridor && features && validCorridorFeatures(features, base.id, corridor.bboxes) ? features : undefined;
+  const keepBrief = (brief: RoutePack["hazardBrief"]) =>
+    brief && validHazardBrief(brief, base.id, base.bbox) ? brief : undefined;
+  const keepOfficialAlerts = (snapshot: RoutePack["officialAlerts"]) =>
+    snapshot && validOfficialAlertSnapshot(snapshot, base.id) ? snapshot : undefined;
+  const keepBailouts = (routes: RoutePack["bailoutRoutes"]) =>
+    routes && validBailoutRoutes(routes, base.id, base.geometry) ? routes : undefined;
+  // The relief-shading grid survives a rebuild only while it still covers the
+  // (possibly new) route bounds; a grid for the wrong hillside is worse than none.
+  const keepTerrain = (terrain: RoutePack["terrain"]) =>
+    terrain && validPackTerrain(terrain, base.bbox) ? terrain : undefined;
+  return buildRoutePack({
+    id: base.id,
+    aliases: base.aliases,
+    name: base.name,
+    geometry: base.geometry,
+    bbox: base.bbox,
+    elevationProfile: base.elevationProfile,
+    weather: keepWeather(base.weather) ?? keepWeather(existing.weather),
+    corridor: corridor ?? base.corridor,
+    corridorFeatures: keepFeatures(base.corridorFeatures) ?? keepFeatures(existing.corridorFeatures),
+    hazardBrief: keepBrief(base.hazardBrief) ?? keepBrief(existing.hazardBrief),
+    officialAlerts: keepOfficialAlerts(base.officialAlerts) ?? keepOfficialAlerts(existing.officialAlerts),
+    bailoutRoutes: keepBailouts(base.bailoutRoutes) ?? keepBailouts(existing.bailoutRoutes),
+    terrain: keepTerrain(base.terrain) ?? keepTerrain(existing.terrain),
+  });
+}
+
+const PERSISTED_EXTRAS = [
+  "weather",
+  "corridorFeatures",
+  "hazardBrief",
+  "officialAlerts",
+  "bailoutRoutes",
+  "terrain",
+] as const;
+
+function persistedExtrasSurvived(written: RoutePack, verified: RoutePack): boolean {
+  return PERSISTED_EXTRAS.every((key) => written[key] == null || verified[key] != null);
+}
+
 export async function persistRoutePack(pack: RoutePack): Promise<RoutePack> {
   await saveRoutePack(pack);
   const verified = await loadCachedRoutePack(pack.id, { retries: 5, retryMs: 100 });
-  if (!verified) throw new Error("Route pack failed to save on device");
+  if (!verified || !packOwnsAlias(verified, pack.id) || !persistedExtrasSurvived(pack, verified)) {
+    throw new Error("Route pack failed to save on device");
+  }
   return verified;
 }
 
@@ -83,7 +144,11 @@ export function packFromPlanApi(
     elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
   } | null,
 ): RoutePack | null {
-  const geometry = trail?.geometry ?? plan.customGeometry;
+  // A later GPX import is the plan's own route. Preferring the trail line
+  // here used to snap a prepared pack (and its extras) back to the OSM trail
+  // on every online plan load.
+  const usingCustom = Boolean(plan.customGeometry);
+  const geometry = plan.customGeometry ?? trail?.geometry;
   if (!geometry || !isValidGeometry(geometry)) return null;
 
   return buildRoutePack({
@@ -93,8 +158,10 @@ export function packFromPlanApi(
     aliases: [plan.id],
     name: plan.name,
     geometry,
-    bbox: trail?.bbox,
-    elevationProfile: trail?.elevationProfile ?? [],
+    // Trail bounds/profile belong to the OSM line. A later GPX must compute
+    // its own bbox and not inherit an elevation profile for a different path.
+    bbox: usingCustom ? undefined : trail?.bbox,
+    elevationProfile: usingCustom ? [] : trail?.elevationProfile ?? [],
   });
 }
 
@@ -118,5 +185,5 @@ export async function withNetworkTimeout<T>(
 
 export function isLikelyOffline(): boolean {
   if (typeof navigator === "undefined") return false;
-  return !navigator.onLine;
+  return !isOnline();
 }

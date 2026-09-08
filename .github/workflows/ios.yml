@@ -1,0 +1,125 @@
+name: iOS
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "simulator (smoke only) or testflight (build, sign, upload)"
+        required: true
+        default: simulator
+        type: choice
+        options: [simulator, testflight]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  simulator-smoke:
+    name: Simulator smoke (no signing)
+    if: github.event_name != 'workflow_dispatch' || inputs.lane == 'simulator'
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Static shell export
+        run: npm run build:cap
+      - name: Sync the iOS project (installs Pods)
+        run: npx cap sync ios
+      - name: Build for simulator
+        run: |
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Boot, install, launch, and prove the app survives 10 seconds
+        run: |
+          UDID=$(xcrun simctl list devices available --json | python3 -c "import json,sys; devices=[d for runtime in json.load(sys.stdin)['devices'].values() for d in runtime if 'iPhone' in d['name']]; print(devices[-1]['udid'])")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          APP_PATH=$(find ios/App/build/Build/Products -name "App.app" -type d | head -1)
+          test -n "$APP_PATH"
+          xcrun simctl install "$UDID" "$APP_PATH"
+          xcrun simctl launch "$UDID" com.blakereagan.klandagi
+          sleep 10
+          # A crash-on-launch leaves no running process behind this label.
+          xcrun simctl spawn "$UDID" launchctl list | grep -q "com.blakereagan.klandagi" \
+            || { echo "app is not running 10s after launch"; exit 1; }
+          xcrun simctl io "$UDID" screenshot simulator-screenshot.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshot
+          path: simulator-screenshot.png
+          if-no-files-found: error
+
+  testflight:
+    name: TestFlight upload (cloud signing)
+    # Manual lane: dispatch it once Apple Developer enrollment exists and the
+    # ASC_* secrets are configured. It fails fast, with a named reason, if not.
+    if: github.event_name == 'workflow_dispatch' && inputs.lane == 'testflight'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Require App Store Connect secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for v in ASC_KEY_ID ASC_ISSUER_ID ASC_API_KEY_P8 APPLE_TEAM_ID; do
+            if [ -z "${!v}" ]; then
+              echo "::error::$v secret is not configured. Enroll in the Apple Developer Program, create an App Store Connect API key, and add the ASC_KEY_ID / ASC_ISSUER_ID / ASC_API_KEY_P8 / APPLE_TEAM_ID repository secrets."
+              exit 1
+            fi
+          done
+      - run: npm ci
+      - name: Static shell export
+        run: npm run build:cap
+      - name: Sync the iOS project (installs Pods)
+        run: npx cap sync ios
+      - name: Write the App Store Connect API key
+        env:
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_API_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey.p8"
+      - name: Archive with cloud signing
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          cd ios/App
+          xcodebuild -workspace App.xcworkspace -scheme App -configuration Release archive \
+            -archivePath build/App.xcarchive -destination 'generic/platform=iOS' \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID"
+      - name: Export and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cd ios/App
+          xcodebuild -exportArchive -archivePath build/App.xcarchive \
+            -exportOptionsPlist exportOptions.plist -exportPath build/export \
+            -allowProvisioningUpdates \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey.p8"

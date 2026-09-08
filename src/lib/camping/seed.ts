@@ -1,3 +1,9 @@
+import {
+  permitRequiredCompatibility,
+  type CampAccessStatus,
+  type CampPermitStatus,
+} from "@/lib/camping/evidence";
+
 export interface SeedCampground {
   id: string;
   externalId: string;
@@ -13,6 +19,8 @@ export interface SeedCampground {
   amenities: Record<string, unknown>;
   reservationUrl: string;
   permitRequired: boolean;
+  accessStatus?: CampAccessStatus;
+  permitStatus?: CampPermitStatus;
   fees: unknown;
   metadata: Record<string, unknown>;
 }
@@ -301,6 +309,7 @@ export function filterSeedCampgrounds(filters: {
   source?: string;
 }) {
   return SEED_CAMPGROUNDS.filter((camp) => {
+    const permitStatus = camp.permitStatus ?? (camp.permitRequired ? "required" : "unknown");
     if (filters.q && !`${camp.name} ${camp.parkName}`.toLowerCase().includes(filters.q.toLowerCase())) {
       return false;
     }
@@ -314,11 +323,34 @@ export function filterSeedCampgrounds(filters: {
     ) {
       return false;
     }
-    if (filters.permitRequired === "yes" && !camp.permitRequired) return false;
-    if (filters.permitRequired === "no" && camp.permitRequired) return false;
+    if (filters.permitRequired === "yes" && permitStatus !== "required") return false;
+    if (filters.permitRequired === "no" && permitStatus !== "not_required") return false;
     if (filters.source && filters.source !== "all" && camp.source !== filters.source) {
       return false;
     }
     return true;
+  }).map((camp) => {
+    const permitStatus = camp.permitStatus ?? (camp.permitRequired ? "required" : "unknown");
+    return {
+      ...camp,
+      accessStatus: camp.accessStatus ?? "unknown" as const,
+      permitStatus,
+      permitRequired: permitRequiredCompatibility(permitStatus),
+      metadata: {
+        ...camp.metadata,
+        evidence: {
+          access: {
+            status: camp.accessStatus ?? "unknown",
+            sourceUrl: camp.reservationUrl,
+            inferred: false,
+          },
+          permit: {
+            status: permitStatus,
+            sourceUrl: camp.reservationUrl,
+            inferred: false,
+          },
+        },
+      },
+    };
   });
 }

@@ -148,7 +148,10 @@ async function main() {
 
   // Browser lifecycle: an active recording survives server-side but is not
   // restored after a document reload; the newly loaded screen only offers Start.
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({
+    headless: true,
+    ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+  });
   const context = await browser.newContext({
     permissions: ["geolocation"],
     geolocation: { latitude: 37.7749, longitude: -119.5383, accuracy: 5 },
@@ -157,7 +160,7 @@ async function main() {
   await context.addCookies([{ name, value, domain: new URL(BASE).hostname, path: "/", httpOnly: true, sameSite: "Lax" }]);
   const recoveryPlan = await createPlan("race-reload-recovery");
   const page = await context.newPage();
-  await page.goto(`${BASE}/plan/${recoveryPlan.id}`, { waitUntil: "networkidle" });
+  await page.goto(`${BASE}/plan/detail?id=${recoveryPlan.id}`, { waitUntil: "networkidle" });
   await page.getByRole("button", { name: "Start recording" }).click();
   await page.getByRole("button", { name: "Pause" }).waitFor({ timeout: 10_000 });
   const activeBeforeReload = await request("/api/activities");

@@ -99,13 +99,13 @@ async function openSeeded(planId, opts = {}) {
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   page.on("console", m => { if (m.type() === "error") errors.push(`console:${m.text()}`); });
-  const url = `${BASE}/navigate/plan-${planId}`;
+  const url = `${BASE}/navigate?target=plan-${planId}`;
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await waitForController(page);
   await page.waitForTimeout(1200);
   if (opts.prepare) {
-    await page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: /prepare offline|update offline pack/i }).click({ timeout: 10_000 });
+    await page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click({ timeout: 10_000 });
     await page.waitForTimeout(1500);
   }
   return { context, page, errors, url };
@@ -144,7 +144,10 @@ async function offlineReload(env) {
   return screen(env.page);
 }
 
-const browser = await chromium.launch({ headless: true });
+const browser = await chromium.launch({
+  headless: true,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
 await establishOwner();
 try {
   // Corrupt route payloads: app must show an explicit failure, never a browser/page blank state.
@@ -173,6 +176,60 @@ try {
       log(`corrupt/${name}/no-white-screen`, noWhiteScreen, `${s.appError ? "explicit-app-error" : s.ready ? "rendered-ready" : "other-ui"}; ${s.text.slice(0, 110).replace(/\s+/g, " ")}`);
       if (name === "three-dimensional" || name === "lat-lng-swapped" || name === "bad-elevation" || name === "50mb-gpx") log(`corrupt/${name}/rejected`, s.appError, s.appError ? "explicit error" : "pack accepted/rendered");
     } catch (e) { log(`corrupt/${name}/harness`, false, String(e)); }
+    await env.context.close();
+  }
+
+  // Optional extras are not the Safety Map. Poison weather, corridor, OSM,
+  // forecast, and a fake bailout together, then go offline. The route must
+  // still render — a bit-flipped forecast must not blank the trail.
+  {
+    const planId = await createPlan("stacked extras poison");
+    const env = await openSeeded(planId);
+    try {
+      await replacePack(env.page, `plan-${planId}`, (p) => ({
+        ...p,
+        weather: { source: "open-meteo", cachedAt: "not-a-date", tempC: Number.NaN },
+        corridor: p.corridor
+          ? { ...p.corridor, routeId: "foreign-trail" }
+          : { routeId: "foreign-trail", bufferMeters: 1, layers: ["hillshade"], bboxes: [[0, 0, 1, 1]], generatedAt: new Date().toISOString() },
+        corridorFeatures: {
+          routeId: "foreign-trail",
+          fetchedAt: new Date().toISOString(),
+          source: "openstreetmap-overpass",
+          bboxes: [[0, 0, 1, 1]],
+          layersIncluded: ["water"],
+          featureCount: 0,
+          disclaimer: "safe to drink",
+          features: { type: "FeatureCollection", features: [] },
+        },
+        hazardBrief: {
+          routeId: "foreign-trail",
+          source: "open-meteo",
+          disclaimer: "Current weather. You are safe.",
+          generatedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 3600e3).toISOString(),
+          samples: [],
+          observations: [],
+        },
+        bailoutRoutes: [{
+          id: "invented",
+          routeId: "nope",
+          name: "Invented",
+          disclaimer: "shortcut",
+          geometry: { type: "LineString", coordinates: [[0, 0], [1, 1]] },
+          join: { lat: 0, lng: 0, alongMeters: 0, offsetMeters: 0 },
+          lengthMeters: 100,
+        }],
+      }));
+      const s = await offlineReload(env);
+      log(
+        "stacked/poisoned-extras-offline-navigates",
+        s.ready && !s.appError && !s.blank && !s.browserError,
+        s.text.slice(0, 140).replace(/\s+/g, " "),
+      );
+    } catch (e) {
+      log("stacked/poisoned-extras-offline-navigates", false, String(e));
+    }
     await env.context.close();
   }
 
@@ -206,7 +263,7 @@ try {
       };
       o.onerror = () => reject(o.error);
     }), { id: `plan-${planId}` });
-    await env.page.goto(`${BASE}/plan/${planId}`, { waitUntil: "domcontentloaded" });
+    await env.page.goto(`${BASE}/plan/detail?id=${planId}`, { waitUntil: "domcontentloaded" });
     await env.page.addInitScript(() => {}); // intentional no-op: keep test source browser compatible
     const outcome = await env.page.evaluate(async () => {
       const original = IDBObjectStore.prototype.put;
@@ -220,7 +277,7 @@ try {
         return { installed: true, aliases };
       } finally { /* restored after caller observes write */ }
     });
-    await env.page.getByRole("button", { name: /prepare offline|update offline pack/i }).click(); await env.page.waitForTimeout(800);
+    await env.page.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }).click(); await env.page.waitForTimeout(800);
     const state = await env.page.evaluate(async ({ id }) => new Promise((resolve, reject) => { const o = indexedDB.open("hike-nav-packs"); o.onsuccess = () => { const tx = o.result.transaction(["routePacks", "aliases"], "readonly"); const p = tx.objectStore("routePacks").get(id); const a = tx.objectStore("aliases").get(id); tx.oncomplete = () => resolve({ pack: p.result != null, alias: a.result != null }); tx.onerror = () => reject(tx.error); }; o.onerror = () => reject(o.error); }), { id: `plan-${planId}` });
     const text = await env.page.locator("body").innerText();
     // The wording is owned by formatOfflineRouteStorageError, which maps a
@@ -255,8 +312,8 @@ try {
   // Two tabs concurrently prepare/navigate against the same IDB record.
   {
     const planId = await createPlan("two tabs"); const context = await newOwnedContext({ permissions: ["geolocation"], geolocation: GEO, serviceWorkers: "allow" }); const a = await context.newPage(), b = await context.newPage();
-    await Promise.all([a.goto(`${BASE}/plan/${planId}`), b.goto(`${BASE}/navigate/plan-${planId}`)]); await waitForController(a);
-    const button = a.getByRole("button", { name: /prepare offline|update offline pack/i }); await button.click(); await b.waitForTimeout(1800);
+    await Promise.all([a.goto(`${BASE}/plan/detail?id=${planId}`), b.goto(`${BASE}/navigate?target=plan-${planId}`)]); await waitForController(a);
+    const button = a.getByRole("button", { name: /prepare offline|update offline (?:pack|route)/i }); await button.click(); await b.waitForTimeout(1800);
     const first = await screen(b);
     if (!first.ready && !first.appError) {
       await b.reload({ waitUntil: "domcontentloaded" }).catch(() => {});
@@ -281,7 +338,11 @@ try {
         o.onsuccess = () => {
           const names = stores.filter((store) => o.result.objectStoreNames.contains(store));
           const tx = o.result.transaction(names, "readwrite");
-          for (const value of values) tx.objectStore(value._store).put((({ _store, ...row }) => row)(value));
+          for (const value of values) {
+            const row = { ...value };
+            delete row._store;
+            tx.objectStore(value._store).put(row);
+          }
           tx.oncomplete = resolve;
           tx.onerror = () => reject(tx.error);
         };

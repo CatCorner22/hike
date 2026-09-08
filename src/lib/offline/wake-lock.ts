@@ -1,3 +1,5 @@
+import { getPlatformAdapters } from "@/lib/platform/adapters";
+
 /**
  * Screen wake lock for the navigate screen.
  *
@@ -39,6 +41,26 @@ export function subscribeWakeLock(listener: () => void): () => void {
 }
 
 export async function requestWakeLock(): Promise<WakeLockHandle> {
+  // The Capacitor shell registers a WakeLockAdapter (native idle-timer
+  // disable). It never releases behind our back the way a web sentinel does,
+  // so held-state is simply what acquire() reported. This is the fix for the
+  // readiness check that could never pass on iOS: WKWebView has no
+  // navigator.wakeLock, so "Screen wake lock is held" was permanently false.
+  const adapter = getPlatformAdapters().wakeLock;
+  if (adapter) {
+    activeLock?.release();
+    const lock: WakeLockHandle = {
+      release() {
+        void adapter.release();
+        setHeld(false);
+        if (activeLock === lock) activeLock = null;
+      },
+    };
+    activeLock = lock;
+    setHeld(await adapter.acquire());
+    return lock;
+  }
+
   const nav = navigator as Navigator & {
     wakeLock?: { request: (type: "screen") => Promise<WakeLockSentinel> };
   };

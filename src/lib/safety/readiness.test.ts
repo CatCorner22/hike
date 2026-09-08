@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hikeReadiness } from "./readiness";
-import { stabilizeLoop, type TrailProgress } from "@/lib/geo/navigation";
+import { stabilizeLoop, loopStabilizeThresholds, type TrailProgress } from "@/lib/geo/navigation";
 import { buildPaperBackup } from "./paper-backup";
 
 const ice = {
@@ -21,7 +21,7 @@ describe("hikeReadiness", () => {
       }).ok,
     ).toBe(false);
     expect(
-      hikeReadiness({ packReady: true, profile: ice, returnAt: null }).missing,
+      hikeReadiness({ packReady: true, profile: ice, returnAt: null }).missing.map((gap) => gap.detail),
     ).toContain("Planned return time");
   });
 
@@ -57,6 +57,12 @@ describe("hikeReadiness", () => {
 });
 
 describe("stabilizeLoop", () => {
+  it("widens the stabilization window on longer loops", () => {
+    expect(loopStabilizeThresholds(1000)).toEqual({ nearEndMeters: 120, startJumpMeters: 80 });
+    expect(loopStabilizeThresholds(5000).nearEndMeters).toBe(200);
+    expect(loopStabilizeThresholds(5000).startJumpMeters).toBe(120);
+  });
+
   it("does not jump remaining to the start near the last vertex", () => {
     const progress: TrailProgress = {
       nearest: { lat: 37, lng: -119 },
@@ -174,11 +180,11 @@ describe("readiness is advisory, not a lock", () => {
     expect(result.missing.length).toBeGreaterThan(0);
     // The pack is present, so "no offline route pack" must NOT be among them:
     // that is the only item that genuinely makes navigation impossible.
-    expect(result.missing.join(" ")).not.toMatch(/route pack/i);
+    expect(result.missing.map((gap) => gap.detail).join(" ")).not.toMatch(/route pack/i);
   });
 
   it("flags the one condition that really does prevent navigating", () => {
     const result = hikeReadiness({ packReady: false, profile: emptyProfile, returnAt: null });
-    expect(result.missing.join(" ")).toMatch(/route pack/i);
+    expect(result.missing.map((gap) => gap.detail).join(" ")).toMatch(/route pack/i);
   });
 });

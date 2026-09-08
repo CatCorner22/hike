@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { haversineMeters as sharedHaversineMeters } from "@/lib/geo/coords";
 import { getLastFix, saveLastFix } from "@/lib/offline/route-pack";
+import { startGeoWatch } from "@/lib/platform/geolocation";
+import { geoWatchTuning, type PowerMode } from "@/lib/safety/power-reserve";
+import { getPlatformAdapters } from "@/lib/platform/adapters";
 import {
   isClockSuspectFix,
   isTrustedFix,
@@ -33,13 +37,18 @@ const SAVE_FIX_EVERY_MS = 10_000;
 /** Location permission can be granted mid-hike, so a denial must not be permanent. */
 const DENIED_RETRY_MS = 30_000;
 
-export function useGps() {
+/**
+ * `mode` is the hiker's own power choice. Passing it here rather than reading a
+ * global keeps the watch a pure function of what they asked for, and makes the
+ * re-subscribe on change fall out of the effect's dependency list.
+ */
+export function useGps(mode: PowerMode = "full") {
   const [state, setState] = useState<GpsState>({
     fix: null,
     status: "acquiring",
     message: "Waiting for a GPS fix. Stay outdoors with a clear view of the sky.",
   });
-  const watchIdRef = useRef<number | null>(null);
+  const stopWatchRef = useRef<(() => void) | null>(null);
   const lastFixRef = useRef<GpsFix | null>(null);
   const lastCallbackRef = useRef(0);
   const deniedRef = useRef(false);
@@ -50,7 +59,9 @@ export function useGps() {
     let cancelled = false;
     lastCallbackRef.current = Date.now();
 
-    if (!("geolocation" in navigator)) {
+    // Through the platform seam: the shell registers a native watcher, so the
+    // web-API absence check applies only when no adapter is present.
+    if (!getPlatformAdapters().geolocation && !("geolocation" in navigator)) {
       queueMicrotask(() => {
         if (!cancelled) setState({
           fix: null,
@@ -172,13 +183,17 @@ export function useGps() {
     };
 
     const startWatch = () => {
-      if (watchIdRef.current != null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-      watchIdRef.current = navigator.geolocation.watchPosition(applyFix, onError, {
-        enableHighAccuracy: true,
-        maximumAge: 3000,
-        timeout: 20000,
+      stopWatchRef.current?.();
+      // Background, not foreground. The old comment here said the navigate
+      // screen's wake lock keeps fixes arriving — but a wake lock only stops the
+      // screen sleeping on its own. Press the power button, switch apps, or drop
+      // the phone in a pocket and iOS suspends a foreground-only watcher: the
+      // breadcrumb stops, off-route alerting stops, and the check-in timer stops,
+      // all silently, while the header still reads "Breadcrumb: saved · N fixes".
+      // A hiker pocketing their phone is the normal case, not an edge case.
+      stopWatchRef.current = startGeoWatch(applyFix, onError, {
+        background: true,
+        ...geoWatchTuning(mode),
       });
     };
 
@@ -239,28 +254,22 @@ export function useGps() {
 
     return () => {
       cancelled = true;
-      if (watchIdRef.current != null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
+      stopWatchRef.current?.();
+      stopWatchRef.current = null;
       permissionStatus?.removeEventListener("change", onPermissionChange);
       window.clearInterval(staleTimer);
       window.clearInterval(watchdog);
     };
-  }, []);
+    // Changing power mode re-subscribes the watch, which is the only way the
+    // platform learns the new accuracy request. Everything the effect owns is
+    // torn down and rebuilt, so a mode change cannot leave two watchers running.
+  }, [mode]);
 
   return state;
 }
 
 function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const r = 6371000;
-  const p1 = (lat1 * Math.PI) / 180;
-  const p2 = (lat2 * Math.PI) / 180;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(p1) * Math.cos(p2) * Math.sin(dLng / 2) ** 2;
-  return 2 * r * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return sharedHaversineMeters({ lat: lat1, lng: lng1 }, { lat: lat2, lng: lng2 });
 }
 
 function bearingDegrees(lat1: number, lng1: number, lat2: number, lng2: number): number {

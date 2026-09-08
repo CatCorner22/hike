@@ -175,17 +175,32 @@ export function slopeAnglesFromProfile(
   windowM = 100,
 ): { maxAngleDeg: number; atMeters: number } | null {
   if (!validProfile(profile) || !Number.isFinite(windowM) || windowM <= 0) return null;
+  const firstDistance = profile[0].distanceMeters;
   const lastDistance = profile[profile.length - 1].distanceMeters;
   let steepest: { maxAngleDeg: number; atMeters: number } | null = null;
 
+  // The window-averaged gradient is piecewise linear in the start position, with
+  // breakpoints only where the window's start OR end crosses a profile sample. Its
+  // maximum therefore occurs at one of those alignments. Evaluating only sample-aligned
+  // starts (the old behavior) skipped every end-aligned window and under-read steep
+  // stretches that sit between samples — across exactly the 30–45° band this screen
+  // exists to flag.
+  const candidateStarts = new Set<number>();
   for (const point of profile) {
-    const endDistance = point.distanceMeters + windowM;
+    candidateStarts.add(point.distanceMeters);
+    const endAligned = point.distanceMeters - windowM;
+    if (endAligned >= firstDistance) candidateStarts.add(endAligned);
+  }
+
+  for (const start of candidateStarts) {
+    const endDistance = start + windowM;
     if (endDistance > lastDistance) continue;
+    const startElevation = elevationAt(profile, start);
     const endElevation = elevationAt(profile, endDistance);
-    if (endElevation == null) continue;
-    const angle = slopeAngleDegrees(endElevation - point.elevation, windowM);
+    if (startElevation == null || endElevation == null) continue;
+    const angle = slopeAngleDegrees(endElevation - startElevation, windowM);
     if (angle == null || (steepest !== null && angle <= steepest.maxAngleDeg)) continue;
-    steepest = { maxAngleDeg: angle, atMeters: roundOne(point.distanceMeters + windowM / 2) };
+    steepest = { maxAngleDeg: angle, atMeters: roundOne(start + windowM / 2) };
   }
   return steepest;
 }
@@ -194,15 +209,18 @@ export function slopeAnglesFromProfile(
 export function alptruthChecklist(): AlptruthFactor[] {
   return [
     {
+      // McCammon's "A" is recent avalanche activity — the single strongest observable
+      // clue. It is NOT "is a danger rating posted": that reading double-counts "R"
+      // (Rating) and silently drops the question most likely to stop a party.
       letter: "A",
-      factor: "Avalanche danger posted",
-      question: "Is an avalanche danger posted for this area? Rule of thumb: 3 or more yes answers means turn around.",
+      factor: "Avalanches",
+      question: "Have avalanches run in this area in the past 48 hours? Rule of thumb: 3 or more yes answers means turn around.",
     },
-    { letter: "L", factor: "Loading", question: "Has recent snow, wind loading, or rain added load to the snowpack?" },
+    { letter: "L", factor: "Loading", question: "Has recent snow, wind loading, or rain added load to the snowpack in the past 48 hours?" },
     { letter: "P", factor: "Path", question: "Are you in or beneath an obvious avalanche path?" },
     { letter: "T", factor: "Terrain trap", question: "Would a slide carry someone into trees, a gully, creek, cliff, or deep burial?" },
     { letter: "R", factor: "Rating", question: "Is the local danger rating Considerable or higher?" },
-    { letter: "U", factor: "Unstable snow signs", question: "Have you seen recent avalanches, shooting cracks, whumpfs, or collapsing snow?" },
+    { letter: "U", factor: "Unstable snow signs", question: "Have you seen or heard shooting cracks, whumpfs, or collapsing snow?" },
     { letter: "T", factor: "Thaw instability", question: "Is rapid warming or thaw making the snow wet and unstable?" },
   ];
 }

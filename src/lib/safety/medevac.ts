@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/brand";
 import { formatDdm, formatMgrs10, formatUsng, phonetic } from "@/lib/safety/usng";
 import type { IceProfile } from "@/lib/safety/profile";
 import { formatReport, reportField } from "@/lib/safety/report-field";
@@ -46,17 +47,19 @@ export function nineLineMedevac(input: {
   return formatReport([
     "9-LINE MEDEVAC / SAR",
     `L1 LOCATION: ${reportField(loc)}${sourceNote}`,
-    "L2 FREQ/CALL: SMS/CELL — Hike app",
+    `L2 FREQ/CALL: SMS/CELL — ${APP_NAME} app`,
 `L3 PATIENTS BY PRECEDENCE: ${reportField(patients)}${prec} (${
       prec === "A" ? "Urgent" : prec === "B" ? "Urgent Surgical" : "Priority"
     })`,
     "L4 SPECIAL EQUIPMENT: None stated",
     `L5 PATIENTS BY TYPE: ${reportField(litter)}L ${reportField(amb)}A`,
-    "L6 SECURITY: N — civilian wilderness",
+    // Peacetime 9-line: line 6 is the number and type of wounds, injuries, or illness
+    // (the wartime "security at pickup site" form is meaningless to a civilian SAR
+    // dispatcher, and line 9 below already uses the peacetime terrain form).
+    `L6 INJURIES: ${reportField(input.profile?.medical ?? "Not stated")}`,
     `L7 MARKING: ${reportField(input.marking ?? "Phone strobe / voice")}`,
     `L8 NATIONALITY: Civilian${input.profile?.name ? ` (${reportField(input.profile.name)})` : ""}${party}`,
     `L9 TERRAIN/LZ: ${reportField(input.terrain ?? input.trailName ?? "Trail / unknown LZ")}`,
-    input.profile?.medical ? `MEDICAL: ${reportField(input.profile.medical)}` : "",
   ]);
 }
 
@@ -66,7 +69,7 @@ export function lostProcedure(): string[] {
     "Mark this spot as LKP (last known point).",
     "Terrain associate: ridgeline, drainage, sun, last handrail.",
     "Backtrack on your breadcrumb line if you have one.",
-    "If still lost: stay put, run the beacon, send the 9-line.",
+    "If still lost: stay put, activate your physical PLB or satellite SOS if carried, and send the 9-line when communications are available. The phone locator does not transmit.",
   ];
 }
 
@@ -75,7 +78,7 @@ export function pacePlan(): string[] {
     "P — Primary: SMS ICE with USNG",
     "A — Alternate: Share / copy grid",
     "C — Contingency: Voice 9-line over phone when you have signal",
-    "E — Emergency: Stay put, beacon, whistle SOS",
+    "E — Emergency: Stay put; activate a physical PLB or satellite SOS if carried; use whistle signals",
   ];
 }
 

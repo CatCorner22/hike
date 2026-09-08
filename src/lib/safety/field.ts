@@ -82,7 +82,10 @@ export function waterReminder(
   intervalMs = 30 * 60_000,
 ): string | null {
   const baseline = lastDrinkAt ?? startedAt;
-  if (baseline == null) return null;
+  // A corrupt stored timestamp (Date.parse of a mangled breadcrumb is NaN) used to
+  // sail past the interval check — NaN compares false — and render a permanent
+  // "No water logged for NaN min" banner. An unreadable baseline is no baseline.
+  if (baseline == null || !Number.isFinite(baseline) || !Number.isFinite(now)) return null;
   const elapsed = now - baseline;
   if (elapsed < intervalMs) return null;
   return `No water logged for ${Math.round(elapsed / 60_000)} min. Sip now — dehydration hits before thirst in dry air.`;
@@ -240,6 +243,17 @@ export function breadcrumbGpx(
   );
 }
 
+/**
+ * The browser anchor download, and nothing else.
+ *
+ * This used to also take the native branch — `void adapter.saveText(...)` with
+ * the rejection swallowed — which made every failure inside WKWebView invisible:
+ * a Filesystem write that ran out of space still printed "Backup downloaded."
+ * and the clipboard fallbacks built around a synchronous throw were dead code on
+ * the one platform that needed them. Saving now goes through `saveTextFile`,
+ * which reports whether a save path actually ran; this stays the web half of it,
+ * throwing synchronously as its callers expect.
+ */
 export function downloadTextFile(filename: string, text: string, mime = "application/gpx+xml") {
   const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);

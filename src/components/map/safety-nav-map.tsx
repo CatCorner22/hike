@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { safeBbox, type LatLng } from "@/lib/geo/navigation";
+import { routeMidpoint, safeBbox, type LatLng } from "@/lib/geo/navigation";
 import { createProjector, followWindow } from "@/lib/geo/project";
 import { unwrapLongitude } from "@/lib/geo/antimeridian";
-import { latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
-import type { OfflineCorridor } from "@/lib/offline/corridor";
+import { formatUsng, latLngToUtm, utmToLatLng } from "@/lib/safety/usng";
+import { gridSquareBounds, gridSquareCorners } from "@/lib/safety/mgrs-grid";
+import type { CorridorFeatureSet } from "@/lib/offline/corridor-features";
+import type { PreparedBailoutRoute } from "@/lib/offline/bailout-routes";
+import { hillshade, type TerrainGrid } from "@/lib/offline/terrain-grid";
 
 interface SafetyNavMapProps {
   geometry: GeoJSON.LineString | GeoJSON.MultiLineString;
@@ -20,6 +23,11 @@ interface SafetyNavMapProps {
   ghost?: LatLng | null;
   search?: GeoJSON.LineString | null;
   showGrid?: boolean;
+  /**
+   * Coarse elevation samples from the route pack. Drawn as relief shading under
+   * everything else, or not at all — never as an assumption of flat ground.
+   */
+  terrain?: TerrainGrid | null;
   nightMode?: "off" | "red" | "nvg";
   gpsDenied?: boolean;
   uncertaintyM?: number;
@@ -29,11 +37,8 @@ interface SafetyNavMapProps {
    * when warning banners stack up in the header.
    */
   topInsetPx?: number;
-  /**
-   * Surrounding context drawn beneath the route. Optional: packs prepared before
-   * corridors existed simply have none, and the route-only map remains complete.
-   */
-  corridor?: OfflineCorridor | null;
+  corridorFeatures?: CorridorFeatureSet | null;
+  bailoutRoutes?: PreparedBailoutRoute[] | null;
 }
 
 function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
@@ -41,48 +46,6 @@ function flatten(geometry: GeoJSON.LineString | GeoJSON.MultiLineString) {
     ? [geometry.coordinates]
     : geometry.coordinates;
 }
-
-/**
- * Corridor styling.
- *
- * Every colour here is measured to sit below the route line's relative luminance
- * in the same display mode, and dashed for everything that is not a road, so
- * context can never be mistaken for the line the hiker is meant to be on. Each
- * night mode keeps its own single-hue palette so red and NVG stay dark-adapted.
- *
- * The day palette was originally lifted from the same bright Tailwind ramp used
- * for alerts, and measurement showed all five colours outshining the route: the
- * worst was `trail` at #86efac, luminance 0.70 against the route's 0.27 -- and in
- * nearly the route's own hue, so a side trail read as the line to follow. These
- * values keep a 25x contrast ratio against the map background while staying
- * subordinate to the route.
- */
-const CORRIDOR_LINE_STYLE: Record<
-  "road" | "track" | "trail" | "water" | "barrier",
-  { day: string; red: string; nvg: string; width: number; dash: number[] }
-> = {
-  road: { day: "#64748b", red: "#7f4a4a", nvg: "#4a7f5c", width: 2.5, dash: [] },
-  track: { day: "#78716c", red: "#6f4040", nvg: "#42704f", width: 2, dash: [6, 4] },
-  trail: { day: "#55707d", red: "#5f3636", nvg: "#3d6647", width: 1.5, dash: [4, 3] },
-  water: { day: "#2563eb", red: "#6b3b52", nvg: "#38614f", width: 2, dash: [] },
-  barrier: { day: "#8b5cf6", red: "#743a4a", nvg: "#3f6b52", width: 1.5, dash: [2, 3] },
-};
-
-/**
- * Corridor points are deliberately NOT held below the route's brightness. A line
- * competes with the route because it also says "follow me"; a 3.5 px dot marking a
- * shelter or a spring is a destination, and being easy to spot is the whole point
- * of drawing it.
- */
-const CORRIDOR_POINT_STYLE: Record<
-  "water" | "shelter" | "campsite" | "building",
-  { day: string; red: string; nvg: string }
-> = {
-  water: { day: "#38bdf8", red: "#a35c72", nvg: "#5c9c78" },
-  shelter: { day: "#fcd34d", red: "#b06a54", nvg: "#7fb890" },
-  campsite: { day: "#c4b5fd", red: "#8d5566", nvg: "#6ba283" },
-  building: { day: "#cbd5e1", red: "#8a5252", nvg: "#5d8a6d" },
-};
 
 const WAYPOINT_COLORS: Record<string, string> = {
   water: "#38bdf8",
@@ -111,13 +74,22 @@ export function SafetyNavMap({
   search = null,
   showGrid = true,
   nightMode = "off",
-  corridor = null,
   gpsDenied = false,
   uncertaintyM,
   topInsetPx = 0,
+  corridorFeatures = null,
+  bailoutRoutes = null,
+  terrain = null,
 }: SafetyNavMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lines = useMemo(() => flatten(geometry), [geometry]);
+  /**
+   * The shading depends only on the grid, and the grid is fixed for a whole
+   * hike. Recomputing it inside the draw would repeat about a thousand
+   * trigonometric cells on every GPS fix, on the screen a hiker is trying to
+   * keep alive.
+   */
+  const terrainShade = useMemo(() => (terrain ? hillshade(terrain) : null), [terrain]);
   const endpoints = useMemo(() => {
     const first = lines.find((line) => line.length >= 2)?.[0];
     const lastLine = [...lines].reverse().find((line) => line.length >= 2);
@@ -128,6 +100,8 @@ export function SafetyNavMap({
       end: { lng: last[0], lat: last[1] },
     };
   }, [lines]);
+
+  const midpoint = useMemo(() => routeMidpoint(geometry), [geometry]);
 
   const bbox = useMemo(() => {
     // Include the point the user is being sent to. A fixed window around the user alone
@@ -181,6 +155,54 @@ export function SafetyNavMap({
         ctx.translate(-userPx.x, -userPx.y);
       }
 
+      /*
+        Relief shading, under everything.
+
+        One filled quad per grid cell rather than an image: the cells are
+        hundreds of metres across and the canvas may be rotated, so four
+        projected corners are both cheaper and more honest than scaling a bitmap
+        — the shading lands exactly where the ground it describes is. Cells with
+        no elevation are skipped, so missing data stays visibly missing instead
+        of reading as flat.
+      */
+      if (terrain && terrainShade) {
+        const shade = terrainShade;
+        const [tMinLng, tMinLat, tMaxLng, tMaxLat] = terrain.bbox;
+        const lngStep = (tMaxLng - tMinLng) / (terrain.cols - 1);
+        const latStep = (tMaxLat - tMinLat) / (terrain.rows - 1);
+        // Night modes are red- and green-only by design; shading follows them so
+        // it cannot destroy dark adaptation.
+        const tint =
+          nightMode === "red" ? [120, 20, 20] : nightMode === "nvg" ? [20, 110, 45] : [130, 148, 175];
+        ctx.save();
+        for (let row = 0; row < terrain.rows - 1; row += 1) {
+          for (let col = 0; col < terrain.cols - 1; col += 1) {
+            const value = shade[row * terrain.cols + col];
+            if (value == null) continue;
+            const north = tMaxLat - row * latStep;
+            const south = north - latStep;
+            const west = tMinLng + col * lngStep;
+            const east = west + lngStep;
+            const a = toPx(west, north);
+            const b = toPx(east, north);
+            const c = toPx(east, south);
+            const d = toPx(west, south);
+            // 0.18..0.62 keeps the route, the track and the waypoints legible on
+            // top; relief is context, never the subject.
+            const level = 0.18 + value * 0.44;
+            ctx.fillStyle = `rgba(${Math.round(tint[0] * level)}, ${Math.round(tint[1] * level)}, ${Math.round(tint[2] * level)}, 0.85)`;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.lineTo(c.x, c.y);
+            ctx.lineTo(d.x, d.y);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        ctx.restore();
+      }
+
       ctx.strokeStyle =
         nightMode === "red" ? "#3f1d1d" : nightMode === "nvg" ? "#14532d" : "#1f2937";
       ctx.lineWidth = 1;
@@ -191,29 +213,61 @@ export function SafetyNavMap({
           ctx.font = "12px sans-serif";
           ctx.fillText("UTM grid unavailable at this latitude", 12, topInsetPx + 38);
         } else {
-        const step = 100;
-        const reach = 500;
-        const startE = Math.floor((u.easting - reach) / step) * step;
-        const startN = Math.floor((u.northing - reach) / step) * step;
-        for (let e = startE; e <= startE + reach * 2; e += step) {
+        const drawUtmLines = (step: number, lineWidth: number, alpha: number) => {
+          ctx.lineWidth = lineWidth;
+          ctx.globalAlpha = alpha;
+          const reach = step >= 1000 ? 1500 : 500;
+          const startE = Math.floor((u.easting - reach) / step) * step;
+          const startN = Math.floor((u.northing - reach) / step) * step;
+          for (let e = startE; e <= startE + reach * 2; e += step) {
+            ctx.beginPath();
+            for (let n = startN, i = 0; n <= startN + reach * 2; n += step, i++) {
+              const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
+              const p = toPx(geo.lng, geo.lat);
+              if (i === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+          }
+          for (let n = startN; n <= startN + reach * 2; n += step) {
+            ctx.beginPath();
+            for (let e = startE, i = 0; e <= startE + reach * 2; e += step, i++) {
+              const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
+              const p = toPx(geo.lng, geo.lat);
+              if (i === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        };
+        drawUtmLines(1000, 1.75, 0.55);
+        drawUtmLines(100, 1, 0.35);
+        const hundredCorners = gridSquareCorners(user.lat, user.lng, 100_000);
+        if (hundredCorners) {
+          ctx.lineWidth = 2.4;
+          ctx.globalAlpha = 0.8;
+          ctx.strokeStyle =
+            nightMode === "red" ? "#ffaaaa" : nightMode === "nvg" ? "#8ee6a6" : "#94a3b8";
           ctx.beginPath();
-          for (let n = startN, i = 0; n <= startN + reach * 2; n += step, i++) {
-            const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = toPx(geo.lng, geo.lat);
+          hundredCorners.forEach((c, i) => {
+            const p = toPx(c.lng, c.lat);
             if (i === 0) ctx.moveTo(p.x, p.y);
             else ctx.lineTo(p.x, p.y);
-          }
+          });
+          ctx.closePath();
           ctx.stroke();
+          ctx.globalAlpha = 1;
         }
-        for (let n = startN; n <= startN + reach * 2; n += step) {
-          ctx.beginPath();
-          for (let e = startE, i = 0; e <= startE + reach * 2; e += step, i++) {
-            const geo = utmToLatLng({ zone: u.zone, easting: e, northing: n, north: u.north });
-            const p = toPx(geo.lng, geo.lat);
-            if (i === 0) ctx.moveTo(p.x, p.y);
-            else ctx.lineTo(p.x, p.y);
-          }
-          ctx.stroke();
+        const hundred = gridSquareBounds(user.lat, user.lng, 100_000);
+        const mgrsLabel = formatUsng(user.lat, user.lng, 3);
+        if (mgrsLabel || hundred) {
+          ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#cbd5e1";
+          ctx.font = "10px sans-serif";
+          const label = [hundred ? `100 km ${hundred.hundredKmId}` : null, mgrsLabel ? `1 km · ${mgrsLabel}` : null]
+            .filter(Boolean)
+            .join("  ·  ");
+          ctx.fillText(label, 12, topInsetPx + 38);
         }
         }
       } else {
@@ -229,44 +283,71 @@ export function SafetyNavMap({
         }
       }
 
-      // Corridor context is drawn first so the route always sits on top of it.
-      // Nothing here may compete with the route line for attention: these are
-      // things that exist nearby, not the line the hiker is following.
-      if (corridor && (corridor.lines.length > 0 || corridor.points.length > 0)) {
-        ctx.lineJoin = "round";
-        ctx.lineCap = "round";
-        for (const feature of corridor.lines) {
-          if (feature.positions.length < 2) continue;
-          const style = CORRIDOR_LINE_STYLE[feature.kind];
-          ctx.strokeStyle =
-            nightMode === "red" ? style.red : nightMode === "nvg" ? style.nvg : style.day;
-          ctx.lineWidth = style.width;
-          ctx.setLineDash(style.dash);
-          ctx.beginPath();
-          feature.positions.forEach(([lng, lat], index) => {
-            const p = toPx(lng, lat);
-            if (index === 0) ctx.moveTo(p.x, p.y);
-            else ctx.lineTo(p.x, p.y);
-          });
-          ctx.stroke();
-        }
-        ctx.setLineDash([]);
-        for (const point of corridor.points) {
-          const style = CORRIDOR_POINT_STYLE[point.kind];
-          const p = toPx(point.lng, point.lat);
-          ctx.fillStyle =
-            nightMode === "red" ? style.red : nightMode === "nvg" ? style.nvg : style.day;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-
       ctx.lineJoin = "round";
       ctx.lineCap = "round";
+      if (corridorFeatures?.features.features.length) {
+        const lineColor = (layer: string) => {
+          if (nightMode === "red") return "#7f1d1d";
+          if (nightMode === "nvg") return "#14532d";
+          if (layer === "water") return "#38bdf8";
+          if (layer === "trails") return "#86efac";
+          return "#64748b";
+        };
+        const pointColor = (layer: string) => {
+          if (nightMode === "red") return "#e9a0a0";
+          if (nightMode === "nvg") return "#9deaae";
+          if (layer === "water") return "#38bdf8";
+          if (layer === "shelters") return "#fbbf24";
+          if (layer === "campsites") return "#c084fc";
+          return "#e2e8f0";
+        };
+        for (const feature of corridorFeatures.features.features) {
+          const layer = feature.properties?.layer ?? "landmarks";
+          if (feature.geometry.type === "LineString") {
+            ctx.globalAlpha = 0.55;
+            ctx.strokeStyle = lineColor(layer);
+            ctx.lineWidth = layer === "water" ? 2 : 1.5;
+            ctx.beginPath();
+            feature.geometry.coordinates.forEach(([lng, lat], index) => {
+              const p = toPx(lng, lat);
+              if (index === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            });
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          } else if (feature.geometry.type === "Point") {
+            const [lng, lat] = feature.geometry.coordinates;
+            const p = toPx(lng, lat);
+            ctx.fillStyle = pointColor(layer);
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+      if (bailoutRoutes?.length) {
+        ctx.globalAlpha = 0.9;
+        ctx.strokeStyle = nightMode === "red" ? "#fb923c" : nightMode === "nvg" ? "#fde68a" : "#ea580c";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        for (const route of bailoutRoutes) {
+          const tracks = route.geometry.type === "LineString" ? [route.geometry.coordinates] : route.geometry.coordinates;
+          for (const line of tracks) {
+            if (line.length < 2) continue;
+            ctx.beginPath();
+            line.forEach(([lng, lat], index) => {
+              const p = toPx(lng, lat);
+              if (index === 0) ctx.moveTo(p.x, p.y);
+              else ctx.lineTo(p.x, p.y);
+            });
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+      }
       ctx.strokeStyle = nightMode === "red" ? "#f87171" : "#16a34a";
       ctx.lineWidth = 5;
-      ctx.setLineDash([]);
       for (const line of lines) {
         if (line.length < 2) continue;
         ctx.beginPath();
@@ -289,6 +370,23 @@ export function SafetyNavMap({
         ctx.beginPath();
         ctx.arc(end.x, end.y, 6, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      if (midpoint) {
+        const p = toPx(midpoint.lng, midpoint.lat);
+        // Filled, with a dark outline and off the route's own hue: stroked green
+        // on a green line is invisible on a straight leg, which is most of a trail.
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - 8);
+        ctx.lineTo(p.x + 8, p.y);
+        ctx.lineTo(p.x, p.y + 8);
+        ctx.lineTo(p.x - 8, p.y);
+        ctx.closePath();
+        ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
+        ctx.fill();
+        ctx.strokeStyle = nightMode === "red" ? "#4a0b0b" : nightMode === "nvg" ? "#063516" : "#0b1220";
+        ctx.lineWidth = 2;
+        ctx.stroke();
       }
 
       if (search && search.coordinates.length >= 2) {
@@ -419,14 +517,25 @@ export function SafetyNavMap({
         ctx.arc(p.x, p.y, 7, 0, Math.PI * 2);
         ctx.fill();
         ctx.stroke();
-        if (user.heading != null) {
+        if (user.heading != null && Number.isFinite(user.heading)) {
+          // The cone is drawn apex-up, and it used to inherit the scene's
+          // rotation with none of its own — so on screen it landed exactly where
+          // map-north landed, in BOTH modes. It pointed north and called itself
+          // a heading, and was only ever right when you happened to be walking
+          // due north. Rotating it by the heading in map space puts it along the
+          // direction of travel when north is up, and screen-up when the map
+          // turns with you.
+          ctx.save();
+          ctx.translate(p.x, p.y);
+          ctx.rotate((user.heading * Math.PI) / 180);
           ctx.fillStyle = nightMode === "red" ? "#ffc1c1" : nightMode === "nvg" ? "#b8f5c8" : "#93c5fd";
           ctx.beginPath();
-          ctx.moveTo(p.x, p.y - 16);
-          ctx.lineTo(p.x - 5, p.y - 4);
-          ctx.lineTo(p.x + 5, p.y - 4);
+          ctx.moveTo(0, -16);
+          ctx.lineTo(-5, -4);
+          ctx.lineTo(5, -4);
           ctx.closePath();
           ctx.fill();
+          ctx.restore();
         }
       }
 
@@ -437,13 +546,35 @@ export function SafetyNavMap({
       ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
       ctx.font = "12px sans-serif";
       ctx.fillText(headingUp ? "Heading up" : "North up", 12, labelTop);
-      if (!headingUp) {
-        ctx.fillText("N", width / 2 - 4, labelTop - 2);
+      // The north reference used to be drawn only when north was already up —
+      // absent from the one mode where the map turns underneath you and a hiker
+      // cannot otherwise tell which way north is. It is drawn in both modes now,
+      // pointing wherever north actually ended up on screen.
+      {
+        const anchorX = width / 2;
+        const anchorY = labelTop + 8;
+        ctx.save();
+        ctx.translate(anchorX, anchorY);
+        ctx.rotate(-rotation);
         ctx.strokeStyle = nightMode === "red" ? "#d88a8a" : nightMode === "nvg" ? "#8ee6a6" : "#9ca3af";
         ctx.beginPath();
-        ctx.moveTo(width / 2, labelTop + 2);
-        ctx.lineTo(width / 2, labelTop + 14);
+        ctx.moveTo(0, 6);
+        ctx.lineTo(0, -6);
         ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, -10);
+        ctx.lineTo(-3, -5);
+        ctx.lineTo(3, -5);
+        ctx.closePath();
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.fill();
+        ctx.restore();
+        ctx.fillStyle = nightMode === "red" ? "#ffd1d1" : nightMode === "nvg" ? "#d1ffe0" : "#e5e7eb";
+        ctx.fillText(
+          "N",
+          anchorX + Math.sin(-rotation) * 18 - 4,
+          anchorY - Math.cos(-rotation) * 18 + 4,
+        );
       }
     };
 
@@ -451,7 +582,7 @@ export function SafetyNavMap({
     const onResize = () => draw();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [backtrack, bbox, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, nearest, nightMode, search, showGrid, topInsetPx, uncertaintyM, user, waypoints]);
+  }, [backtrack, bailoutRoutes, bbox, corridorFeatures, endpoints, follow, ghost, goto, gpsDenied, headingUp, lines, midpoint, nearest, nightMode, search, showGrid, terrain, terrainShade, topInsetPx, uncertaintyM, user, waypoints]);
 
   return (
     <canvas

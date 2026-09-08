@@ -1,15 +1,35 @@
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const renameControl = vi.hoisted(() => ({ failNext: false }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    async rename(from: Parameters<typeof actual.rename>[0], to: Parameters<typeof actual.rename>[1]) {
+      if (renameControl.failNext) {
+        renameControl.failNext = false;
+        throw Object.assign(new Error("ENOSPC"), { code: "ENOSPC" });
+      }
+      return actual.rename(from, to);
+    },
+  };
+});
 import {
+  ActivityIdCollisionError,
   addActivityPoint,
   createActivity,
   createPlan,
   deletePlan,
   getPlan,
+  isLocalStoreEnabled,
+  listActivities,
   listActivityPoints,
   listPlans,
+  LocalStoreDisabledError,
+  nextIsoTimestamp,
   updatePlan,
 } from "./local";
 
@@ -26,11 +46,23 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  renameControl.failNext = false;
   delete process.env.LOCAL_STORE_PATH;
   await rm(directory, { recursive: true, force: true });
 });
 
 describe("local store durability", () => {
+  it("does not serve an in-memory mutation after the write fails", async () => {
+    // mutateStore used to edit the cached object in place and leave it there
+    // when writeFile/rename threw, so later reads returned phantom rows whose
+    // revision no longer matched the file — OCC then 409'd forever.
+    const plan = await createPlan({ ownerId: OWNER, name: "Original" });
+    renameControl.failNext = true;
+    await expect(updatePlan(plan.id, OWNER, { name: "Phantom" })).rejects.toMatchObject({ code: "ENOSPC" });
+    const reread = await getPlan(plan.id, OWNER);
+    expect(reread?.name).toBe("Original");
+  });
+
   it("does not lose concurrent plan writes", async () => {
     const count = 40;
     await Promise.all(
@@ -60,6 +92,43 @@ describe("local store durability", () => {
     );
 
     expect(await listActivityPoints(activity.id)).toHaveLength(count);
+  });
+
+  it("replays a stable client activity UUID without changing or duplicating the row", async () => {
+    const clientActivityId = "66666666-6666-4666-8666-666666666666";
+    const first = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      name: "Original activity",
+      startedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    const retry = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      name: "Changed retry must be ignored",
+      startedAt: "2026-08-21T12:00:00.000Z",
+    });
+
+    expect(retry).toEqual(first);
+    expect(await listActivities(OWNER)).toEqual([first]);
+  });
+
+  it("fails closed when another owner reuses a client activity UUID", async () => {
+    const clientActivityId = "77777777-7777-4777-8777-777777777777";
+    const first = await createActivity({
+      ownerId: OWNER,
+      clientActivityId,
+      startedAt: "2026-08-20T12:00:00.000Z",
+    });
+
+    await expect(createActivity({
+      ownerId: OTHER,
+      clientActivityId,
+      startedAt: "2026-08-21T12:00:00.000Z",
+    })).rejects.toBeInstanceOf(ActivityIdCollisionError);
+    expect(await listActivities(OWNER)).toEqual([first]);
+    expect(await listActivities(OTHER)).toEqual([]);
   });
 
   it("surfaces corruption instead of overwriting the store as empty", async () => {
@@ -106,6 +175,17 @@ describe("local store owner scoping", () => {
     expect((await listPlans(OTHER)).map((p) => p.name)).toEqual(["Theirs"]);
     expect(await getPlan(mine.id, OTHER)).toBeNull();
     expect(await getPlan(mine.id, OWNER)).not.toBeNull();
+  });
+
+  it("advances the plan revision when two writes land in the same millisecond", async () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    expect(Date.parse(nextIsoTimestamp(future))).toBe(Date.parse(future) + 1);
+    const created = await createPlan({ ownerId: OWNER, name: "Original" });
+    const first = await updatePlan(created.id, OWNER, { name: "Tab A" });
+    const second = await updatePlan(created.id, OWNER, { name: "Tab B" });
+    expect(first?.updatedAt).not.toBe(created.updatedAt);
+    expect(second?.updatedAt).not.toBe(first?.updatedAt);
+    expect(Date.parse(second!.updatedAt)).toBeGreaterThan(Date.parse(first!.updatedAt));
   });
 
   it("refuses to update or delete across owners", async () => {
@@ -167,5 +247,34 @@ describe("local store cache coherence", () => {
 
     const plans = await listPlans("owner-a");
     expect(plans.map((plan) => plan.id)).toContain("externally-added");
+  });
+});
+
+describe("local store production gate", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    process.env.LOCAL_STORE_PATH = storeFile;
+  });
+
+  it("is enabled outside production", () => {
+    expect(isLocalStoreEnabled()).toBe(true);
+  });
+
+  it("refuses to read or write in production without an explicit opt-in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_LOCAL_STORE_IN_PRODUCTION", "");
+    expect(isLocalStoreEnabled()).toBe(false);
+    await expect(listPlans(OWNER)).rejects.toBeInstanceOf(LocalStoreDisabledError);
+    await expect(createPlan({ ownerId: OWNER, name: "nope" })).rejects.toBeInstanceOf(
+      LocalStoreDisabledError,
+    );
+  });
+
+  it("allows the file fallback when production opts in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_LOCAL_STORE_IN_PRODUCTION", "true");
+    expect(isLocalStoreEnabled()).toBe(true);
+    const plan = await createPlan({ ownerId: OWNER, name: "ci" });
+    expect(plan.name).toBe("ci");
   });
 });

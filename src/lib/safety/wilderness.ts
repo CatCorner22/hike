@@ -52,17 +52,30 @@ export function amsAssessment(input: {
   const score = exposure + symptomScore;
 
   let level: AmsLevel = "none";
-  // Ordinary symptoms are not AMS without meaningful altitude exposure. Ataxia stays
-  // urgent at every elevation because new loss of coordination requires immediate
-  // action even when altitude illness is not the cause.
+  // Two gates, from two different fixes, both kept.
+  //
+  // From main: ordinary symptoms are not AMS without meaningful altitude exposure, and
+  // ataxia stays urgent at every elevation because new loss of coordination needs action
+  // even when altitude is not the cause.
+  //
+  // From this branch: once exposure is meaningful, severity comes from the *symptoms*.
+  // Thresholding the combined total let altitude manufacture an emergency out of an
+  // ordinary symptom — a single headache at 3 500 m after a 450 m/hr climb scored 8 and
+  // came back "Possible HACE/HAPE ... descend immediately. This is an emergency." A
+  // headache at that elevation is the most common altitude symptom there is and is
+  // textbook *mild* AMS. Exposure still escalates, one step rather than three.
   const hasAtaxia = input.symptoms.includes("ataxia");
   const hasMeaningfulExposure = alt >= 2500 || (alt >= 2000 && gain >= 300);
+  const fatigueOnlyLow =
+    alt < 2500 && input.symptoms.length > 0 && input.symptoms.every((symptom) => symptom === "fatigue");
   if (hasAtaxia) {
     level = "severe";
-  } else if (hasMeaningfulExposure && input.symptoms.length > 0) {
-    if (score >= 8) level = "severe";
-    else if (score >= 5) level = "moderate";
+  } else if (hasMeaningfulExposure && input.symptoms.length > 0 && !fatigueOnlyLow) {
+    if (symptomScore >= 8) level = "severe";
+    else if (symptomScore >= 6) level = "moderate";
     else level = "mild";
+    // Being high, and having got there fast, is a real aggravator — one step, not three.
+    if (level === "mild" && exposure >= 4) level = "moderate";
   }
 
   const actions: string[] = [];
@@ -74,10 +87,17 @@ export function amsAssessment(input: {
     actions.push("Call emergency services or activate your SOS device now.");
     actions.push("Keep the person warm and still; do not let them continue alone.");
   } else if (level === "severe") {
-    warning =
-      "Possible HACE/HAPE — stop ascent, give O₂ if available, descend immediately. This is an emergency.";
+    // Ataxia is what makes this HACE rather than bad AMS. HAPE is defined by
+    // breathlessness at rest, which this symptom list cannot record at all, so the
+    // emergency wording belongs only on the finding that actually earns it.
+    warning = hasAtaxia
+      ? "Ataxia with altitude symptoms — treat as HACE. Stop ascent, give O₂ if available, descend immediately. This is an emergency."
+      : "Severe AMS — symptoms this heavy mean descend now, not rest and reassess.";
     actions.push("Descend at least 300–500 m if you can do so safely.");
     actions.push("Do not sleep at this altitude if confused or short of breath at rest.");
+    if (!hasAtaxia) {
+      actions.push("Unsteady gait, confusion, or breathlessness at rest = HACE/HAPE. Descend immediately.");
+    }
   } else if (level === "moderate") {
     warning = "Moderate altitude illness — do not go higher. Rest, hydrate, monitor closely.";
     actions.push("Descend if symptoms worsen or do not improve in 1 hour at rest.");
@@ -113,7 +133,13 @@ export function avalancheTerrainWarning(input: {
   month?: number;
   snowOnGround?: boolean;
 }): string | null {
-  const slope = input.slopePct;
+  // `slopeFromProfile` returns a SIGNED grade, so judge on magnitude — the same rule
+  // slopeWarning already follows. Descending into or through a start zone is at least
+  // as dangerous as climbing it (descent is the classic trigger case, and the runout
+  // is below you); the signed comparison silenced this warning on every downhill.
+  const slope = input.slopePct == null || !Number.isFinite(input.slopePct)
+    ? null
+    : Math.abs(input.slopePct);
   if (slope == null || slope < 25) return null;
 
   const month = input.month ?? new Date().getMonth() + 1;
@@ -191,9 +217,9 @@ export function snakeBiteSop(): string[] {
 export function wildernessFirstAidCard(): string[] {
   return [
     "M — Massive bleed: direct pressure, tourniquet if spurting won't stop.",
-    "A — Airway: head-tilt/chin-lift if unconscious and breathing.",
-    "R — Respiration: rescue breaths if not breathing after 5 compressions (if trained).",
-    "C — Circulation: CPR if no pulse (100–120/min chest compressions).",
+    "A — Airway: check responsiveness; open the airway and check for normal breathing. Gasping is not normal breathing.",
+    "R — Respiration: if unresponsive and not breathing normally or only gasping, call 911 and send for an AED; activate satellite SOS or a PLB if 911 is unavailable.",
+    "C — Circulation: if unresponsive and not breathing normally, start CPR — compress the center of the chest 100–120/min. Use hands-only CPR if untrained or unwilling to give breaths; if trained and willing, give 30 compressions and 2 breaths. Do not start CPR on someone who is breathing normally.",
     "H — Hypothermia: get dry, insulate from ground, warm core — not hot bath if severe.",
     "Sprains: RICE — rest, ice (10 min), compression wrap, elevate.",
     "Allergic reaction: epinephrine auto-injector if prescribed; antihistamine secondary.",

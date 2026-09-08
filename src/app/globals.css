@@ -220,7 +220,21 @@ html.navigate-night-nvg-document {
   box-shadow: 0 4px 16px color-mix(in srgb, var(--destructive) 40%, transparent);
 }
 
-/* Short landscape-like windows keep the safety HUD within the map and off controls. */
+/*
+ * Short landscape-like windows keep the safety HUD within the map and off controls.
+ *
+ * This block used to clip the alert layer to `max-height: 3.25rem` — about 52px,
+ * which is one banner — inside a container that also carries `pointer-events:
+ * none`, so its `overflow-y: auto` could never be scrolled to reach the rest.
+ * `hudBanners` emits its entries in strict time-to-harm order and turnaround and
+ * daylight sit near the bottom of it, so rotating the phone silently deleted the
+ * two warnings the product is built around. It also hid "Breadcrumb: NOT SAVED",
+ * "Retry track save" and "Finish hike" behind a `display: none` on every
+ * non-grid child of the route card.
+ *
+ * A clipped alert must always leave a visible trace, and a control that reports
+ * a failed save must never be one of the things a rotation removes.
+ */
 @media (max-height: 480px) {
   .navigate-header {
     padding-bottom: 0.75rem;
@@ -230,14 +244,16 @@ html.navigate-night-nvg-document {
     max-width: calc(100% - 3.5rem);
   }
 
-  .navigate-route-card > p:not(.navigate-grid-readout),
-  .navigate-route-card > button {
+  .navigate-route-card > p:not(.navigate-grid-readout):not(.navigate-keep) {
     display: none;
   }
 
   .navigate-hud {
+    /* The inline `top` on this element wins over a stylesheet rule, so moving
+       the HUD off the controls in a short window needs the important. That part
+       was always right; the 3.25rem cap next to it was not. */
     top: auto !important;
     bottom: 0.5rem;
-    max-height: 3.25rem;
+    max-height: 40%;
   }
 }

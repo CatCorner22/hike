@@ -36,3 +36,25 @@ describe("SERE wilderness card", () => {
     expect(sereStayPutCard()[0]).toMatch(/STOP/);
   });
 });
+
+/**
+ * The downstream-travel line used to read inverted — "follow downstream only if cliffs
+ * and waterfalls are likely" — advising travel into exactly the terrain that traps and
+ * kills lost hikers. Doctrine: drainages can lead toward civilization in gentle
+ * terrain; in steep or canyon country they cliff out. The card must never suggest
+ * entering cliff/waterfall terrain.
+ */
+describe("escape card downstream-travel doctrine", () => {
+  it("warns against drainages in steep terrain instead of recommending them", () => {
+    const escape = sereSections().find((pillar) => pillar.pillar === "escape");
+    const line = escape?.bullets.find((bullet) => /downstream/i.test(bullet)) ?? "";
+    expect(line).toMatch(/NOT in steep|not.*steep/i);
+    expect(line).toMatch(/cliff/i);
+    expect(line).not.toMatch(/only if cliffs and waterfalls are likely/);
+  });
+
+  it("routes injury care to the canonical MARCH-PAWS sequence", () => {
+    const recovery = sereSections().find((pillar) => pillar.pillar === "recovery");
+    expect(recovery?.bullets.join(" ")).toMatch(/MARCH-PAWS/);
+  });
+});

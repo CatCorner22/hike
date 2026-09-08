@@ -1,19 +1,117 @@
 "use client";
+import { apiFetch } from "@/lib/api/client";
 
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, CheckCircle2, Loader2 } from "lucide-react";
-import { persistRoutePack } from "@/lib/offline/load-route-pack";
+import { persistRoutePack, withNetworkTimeout } from "@/lib/offline/load-route-pack";
 import { fetchPackWeather } from "@/lib/offline/pack-weather";
-import { fetchCorridorForRoute } from "@/lib/offline/corridor-client";
-import { corridorCoverageLabel } from "@/lib/offline/corridor";
-import { buildRoutePack, hasRoutePack, type RoutePack } from "@/lib/offline/route-pack";
-import { warmNavigateShell } from "@/lib/offline/navigate-shell";
+import {
+  validCorridorFeatures,
+  type CorridorFeatureSet,
+} from "@/lib/offline/corridor-features";
+import {
+  fetchRouteHazardBrief,
+  packWeatherFromHazardBrief,
+  selectHazardSamplePoints,
+  validHazardBrief,
+} from "@/lib/offline/hazard-brief";
+import {
+  validOfficialAlertSnapshot,
+  type RouteOfficialAlertSnapshot,
+} from "@/lib/offline/official-alerts";
+import { validBailoutRoutes } from "@/lib/offline/bailout-routes";
+import { buildRoutePack, getRoutePack, hasRoutePack, validPackTerrain, type RoutePack } from "@/lib/offline/route-pack";
+import { bboxFromGeometry } from "@/lib/geo";
+import { buildTerrainCorridorSpec } from "@/lib/offline/terrain-corridor";
+import { isUsableTerrainGrid, type TerrainGrid } from "@/lib/offline/terrain-grid";
+import { getNavigateOfflineStatus, warmNavigateShell } from "@/lib/offline/navigate-shell";
 import { requestPersistentStorage } from "@/lib/offline/storage";
 import {
   OfflineReadiness,
   formatOfflineRouteStorageError,
 } from "@/components/offline/offline-readiness";
+
+async function requestCorridorFeatures(
+  routeId: string,
+  bboxes: Array<[number, number, number, number]>,
+): Promise<CorridorFeatureSet | null> {
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => apiFetch("/api/corridor/features", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, bboxes }),
+        signal,
+      }),
+      12_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { features?: unknown };
+    return validCorridorFeatures(data.features, routeId, bboxes) ? data.features : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The elevation grid the offline map shades its relief from.
+ *
+ * Best-effort like every other extra: a route with no terrain still navigates,
+ * on the blank ground every pack had before this existed. Fifteen seconds
+ * because the server makes up to three sequential calls to a free public
+ * elevation service.
+ */
+async function requestTerrainGrid(
+  routeId: string,
+  bbox: [number, number, number, number],
+): Promise<TerrainGrid | null> {
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => apiFetch("/api/terrain/grid", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, bbox }),
+        signal,
+      }),
+      15_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { grid?: unknown };
+    return isUsableTerrainGrid(data.grid) ? data.grid : null;
+  } catch {
+    return null;
+  }
+}
+
+async function requestOfficialAlerts(
+  routeId: string,
+  geometry: GeoJSON.LineString | GeoJSON.MultiLineString,
+  parkCode?: string | null,
+): Promise<RouteOfficialAlertSnapshot | null> {
+  const points = selectHazardSamplePoints(geometry).map((point) => ({
+    lat: point.lat,
+    lng: point.lng,
+    distanceMeters: point.distanceMeters,
+  }));
+  if (!points.length) return null;
+  try {
+    const response = await withNetworkTimeout(
+      (signal) => apiFetch("/api/official-alerts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ routeId, parkCode: parkCode ?? null, points }),
+        signal,
+      }),
+      12_000,
+    );
+    if (!response.ok) return null;
+    const data = await response.json() as { snapshot?: unknown };
+    return validOfficialAlertSnapshot(data.snapshot, routeId) ? data.snapshot : null;
+  } catch {
+    return null;
+  }
+}
 
 interface PrepareOfflineProps {
   packId: string;
@@ -22,6 +120,7 @@ interface PrepareOfflineProps {
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString | null;
   bbox?: [number, number, number, number];
   elevationProfile?: Array<{ distanceMeters: number; elevation: number }>;
+  parkCode?: string | null;
   className?: string;
   compact?: boolean;
 }
@@ -33,23 +132,27 @@ export function PrepareOffline({
   geometry,
   bbox,
   elevationProfile,
+  parkCode,
   className,
   compact = false,
 }: PrepareOfflineProps) {
-  const [ready, setReady] = useState(false);
+  const [tripReady, setTripReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refreshReady = useCallback(async () => {
     try {
-      const exists = await hasRoutePack(packId);
-      setReady(exists);
-      return exists;
+      const [exists, navigation] = await Promise.all([
+        hasRoutePack(packId),
+        getNavigateOfflineStatus(),
+      ]);
+      setTripReady(exists && navigation.ready);
+      return { packReady: exists, tripReady: exists && navigation.ready };
     } catch {
       // An unreadable IndexedDB is not a saved route. Saying "Update" here
       // could send a hiker away from signal believing a missing map is usable.
-      setReady(false);
-      return false;
+      setTripReady(false);
+      return { packReady: false, tripReady: false };
     }
   }, [packId]);
 
@@ -59,10 +162,17 @@ export function PrepareOffline({
     const refresh = async () => {
       const currentRefresh = ++refreshNumber;
       try {
-        const exists = await hasRoutePack(packId);
-        if (!cancelled && currentRefresh === refreshNumber) setReady(exists);
+        const [exists, navigation] = await Promise.all([
+          hasRoutePack(packId),
+          getNavigateOfflineStatus(),
+        ]);
+        if (!cancelled && currentRefresh === refreshNumber) {
+          setTripReady(exists && navigation.ready);
+        }
       } catch {
-        if (!cancelled && currentRefresh === refreshNumber) setReady(false);
+        if (!cancelled && currentRefresh === refreshNumber) {
+          setTripReady(false);
+        }
       }
     };
     const refreshWhenVisible = () => {
@@ -99,12 +209,22 @@ export function PrepareOffline({
       const center = bbox
         ? { lat: (bbox[1] + bbox[3]) / 2, lng: (bbox[0] + bbox[2]) / 2 }
         : { lat: first?.[1] ?? 0, lng: first?.[0] ?? 0 };
-      // Weather is a small, fast request and is folded into the first save.
-      // The corridor is not: an uncached corridor query was measured taking longer
-      // than ten seconds, and making the route wait on it would mean a hiker with a
-      // weak signal stands there with nothing saved at all. The route is therefore
-      // saved first and the corridor is added afterwards.
-      const weather = await fetchPackWeather(center.lat, center.lng);
+      const corridor = buildTerrainCorridorSpec({ routeId: packId, geometry });
+      // The pack derives its own bbox from the geometry when the caller does not
+      // supply one, and the plan screen does not. Deriving it the same way here
+      // means the terrain grid always covers exactly what the pack stores, which
+      // is what the pack's own validation requires of it.
+      const packBbox = bbox ?? bboxFromGeometry(geometry, 0.004) ?? undefined;
+      const [corridorFeatures, hazardBrief, officialAlerts, terrain] = await Promise.all([
+        requestCorridorFeatures(packId, corridor.bboxes),
+        fetchRouteHazardBrief({ routeId: packId, geometry }),
+        requestOfficialAlerts(packId, geometry, parkCode),
+        packBbox ? requestTerrainGrid(packId, packBbox) : Promise.resolve(null),
+      ]);
+      const weather = hazardBrief
+        ? packWeatherFromHazardBrief(hazardBrief)
+        : await fetchPackWeather(center.lat, center.lng);
+      const existing = await getRoutePack(packId);
       const pack: RoutePack = buildRoutePack({
         id: packId,
         aliases,
@@ -112,37 +232,72 @@ export function PrepareOffline({
         geometry,
         bbox,
         elevationProfile,
-        weather: weather ?? undefined,
+        weather: weather ?? existing?.weather,
+        corridor,
+        corridorFeatures: corridorFeatures ?? (
+          existing?.corridorFeatures && validCorridorFeatures(existing.corridorFeatures, packId, corridor.bboxes)
+            ? existing.corridorFeatures
+            : undefined
+        ),
+        hazardBrief: hazardBrief ?? (
+          existing?.hazardBrief && validHazardBrief(existing.hazardBrief, packId, bbox ?? existing.bbox)
+            ? existing.hazardBrief
+            : undefined
+        ),
+        officialAlerts: officialAlerts ?? (
+          existing?.officialAlerts && validOfficialAlertSnapshot(existing.officialAlerts, packId)
+            ? existing.officialAlerts
+            : undefined
+        ),
+        terrain: terrain ?? (
+          existing?.terrain && validPackTerrain(existing.terrain, packBbox)
+            ? existing.terrain
+            : undefined
+        ),
+        bailoutRoutes: existing?.bailoutRoutes && validBailoutRoutes(existing.bailoutRoutes, packId, geometry)
+          ? existing.bailoutRoutes
+          : undefined,
       });
-      await persistRoutePack(pack);
-      if (!await refreshReady()) {
-        throw new Error("The saved route pack could not be verified. Re-download it before relying on this device.");
+      const saved = await persistRoutePack(pack);
+      const savedPackReady = await hasRoutePack(packId);
+      if (!savedPackReady) {
+        throw new Error("The saved route could not be verified for offline use. Re-download it before relying on this device.");
       }
       const [persistent, shell] = await Promise.all([
         persistentStorageRequest,
-        warmNavigateShell(packId),
+        warmNavigateShell(),
       ]);
+      await refreshReady();
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       const warnings = [
         !shell.ok
           ? shell.error ?? "Navigation screen was not cached."
           : null,
         !persistent
-          ? "Browser storage is not persistent, so this pack may be evicted under storage pressure."
+          ? "The browser may remove this saved route when device storage is low."
           : null,
       ].filter(Boolean);
-      const weatherNote = weather
-        ? `Weather snapshot ${weather.tempC ?? "—"}°C / ${weather.windKph ?? "—"} km/h stored on the pack.`
-        : "Type temp/wind in Safety if you want field weather.";
-      const savedMessage = warnings.length
-        ? `Route saved. ${warnings.join(" ")} ${weatherNote}`
-        : `Route and navigation screen saved. Navigation will work without cell service. ${weatherNote}`;
-      // Stated as soon as the route is safe. Everything after this point is
-      // additive, and the wording must not imply the route is still pending.
-      setMessage(`${savedMessage} Downloading surrounding terrain…`);
-      void addCorridor(pack, savedMessage);
+      const savedDetails = [
+        saved.corridorFeatures
+          ? "Nearby trail and landmark context saved."
+          : "Nearby trail and landmark context was not saved.",
+        saved.hazardBrief
+          ? "Along-route forecast snapshot saved."
+          : "Along-route forecast snapshot was not saved.",
+        saved.officialAlerts
+          ? "Official alert snapshot saved; recheck it before departure."
+          : "Official alerts were not saved; this is not an all-clear.",
+        saved.weather
+          ? "Basic weather snapshot saved."
+          : "Basic weather snapshot was not saved.",
+      ];
+      setMessage(
+        shell.ok
+          ? `Route and navigation screen verified on this device. Test it once in airplane mode before leaving signal. ${savedDetails.join(" ")} ${warnings.join(" ")}`
+          : `The route was saved, but the navigation screen is not verified for offline use. Retry on a stable connection before relying on it. ${savedDetails.join(" ")} ${warnings.join(" ")}`,
+      );
     } catch (error) {
-      setReady(false);
+      await refreshReady();
       window.dispatchEvent(new Event("hike:offline-readiness-changed"));
       setMessage(
         formatOfflineRouteStorageError(error).message,
@@ -152,73 +307,38 @@ export function PrepareOffline({
     }
   }
 
-  /**
-   * Second phase: attach corridor context to an already-saved pack.
-   *
-   * Never throws into the caller and never clears `ready`. The route is already
-   * on the device at this point, so the only outcomes are "corridor added" and
-   * "corridor not added", and both are reported as such.
-   */
-  async function addCorridor(pack: RoutePack, savedMessage: string) {
-    try {
-      const corridor = await fetchCorridorForRoute(pack.geometry);
-      if (!corridor) {
-        setMessage(`${savedMessage} ${corridorCoverageLabel(null)}.`);
-        return;
-      }
-      const withCorridor = buildRoutePack({
-        id: pack.id,
-        aliases: pack.aliases,
-        name: pack.name,
-        geometry: pack.geometry,
-        bbox: pack.bbox,
-        elevationProfile: pack.elevationProfile,
-        weather: pack.weather,
-        corridor,
-      });
-      await persistRoutePack(withCorridor);
-      window.dispatchEvent(new Event("hike:offline-readiness-changed"));
-      // The stored pack is the authority on what was kept, not the fetch result:
-      // a corridor that fails the persistence check is dropped there, and
-      // reporting the request instead of the outcome would overstate coverage.
-      setMessage(
-        `${savedMessage} ${corridorCoverageLabel(withCorridor.corridor)}.${
-          withCorridor.corridor?.note ? ` ${withCorridor.corridor.note}` : ""
-        }`,
-      );
-    } catch {
-      // The route remains saved and verified; only the extra context is missing.
-      setMessage(
-        `${savedMessage} Surrounding terrain could not be saved, so the offline map shows the route line only.`,
-      );
-    }
-  }
-
   return (
     <div className={className}>
       <Button
-        variant={ready ? "secondary" : "default"}
+        variant={tripReady ? "secondary" : "default"}
         size={compact ? "sm" : "default"}
         onClick={prepare}
         disabled={saving || !geometry}
       >
         {saving ? (
           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        ) : ready ? (
+        ) : tripReady ? (
           <CheckCircle2 className="mr-2 h-4 w-4" />
         ) : (
           <Download className="mr-2 h-4 w-4" />
         )}
         {compact
-          ? ready
+          ? tripReady
             ? "Saved"
             : "Save"
-          : ready
-            ? "Update offline pack"
+          : tripReady
+            ? "Update offline route"
             : "Prepare offline"}
       </Button>
       {message && (
-        <p className="mt-2 text-xs text-muted-foreground">{message}</p>
+        <p
+          className="mt-2 text-xs text-muted-foreground"
+          data-offline-result="complete"
+          role="status"
+          aria-live="polite"
+        >
+          {message}
+        </p>
       )}
       {!compact && <OfflineReadiness packId={packId} />}
     </div>

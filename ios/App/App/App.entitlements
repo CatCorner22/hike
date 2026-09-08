@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  Lets the return-time alarm break through Focus and Do Not Disturb. Without
+	  it the alarm still schedules and still fires, but iOS may hold it until the
+	  Focus mode ends or fold it into a Scheduled Summary - which, for an alarm
+	  whose entire purpose is to be noticed the moment somebody is late, is the
+	  same as not firing.
+
+	  If a signing identity cannot grant this capability, deleting the key below
+	  restores signing at the cost of the break-through. docs/ios-runbook.md says
+	  so at the point where that failure appears.
+	-->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+</dict>
+</plist>

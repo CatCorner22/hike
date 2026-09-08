@@ -51,3 +51,15 @@ next-env.d.ts
 # Probe scratch output
 adversarial/scratch-*
 adversarial/perf-results.json
+
+# Capacitor static export + build-time aside
+out/
+.cap-build-aside/
+.next-cap/
+
+# Transient adversarial-review agent workspaces. Agents create these to execute
+# their own repro probes and delete them when done; they are never app code and
+# must never break a build or land in a commit.
+src/__probe-*/
+src/__verify-*/
+src/__refute-*/

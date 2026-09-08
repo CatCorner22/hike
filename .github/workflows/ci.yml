@@ -28,6 +28,133 @@ jobs:
         run: npx vitest run
       - name: Production build
         run: npm run build
+      - name: Replit deployment config still matches package.json
+        # Nothing else reads this file until an import is attempted, so a broken
+        # TOML or a renamed npm script would stay invisible until the moment
+        # someone is trying to get the app live.
+        run: |
+          python3 - <<'EOF'
+          import json, tomllib, sys
+          with open(".replit", "rb") as f:
+              cfg = tomllib.load(f)
+          scripts = json.load(open("package.json"))["scripts"]
+          deployment = cfg["deployment"]
+          for field in ("build", "run"):
+              command = deployment[field]
+              if command[:2] != ["npm", "run"] or command[2] not in scripts:
+                  sys.exit(f".replit deployment.{field} = {command} is not an npm script in package.json")
+          if deployment["deploymentTarget"] not in {"autoscale", "reserved-vm", "static", "gce"}:
+              sys.exit(f"unknown deploymentTarget {deployment['deploymentTarget']!r}")
+          print("`.replit` parses, and its build/run commands exist:", deployment["build"], deployment["run"])
+          EOF
+
+      - name: Known vulnerabilities in shipped dependencies
+        # Advisory, not a gate: a transitive dev-only advisory must not block a
+        # safety fix from reaching the phone. `--omit=dev` scopes it to what
+        # actually ships, and the step is here so a new high-severity advisory
+        # shows up in the build log instead of being noticed months later.
+        run: npm audit --omit=dev --audit-level=high || true
+
+  database:
+    name: Real Postgres — schema push and API
+    # Everything else in this file runs on the JSON file fallback
+    # (ALLOW_LOCAL_STORE_IN_PRODUCTION=true), so until this job existed the
+    # entire Drizzle layer was exercised only by a live deployment. It was
+    # broken: the insert-select that saves a GPS point omitted `id`, and every
+    # POST of a track point answered 500. This is the job that would have caught
+    # it, and it runs the same two commands a deploy does — schema push, then
+    # the API against a real database.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: klandagi
+          POSTGRES_PASSWORD: klandagi
+          POSTGRES_DB: klandagi
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U klandagi"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://klandagi:klandagi@127.0.0.1:5432/klandagi
+      SESSION_SECRET: ci-only-session-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Push the schema, exactly as a deploy does
+        run: npx drizzle-kit push
+      - name: Build
+        run: npm run build
+      - name: Start the server against the database
+        # Not UTC: see the timezone note on the database probe below. The server
+        # is the process whose local clock the defect depended on.
+        env:
+          TZ: America/Los_Angeles
+        run: |
+          npx next start --port 3111 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null http://127.0.0.1:3111/; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become ready" >&2
+          exit 1
+      - name: API probe against real Postgres
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/api-probe.mjs
+      - name: The parts only a database can check
+        # TZ is deliberately not UTC. A GPS timestamp written through raw SQL was
+        # stored in the server's LOCAL wall time, so on any host outside UTC every
+        # point of every uploaded track was off by the host's offset — invisible
+        # on a UTC runner, and an eight-hour error in a last-known position.
+        # The GPS-point write path (replay, intra-batch duplicates, a finalized
+        # track, ownership) and guardian-link retention. Every one is arbitrated
+        # by a unique index, an INSERT predicate or a DELETE, so none of them can
+        # be reached without a database.
+        env:
+          BASE: http://127.0.0.1:3111
+          TZ: America/Los_Angeles
+        run: node adversarial/database-probe.mjs
+      - name: Points really landed in the table
+        # The probe asserts the API's answers; this asserts the database agrees,
+        # which is the half that was silently false before.
+        run: |
+          count=$(psql "$DATABASE_URL" -t -A -c "select count(*) from activity_points;")
+          echo "activity_points rows: $count"
+          [ "$count" -gt 0 ] || { echo "the API reported success but wrote nothing" >&2; exit 1; }
+
+  shell-export:
+    name: Capacitor shell export
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Static export build
+        run: npm run build:cap
+      - name: The iOS shell can actually serve the export
+        # Capacitor's stock router answers every extensionless path with the
+        # ROOT index.html, which would make fifteen of the sixteen exported
+        # documents unreachable — including on the reload it performs after a
+        # WKWebView content-process kill. ios/App/App/MainViewController.swift
+        # replaces it; this checks the replacement's rule and the export shape
+        # the rule depends on.
+        run: node adversarial/probe-capacitor-routing.mjs
+      - name: Working tree unchanged after the build
+        # The build script moves src/proxy.ts (and its test) aside and must
+        # always restore them — a dirty tree here means the restore broke.
+        run: git diff --exit-code --name-only
 
   offline-navigation:
     name: Offline navigation e2e
@@ -60,10 +187,10 @@ jobs:
           echo "server did not become ready" >&2
           exit 1
       - name: Cold-start offline navigation
-        # Guards the failure mode that matters most: preparing a route at the
-        # trailhead, losing signal, then opening navigation for the first time.
         env:
           BASE: http://127.0.0.1:3111
+        # A workflow-level retry hid a first-launch service-worker regression.
+        # The probe must pass on its first cold start to protect the field case.
         run: node e2e/offline-navigation.mjs
       # The probes below were written but never wired into CI, so they rotted:
       # two pinned an IndexedDB version the app had since migrated past and
@@ -81,10 +208,28 @@ jobs:
         env:
           BASE: http://127.0.0.1:3111
         run: node adversarial/gps-adversarial.mjs
+      - name: Storage browser probe
+        # Eviction freshness, schema UX, corrupt pack refusal — needs production SW + IDB.
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-storage-browser.mjs
+      - name: Storage local probe
+        # JSON fallback corruption + offline point-queue limits (no server required).
+        run: node adversarial/probe-storage-local.mjs
+      - name: Activity pause probe
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-new-activity-pause.mjs
       - name: Concurrency probe
         env:
           BASE: http://127.0.0.1:3111
         run: node adversarial/retest-concurrency.mjs
+      - name: Basemap failure probe
+        # The background map is the one part of the prepare-a-route screens that
+        # needs the network. It used to fail silently into a blank box.
+        env:
+          BASE: http://127.0.0.1:3111
+        run: node adversarial/probe-basemap-failure.mjs
       - name: CSP probe
         env:
           BASE: http://127.0.0.1:3111

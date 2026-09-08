@@ -1,4 +1,6 @@
-import { openDB, unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { apiFetch } from "@/lib/api/client";
+import { unwrap, type DBSchema, type IDBPDatabase } from "idb";
+import { createIdbOpener } from "@/lib/offline/idb-open";
 import { MAX_ACTIVITY_POINTS } from "@/lib/api/validate";
 import type { LocalActivity } from "@/lib/offline/activity-sync";
 
@@ -33,7 +35,6 @@ export const MAX_PENDING_POINT_STORAGE_BYTES = 32 * 1024 * 1024;
 export const MAX_PENDING_POINT_COUNT = Math.floor(
   MAX_PENDING_POINT_STORAGE_BYTES / ESTIMATED_PENDING_POINT_BYTES,
 );
-let dbPromise: Promise<IDBPDatabase<HikeDB>> | null = null;
 let flushPromise: Promise<FlushResult> | null = null;
 let pointWriteQueue: Promise<void> = Promise.resolve();
 
@@ -47,44 +48,46 @@ export class OfflinePointQueueFullError extends Error {
   }
 }
 
+const offlineDb = createIdbOpener<HikeDB>("hike-offline", OFFLINE_DB_VERSION, {
+  upgrade(db, oldVersion, _newVersion, transaction) {
+    if (oldVersion < 1) {
+      const points = db.createObjectStore("pendingPoints", { keyPath: "id" });
+      points.createIndex("by-activity", "activityId");
+      points.createIndex("by-synced", "synced");
+    }
+    if (oldVersion < 2 && oldVersion >= 1) {
+      const points = transaction.objectStore("pendingPoints");
+      if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
+      points.createIndex("by-synced", "synced");
+      // Use native cursor callbacks inside the versionchange transaction.
+      // Detached promises can finish after the upgrade commits, leaving legacy
+      // boolean values outside the numeric by-synced index.
+      const nativePoints = unwrap(points);
+      const cursorRequest = nativePoints.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        const value = cursor.value as PendingPoint & { synced: boolean | number };
+        cursor.update({ ...value, synced: value.synced ? 1 : 0 });
+        cursor.continue();
+      };
+    }
+    if (!db.objectStoreNames.contains("localActivities")) {
+      db.createObjectStore("localActivities", { keyPath: "id" });
+    }
+  },
+});
+
 export function getOfflineDb() {
-  if (typeof indexedDB === "undefined") return null;
-  if (!dbPromise) {
-    dbPromise = openDB<HikeDB>("hike-offline", OFFLINE_DB_VERSION, {
-      upgrade(db, oldVersion, _newVersion, transaction) {
-        if (oldVersion < 1) {
-          const points = db.createObjectStore("pendingPoints", { keyPath: "id" });
-          points.createIndex("by-activity", "activityId");
-          points.createIndex("by-synced", "synced");
-        }
-        if (oldVersion < 2 && oldVersion >= 1) {
-          const points = transaction.objectStore("pendingPoints");
-          if (points.indexNames.contains("by-synced")) points.deleteIndex("by-synced");
-          points.createIndex("by-synced", "synced");
-          // Use native cursor callbacks inside the versionchange transaction.
-          // Detached promises can finish after the upgrade commits, leaving legacy
-          // boolean values outside the numeric by-synced index.
-          const nativePoints = unwrap(points);
-          const cursorRequest = nativePoints.openCursor();
-          cursorRequest.onsuccess = () => {
-            const cursor = cursorRequest.result;
-            if (!cursor) return;
-            const value = cursor.value as PendingPoint & { synced: boolean | number };
-            cursor.update({ ...value, synced: value.synced ? 1 : 0 });
-            cursor.continue();
-          };
-        }
-        if (!db.objectStoreNames.contains("localActivities")) {
-          db.createObjectStore("localActivities", { keyPath: "id" });
-        }
-      },
-    });
-  }
-  return dbPromise;
+  return offlineDb.getDb();
 }
 
 function notifyQueueChanged() {
   if (typeof window !== "undefined") window.dispatchEvent(new Event("hike-points-queued"));
+}
+
+export function notifyPendingPointsChanged() {
+  notifyQueueChanged();
 }
 
 function notifyQueueProblem(error: OfflinePointQueueFullError) {
@@ -136,7 +139,7 @@ async function assertQueueCanAcceptPoint(db: IDBPDatabase<HikeDB>, activityId: s
 
 export async function queueActivityPoint(point: {
   id?: string; activityId: string; lat: number; lng: number; elevation?: number; recordedAt: Date;
-}) {
+}, options: { notify?: boolean } = {}) {
   const write = pointWriteQueue.then(async () => {
     const db = await getOfflineDb();
     if (!db) {
@@ -159,7 +162,7 @@ export async function queueActivityPoint(point: {
       }
       throw error;
     }
-    notifyQueueChanged();
+    if (options.notify !== false) notifyQueueChanged();
   });
   pointWriteQueue = write.catch(() => undefined);
   return write;
@@ -181,7 +184,38 @@ export async function getPendingPointCount() {
 async function getAllUnsyncedPoints() {
   const db = await getOfflineDb();
   if (!db) return [];
-  return db.getAllFromIndex("pendingPoints", "by-synced", 0);
+  const points = await db.getAllFromIndex("pendingPoints", "by-synced", 0);
+  if (!db.objectStoreNames.contains("localActivities")) return points;
+
+  const locals = await db.getAll("localActivities");
+  const byLocalId = new Map(locals.map((activity) => [activity.id, activity]));
+  const knownRemoteIds = new Set(
+    locals.flatMap((activity) => activity.remoteId ? [activity.remoteId] : []),
+  );
+  const uploadable: PendingPoint[] = [];
+  for (const point of points) {
+    // A server ID can also be the key of a synthetic row left by the old finish bug.
+    // Prefer a known remote mapping before interpreting the value as a local ID.
+    if (knownRemoteIds.has(point.activityId)) {
+      uploadable.push(point);
+      continue;
+    }
+    const local = byLocalId.get(point.activityId);
+    if (!local) {
+      // Legacy callers queued directly against a server ID and have no local row.
+      uploadable.push(point);
+      continue;
+    }
+    if (!local.remoteId) {
+      // Never POST a device-local UUID as though it were a server activity. The
+      // activity queue will create the server row and migrate this point first.
+      continue;
+    }
+    const migrated = { ...point, activityId: local.remoteId };
+    await db.put("pendingPoints", migrated);
+    uploadable.push(migrated);
+  }
+  return uploadable;
 }
 
 export async function markPointsSynced(ids: string[]) {
@@ -212,19 +246,23 @@ export interface FlushResult { synced: number; pending: number; dropped: number;
  * Statuses that will never succeed on retry, however long we wait.
  *
  * 404/410: the activity does not exist for this owner — deleted, or created under a
- * different owner. 400/413/422: the server rejected the payload itself.
+ * different owner. 400/413/422: the server rejected the payload itself. 409 means the
+ * activity is already finalized. The points API returns a successful idempotent replay
+ * when a clientPointId was previously accepted, so a 409 is specifically a novel point
+ * that the finalized activity can never accept.
  *
  * 401 is deliberately NOT here: a session is re-minted on the next document navigation,
  * so those points are still deliverable.
  */
-const PERMANENT_STATUSES = new Set([400, 404, 410, 413, 422]);
+const PERMANENT_STATUSES = new Set([400, 404, 409, 410, 413, 422]);
 
-async function deletePoints(ids: string[]) {
+export async function discardPendingPoints(ids: string[]) {
   const db = await getOfflineDb();
   if (!db || ids.length === 0) return;
   const transaction = db.transaction("pendingPoints", "readwrite");
   await Promise.all(ids.map((id) => transaction.store.delete(id)));
   await transaction.done;
+  notifyQueueChanged();
 }
 
 /**
@@ -237,17 +275,37 @@ async function deletePoints(ids: string[]) {
  * people to conserve both, and unbounded growth in the same IndexedDB quota that holds
  * the offline route packs navigation depends on.
  */
+/**
+ * A 404/410 is only safely permanent when no local recording still references the
+ * activity. When an open or pending-Stop local row maps to it, the activity is merely
+ * gone FOR THE CURRENT OWNER — the cookie was cleared or SESSION_SECRET rotated — and
+ * the queued points are the only copy of the track. Re-homing (activity-sync) replays
+ * them under a fresh server activity; discarding here would destroy them. This flush
+ * runs every 30 s from the recorder, so without this check it would usually destroy the
+ * backlog before the re-homing path ever saw it.
+ */
+async function isRehomeableActivity(activityId: string): Promise<boolean> {
+  const db = await getOfflineDb();
+  if (!db || !db.objectStoreNames.contains("localActivities")) return false;
+  const locals = await db.getAll("localActivities");
+  return locals.some(
+    (local) =>
+      (local.remoteId === activityId || local.id === activityId || local.rehomingFrom === activityId) &&
+      !(local.endedAt && !local.pendingStop),
+  );
+}
+
 async function flushActivityPoints(
   activityId: string,
   points: PendingPoint[],
-): Promise<{ synced: number; dropped: number }> {
+): Promise<{ synced: number; dropped: number; rehome: boolean }> {
   let synced = 0;
   let dropped = 0;
   for (let index = 0; index < points.length; index += 100) {
     const batch = points.slice(index, index + 100);
     let response: Response;
     try {
-      response = await fetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
+      response = await apiFetch(`/api/activities/${encodeURIComponent(activityId)}/points`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -264,7 +322,15 @@ async function flushActivityPoints(
       break;
     }
     if (PERMANENT_STATUSES.has(response.status)) {
-      await deletePoints(batch.map((point) => point.id));
+      if (
+        (response.status === 404 || response.status === 410) &&
+        (await isRehomeableActivity(activityId))
+      ) {
+        // Every further batch would 404 identically; keep the points queued for the
+        // re-homed replay instead of burning a request per batch.
+        return { synced, dropped, rehome: true };
+      }
+      await discardPendingPoints(batch.map((point) => point.id));
       dropped += batch.length;
       continue;
     }
@@ -272,22 +338,23 @@ async function flushActivityPoints(
     await markPointsSynced(batch.map((point) => point.id));
     synced += batch.length;
   }
-  return { synced, dropped };
+  return { synced, dropped, rehome: false };
 }
 
 async function runWithConcurrency<T>(
   items: T[],
   limit: number,
-  task: (item: T) => Promise<{ synced: number; dropped: number }>,
+  task: (item: T) => Promise<{ synced: number; dropped: number; rehome: boolean }>,
 ) {
   let next = 0;
-  const total = { synced: 0, dropped: 0 };
+  const total = { synced: 0, dropped: 0, rehome: false };
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (next < items.length) {
       const item = items[next++];
       const result = await task(item);
       total.synced += result.synced;
       total.dropped += result.dropped;
+      total.rehome = total.rehome || result.rehome;
     }
   });
   await Promise.all(workers);
@@ -300,29 +367,44 @@ export async function flushPendingPoints(): Promise<FlushResult> {
     const points = await getAllUnsyncedPoints();
     const grouped = new Map<string, PendingPoint[]>();
     for (const point of points) grouped.set(point.activityId, [...(grouped.get(point.activityId) ?? []), point]);
-    const { synced, dropped } = await runWithConcurrency(
+    const { synced, dropped, rehome } = await runWithConcurrency(
       [...grouped.entries()],
       2,
       ([activityId, activityPoints]) => flushActivityPoints(activityId, activityPoints),
     );
     await deleteSyncedPointsOlderThan();
-    return { synced, dropped, pending: await getPendingPointCount() };
+    if (rehome) {
+      // Replay the kept points under the current owner. Dynamic import breaks the
+      // static cycle (activity-sync imports this module), and fire-and-forget keeps
+      // this flush's single-flight guard from deadlocking on its own successor.
+      void import("./activity-sync")
+        .then(({ flushActivityQueue }) => flushActivityQueue())
+        .catch(() => undefined);
+    }
+    const result = { synced, dropped, pending: await getPendingPointCount() };
+    // Notify ONLY when this flush changed something. The unconditional notify in the
+    // old finally block fed the flush's own completion event back into usePointSync's
+    // "hike-points-queued" listener AFTER the single-flight guard was cleared — an
+    // invisible, permanent flush → event → flush busy loop that burned battery in
+    // exactly the app that tells hikers to conserve it. A no-change flush is silent;
+    // a flush that synced or dropped points still updates every listener, and the one
+    // extra follow-up flush that notify triggers picks up stragglers and then goes
+    // quiet because it changes nothing.
+    if (synced > 0 || dropped > 0) notifyQueueChanged();
+    return result;
   })();
   try {
     return await flushPromise;
   } finally {
     flushPromise = null;
-    notifyQueueChanged();
   }
 }
 
 /** Test-only reset for fake-indexeddb; not used by the application. */
 export async function __resetOfflineDbForTests() {
-  const current = dbPromise;
-  dbPromise = null;
   flushPromise = null;
   pointWriteQueue = Promise.resolve();
-  if (current) (await current).close();
+  await offlineDb.reset();
   await new Promise<void>((resolve) => {
     const request = indexedDB.deleteDatabase("hike-offline");
     request.onsuccess = () => resolve();

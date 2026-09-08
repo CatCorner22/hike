@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z, type ZodType } from "zod";
+import { isStoredTrailRef } from "@/lib/ids";
 
 const finiteNumber = z.number().refine(Number.isFinite, "Must be a finite number");
 export const MAX_JSON_BODY_BYTES = 1024 * 1024;
@@ -48,6 +49,14 @@ export const geoJsonLineOrMultiLineStringSchema = z.union([
   geoJsonMultiLineStringSchema,
 ]);
 
+/** UUID from the trails table, or Explore's `osm-relation-123` href. */
+export const trailRefSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .refine(isStoredTrailRef, "Must be a trail UUID or osm-relation|way|node id");
+
 const waypointSchema = z.object({
   lat: finiteNumber.min(-90).max(90),
   lng: finiteNumber.min(-180).max(180),
@@ -55,6 +64,7 @@ const waypointSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   kind: z.string().trim().min(1).max(64).optional(),
   notes: z.string().max(2_000).optional(),
+  sourceUrl: z.string().url().max(2_048).optional(),
 }).strict();
 
 export const waypointsSchema = z.array(waypointSchema).max(1_000).superRefine((value, ctx) => {

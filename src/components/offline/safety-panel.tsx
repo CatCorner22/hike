@@ -7,10 +7,10 @@ import {
   Copy,
   Download,
   Droplets,
-  Flag,
   LifeBuoy,
   Megaphone,
   MessageSquare,
+  QrCode,
   Share2,
   Siren,
   Sun,
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { CapabilityTabs } from "@/components/safety/capability-tabs";
+import { FieldCapture } from "@/components/offline/field-capture";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,7 +31,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { compassLabel } from "@/lib/geo/navigation";
-import { moonPhase } from "@/lib/safety/astro";
+import { moonPhase, roundBearing } from "@/lib/safety/astro";
 import {
   formatWalkBearing,
   gmAngleCard,
@@ -43,15 +44,24 @@ import {
   formatCoords,
   type PositionSource,
 } from "@/lib/safety/emergency";
-import { breadcrumbGpx, downloadTextFile, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
+import { breadcrumbGpx, isIceFilled, nearestWaypoint, safeFilename, safetySelfCheck } from "@/lib/safety/field";
+import { saveTextFile } from "@/lib/platform/save-file";
+import {
+  lastOverdueNotificationSync,
+  openOverdueNotificationSettings,
+  requestOverduePermission,
+  subscribeOverdueNotification,
+  syncOverdueNotification,
+  type OverdueNotificationSync,
+} from "@/lib/platform/overdue-notification";
 import { gainLastHourM } from "@/lib/safety/backtrack";
+import { buildSafetyDossier } from "@/lib/safety/dossier";
 import { formatFixAge } from "@/lib/safety/gps-quality";
 import { useWakeLockHeld } from "@/hooks/use-wake-lock";
 import {
   dropWaypoint,
   getIceProfile,
   getOverdueAlarm,
-  listWaypoints,
   overdueStatus,
   saveIceProfile,
   setOverdueAlarm,
@@ -79,7 +89,13 @@ import {
 } from "@/lib/safety/landnav";
 import { formatRouteCard, routeCardLegs } from "@/lib/safety/route-card";
 import { buildPaperBackup } from "@/lib/safety/paper-backup";
-import { isPackWeatherFresh, type PackWeather } from "@/lib/offline/pack-weather";
+import { GuardianShare } from "@/components/safety/guardian-share";
+import { estimateGuardianEta, guardianProgressPercent } from "@/lib/guardian/status";
+import {
+  decisionGradePackWeather,
+  formatPackWeatherNote,
+  type PackWeather,
+} from "@/lib/offline/pack-weather";
 import {
   aceReport,
   fieldMetar,
@@ -90,10 +106,11 @@ import {
 import { sunCompassHint } from "@/lib/safety/astro";
 import {
   formatNaismith,
-  heatWarning,
+  heatHazard,
   lightningRule,
-  naismithMinutes,
-  windChillWarning,
+  observedPace,
+  walkingEstimate,
+  windChillHazard,
 } from "@/lib/safety/field-ops";
 import {
   creepingLineLegs,
@@ -155,8 +172,36 @@ import {
   type CheckinEntry,
   type CheckinSettings,
 } from "@/lib/safety/checkin";
-import { buildSafetyDossier } from "@/lib/safety/dossier";
+import { formatCompassCard } from "@/lib/safety/compass-display";
+import { headingSourceLabel, type NavHeadingSource } from "@/lib/safety/device-heading";
+import {
+  adjacentGridSquares,
+  formatMgrsGridCard,
+  gridSquareBounds,
+  mgrsGridTips,
+} from "@/lib/safety/mgrs-grid";
+import {
+  formatHarvestCard,
+  HARVEST_DISCLAIMER,
+  survivalHarvestAssessment,
+  survivalHarvestPriorities,
+  huntingBasics,
+  trappingBasics,
+  gameFieldDressing,
+  cookingWildGame,
+} from "@/lib/safety/survival-harvest";
+import {
+  backstopChecklist,
+  backstopDefinition,
+  formatWayfindingCard,
+  wayfindingAssessment,
+  wayfindingTechniques,
+} from "@/lib/safety/wayfinding";
 import { verifyRegroup } from "@/lib/safety/verify";
+import { medicalOverrideFromAltitude } from "@/lib/safety/triage-priority";
+import { PositionQr } from "@/components/safety/position-qr";
+import { PartyTriangulation } from "@/components/safety/party-triangulation";
+import { buildSarHandoff } from "@/lib/qr/handoff";
 import {
   amsAssessment,
   avalancheTerrainWarning,
@@ -174,6 +219,8 @@ import {
   formatUsng,
   formatUtm,
   parseUsng,
+  GRID_DATUM,
+  gridDigitsForAccuracy,
 } from "@/lib/safety/usng";
 
 interface SafetyPanelProps {
@@ -191,6 +238,8 @@ interface SafetyPanelProps {
   altitudeM?: number;
   stale?: boolean;
   recordedAt?: number;
+  /** Wall clock from the navigate tick. Do not use GPS fix time as "now". */
+  clockMs?: number;
   backtrackEnabled: boolean;
   backtrackReady: boolean;
   onToggleBacktrack: () => void;
@@ -206,6 +255,8 @@ interface SafetyPanelProps {
   onToggleGpsDenied?: () => void;
   onDeniedPaces?: (paces: number) => void;
   onDeniedPaceLen?: (paceLen: number) => void;
+  onDeniedTerrain?: (terrain: PaceTerrain) => void;
+  headingSource?: NavHeadingSource;
   positionSource?: PositionSource;
   geometry?: GeoJSON.LineString | GeoJSON.MultiLineString;
   remainingMeters?: number;
@@ -217,6 +268,7 @@ interface SafetyPanelProps {
   lastCommsAt?: number | null;
   onCheckinLogged?: () => void;
   packWeather?: PackWeather | null;
+  batteryPct?: number | null;
 }
 
 /**
@@ -238,6 +290,30 @@ function radiusPhrase(uncertaintyM: number | null): string {
   return `treat as ±${Math.round(uncertaintyM)} m`;
 }
 
+type WeatherFieldSource = "unknown" | "pack" | "manual";
+type WeatherField = { value: string; source: WeatherFieldSource };
+type WeatherFields = { tempC: WeatherField; windKph: WeatherField; rhPct: WeatherField };
+
+const EMPTY_WEATHER_FIELDS: WeatherFields = {
+  tempC: { value: "", source: "unknown" },
+  windKph: { value: "", source: "unknown" },
+  rhPct: { value: "", source: "unknown" },
+};
+
+function displayedWeatherField(field: WeatherField, packValue: number | undefined): WeatherField {
+  if (field.source === "manual") return field;
+  return packValue == null
+    ? { value: "", source: "unknown" }
+    : { value: String(packValue), source: "pack" };
+}
+
+function enteredWeatherNumber(field: WeatherField, packIsDecisionGrade: boolean): number | undefined {
+  if (field.source === "pack" && !packIsDecisionGrade) return undefined;
+  if (field.source === "unknown" || !field.value.trim()) return undefined;
+  const value = Number(field.value);
+  return Number.isFinite(value) ? value : undefined;
+}
+
 export function SafetyPanel({
   lat,
   lng,
@@ -252,6 +328,7 @@ export function SafetyPanel({
   altitudeM,
   stale,
   recordedAt,
+  clockMs,
   backtrackEnabled,
   backtrackReady,
   onToggleBacktrack,
@@ -267,6 +344,8 @@ export function SafetyPanel({
   onToggleGpsDenied,
   onDeniedPaces,
   onDeniedPaceLen,
+  onDeniedTerrain,
+  headingSource,
   positionSource,
   geometry,
   remainingMeters,
@@ -278,6 +357,7 @@ export function SafetyPanel({
   lastCommsAt = null,
   onCheckinLogged,
   packWeather,
+  batteryPct,
 }: SafetyPanelProps) {
   const [copied, setCopied] = useState<"ok" | "fail" | null>(null);
   const [profile, setProfile] = useState<IceProfile>({
@@ -321,6 +401,11 @@ export function SafetyPanel({
   const [imsafe, setImsafe] = useState<ImsafeFlag[]>([]);
   const [resectInfo, setResectInfo] = useState<string | null>(null);
   const [copiedSere, setCopiedSere] = useState(false);
+  const [copiedCompass, setCopiedCompass] = useState(false);
+  const [copiedGrid, setCopiedGrid] = useState(false);
+  const [copiedWayfinding, setCopiedWayfinding] = useState(false);
+  const [copiedHarvest, setCopiedHarvest] = useState(false);
+  const [wayfindingOpen, setWayfindingOpen] = useState<string>("handrail");
   const [sereOpen, setSereOpen] = useState<SerePillar | "all">("survival");
   const [gridC, setGridC] = useState("");
   const [brgC, setBrgC] = useState("");
@@ -328,16 +413,14 @@ export function SafetyPanel({
   const [tsdSpeed, setTsdSpeed] = useState("4");
   const [tsdMin, setTsdMin] = useState("");
   const [flashSec, setFlashSec] = useState("30");
-  const [tempC, setTempC] = useState(packWeather?.tempC != null ? String(packWeather.tempC) : "5");
-  const [windKph, setWindKph] = useState(
-    packWeather?.windKph != null ? String(packWeather.windKph) : "20",
-  );
-  const [rh, setRh] = useState(packWeather?.rhPct != null ? String(packWeather.rhPct) : "40");
+  const [weatherFields, setWeatherFields] = useState<WeatherFields>(EMPTY_WEATHER_FIELDS);
+  const [weatherNow, setWeatherNow] = useState<number | null>(null);
   const [waterL, setWaterL] = useState("2");
   const [injured, setInjured] = useState("0");
   const [searchKind, setSearchKind] = useState<"square" | "sector" | "creep" | "parallel">("square");
   const [searchLeg, setSearchLeg] = useState("100");
   const [opsNote, setOpsNote] = useState<string | null>(null);
+  const [advancedWaypointStatus, setAdvancedWaypointStatus] = useState<string | null>(null);
   const [beads, setBeads] = useState(0);
   const [lpqSeen, setLpqSeen] = useState("");
   const [lpqClothes, setLpqClothes] = useState("");
@@ -348,13 +431,18 @@ export function SafetyPanel({
   });
   const [checkins, setCheckins] = useState<CheckinEntry[]>([]);
   const [checkinLabel, setCheckinLabel] = useState<string | null>(null);
-  const [noteText, setNoteText] = useState("");
+  const [checkinOverdue, setCheckinOverdue] = useState(false);
+  // Sticky: a storage-refused check-in or a failed arm must survive the 30-second
+  // status tick, which recomputes the label from unchanged inputs and used to erase
+  // the failure notice within one interval.
+  const [checkinSaveError, setCheckinSaveError] = useState<string | null>(null);
   const [wildlifeAnimal, setWildlifeAnimal] = useState<WildlifeAnimal>("bear_grizzly");
   const [amsSymptoms, setAmsSymptoms] = useState<AmsSymptom[]>([]);
   const [verifyChallengeIn, setVerifyChallengeIn] = useState("");
   const [verifyPasswordIn, setVerifyPasswordIn] = useState("");
   const [verifyMsg, setVerifyMsg] = useState<string | null>(null);
   const [dossierStatus, setDossierStatus] = useState<string | null>(null);
+  const [showHandoffQr, setShowHandoffQr] = useState(false);
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const profileRef = useRef(profile);
 
@@ -370,6 +458,12 @@ export function SafetyPanel({
     void getOverdueAlarm().then((alarm) => {
       if (!alarm) return;
       setReturnLocal(toLocalInput(alarm.returnAt));
+      // A stored returnAt that no longer parses must not be reconstructed: the
+      // Invalid Date's toISOString threw RangeError out of the render path and the
+      // 30-second monitor effect, taking the whole navigate screen down. Skipping
+      // reconstruction lets overdueStatus's fail-closed "not armed" label surface
+      // instead of a crash.
+      if (!Number.isFinite(new Date(alarm.returnAt).getTime())) return;
       if (alarm.resolvedLocal && alarm.timeZone && alarm.utcOffset) {
         setReturnResolution({
           instant: new Date(alarm.returnAt),
@@ -394,18 +488,27 @@ export function SafetyPanel({
   }, [packId]);
 
   useEffect(() => {
-    if (!packWeather || !isPackWeatherFresh(packWeather)) return;
-    queueMicrotask(() => {
-      if (packWeather.tempC != null) setTempC(String(packWeather.tempC));
-      if (packWeather.windKph != null) setWindKph(String(packWeather.windKph));
-      if (packWeather.rhPct != null) setRh(String(packWeather.rhPct));
-    });
-  }, [packWeather]);
+    const tick = () => setWeatherNow(Date.now());
+    tick();
+    const timer = window.setInterval(tick, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const packDecisionWeather = useMemo(
+    () => (weatherNow == null ? null : decisionGradePackWeather(packWeather, weatherNow)),
+    [packWeather, weatherNow],
+  );
 
   useEffect(() => {
     const tick = () => {
       const last = checkins[0]?.recordedAt ?? null;
-      setCheckinLabel(checkinStatus(last, checkinSettings)?.label ?? null);
+      const status = checkinStatus(last, checkinSettings);
+      setCheckinLabel(status?.label ?? null);
+      // Keep the lib's overdue boolean beside the label: the fail-closed states
+      // (corrupt interval, unreadable timestamp, future-dated reference) are
+      // overdue:true with labels that never contain the substring "OVERDUE", and
+      // styling keyed on the text rendered them in the calm informational tier.
+      setCheckinOverdue(status?.overdue === true);
     };
     tick();
     const id = window.setInterval(tick, 30000);
@@ -502,14 +605,60 @@ export function SafetyPanel({
   // Previously sniffed with /dark|sunset|headlamp|polar night/ over whichever warning
   // happened to rank first — so "finish with a headlamp" read as darkness at midday,
   // and a GPS-denied or overdue warning read as daylight at midnight. It feeds
-  // sereAssessment and casevacDecision, so it has to be the real value.
   const sereNote = sereAssessment({
     isDark,
     altitudeM,
     partySize: profile.partySize,
     hasSignal: gpsTrusted,
   });
+  const wayfindingNote = wayfindingAssessment({
+    offTrail: offTrailM != null && offTrailM > 25,
+    visibilityPoor: isDark,
+    hasBackstop: backtrackEnabled,
+  });
+  const displayedWeatherFields: WeatherFields = {
+    tempC: displayedWeatherField(weatherFields.tempC, packDecisionWeather?.tempC),
+    windKph: displayedWeatherField(weatherFields.windKph, packDecisionWeather?.windKph),
+    rhPct: displayedWeatherField(weatherFields.rhPct, packDecisionWeather?.rhPct),
+  };
+  const observedTempC = enteredWeatherNumber(displayedWeatherFields.tempC, packDecisionWeather != null);
+  const observedWindKph = enteredWeatherNumber(displayedWeatherFields.windKph, packDecisionWeather != null);
+  const observedRhPct = enteredWeatherNumber(displayedWeatherFields.rhPct, packDecisionWeather != null);
+  const guardianProgress = guardianProgressPercent(traveledMeters, remainingMeters);
+  const panelNowMs = clockMs && Number.isFinite(clockMs) && clockMs > 0 ? clockMs : Number.NaN;
+  const guardianEta = estimateGuardianEta({
+    nowMs: panelNowMs,
+    startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
+    traveledMeters,
+    remainingMeters,
+  });
+  // The same measured pace the ETA above is built from, so the walking estimate
+  // on this panel cannot contradict the one on the navigate HUD.
+  const panelPace = observedPace({
+    nowMs: panelNowMs,
+    startedAtMs: trackPoints[0] ? Date.parse(trackPoints[0].recordedAt) : null,
+    traveledMeters,
+  });
+  const coldHazardNote =
+    observedTempC != null && observedWindKph != null
+      ? windChillHazard(observedTempC, observedWindKph)
+      : null;
+  const heatHazardNote =
+    observedTempC != null && observedRhPct != null
+      ? heatHazard(observedTempC, observedRhPct)
+      : null;
+  // The two are mutually exclusive by temperature band (wind chill needs ≤10 °C,
+  // heat index needs ≥27 °C), so first-non-null is a selection, not a suppression.
+  const weatherHazard = coldHazardNote ?? heatHazardNote;
+  const harvestNote = survivalHarvestAssessment({
+    daysLost: 1,
+    tempC: observedTempC,
+    hasFire: false,
+  });
   const sereSectionsList = useMemo(() => sereSections(), []);
+  const mgrsCell = lat != null && lng != null ? gridSquareBounds(lat, lng, 1000) : null;
+  const mgrsNeighbors = lat != null && lng != null ? adjacentGridSquares(lat, lng, 1000) : [];
+  const wayfindingTips = useMemo(() => wayfindingTechniques(), []);
   const slopePct = useMemo(
     () => slopeFromProfile(elevationProfile, traveledMeters ?? 0),
     [elevationProfile, traveledMeters],
@@ -523,26 +672,70 @@ export function SafetyPanel({
     lat != null && lng != null
       ? sunVsWatchCheck(new Date(), lat, lng)
       : null;
+  const amsResult = amsAssessment({
+    altitudeM,
+    gainLastHourM: gainLastHourM(trackPoints),
+    symptoms: amsSymptoms,
+  });
+  // Severe AMS and the CASEVAC card used to render contradictory orders side by
+  // side — "descend immediately. This is an emergency." beside "Non-walker — stay
+  // put". The medical override makes one instruction govern.
   const evac = casevacDecision({
     injured: (Number(injured) || 0) > 0,
     canWalk,
     isDark,
     remainingM: remainingMeters,
     partySize: profile.partySize,
+    medicalOverride: medicalOverrideFromAltitude({ mustDescend: amsResult.level === "severe" }),
   });
   const beadsInfo = paceBeads(beads);
-  const amsResult = amsAssessment({
-    altitudeM,
-    gainLastHourM: gainLastHourM(trackPoints),
-    symptoms: amsSymptoms,
-  });
   // No aspect: heading is the direction of travel, not the direction the slope faces.
   const avyNote = slopePct != null ? avalancheTerrainWarning({ slopePct }) : null;
 
   async function persistCheckinSettings(next: CheckinSettings) {
-    setCheckinSettings(next);
-    await saveCheckinSettings(next);
+    // The optimistic state must carry an arm time: without one the 30-second monitor
+    // tick judged the schedule against a stale check-in and flashed a false
+    // "OVERDUE — send SOS" until the store round-trip landed (up to 5 s on a blocked
+    // open). Mirror the store's own rule: enabling stamps a fresh armedAt.
+    setCheckinSettings(
+      next.enabled && !checkinSettings.enabled
+        ? { ...next, armedAt: new Date().toISOString() }
+        : next,
+    );
+    const stored = await saveCheckinSettings(next);
+    // The store is the authority on armedAt (a re-enable stamps it fresh) and on
+    // interval normalization — re-read so the in-memory monitor matches what will be
+    // true after a reload. On a refused write this also snaps the checkbox back to
+    // the stored truth — which is why the failure line below must say so.
+    setCheckinSettings(await getCheckinSettings());
+    setCheckinSaveError(
+      stored
+        ? null
+        : next.enabled
+          ? "Monitor NOT armed — this phone refused to store the setting. Nothing will watch your check-ins: keep your own clock or tell your contact."
+          : "Change NOT saved — this phone refused to store it. The monitor may still be in its previous state.",
+    );
   }
+
+  /**
+   * A refused notification permission is invisible otherwise. `setOverdueAlarm`
+   * fires the sync and forgets it — correctly, since the write path must not
+   * wait on the native bridge — so the outcome is read from the seam instead.
+   * Only an outright refusal is worth surfacing: "unsupported" is the honest
+   * steady state on the web, where the in-app banner has always been the whole
+   * mechanism.
+   */
+  const [alarmState, setAlarmState] = useState<OverdueNotificationSync["status"]>(
+    () => lastOverdueNotificationSync().status,
+  );
+  useEffect(() => subscribeOverdueNotification((sync) => setAlarmState(sync.status)), []);
+  // "unsupported" is the honest steady state on the web, where the in-app banner
+  // has always been the whole mechanism; the other three each have a different
+  // thing the hiker can do about them.
+  const alarmProblem =
+    alarmState === "failed" || alarmState === "denied" || alarmState === "needs-permission"
+      ? alarmState
+      : null;
 
   // The deadline message used to be written before the store was awaited, so a phone
   // that refused the write left an alarm that read as armed and did nothing.
@@ -558,10 +751,9 @@ export function SafetyPanel({
     setReturnTimeMessage(null);
     setReturnTimeChoices(null);
     if (!value) {
+      // datetime-local emits empty/partial values while the picker is open.
+      // Keep the stored deadline until the hiker explicitly clears it.
       setReturnResolution(null);
-      if (!(await setOverdueAlarm(null))) {
-        setReturnTimeMessage("Could not clear the stored deadline — the old one may still be armed.");
-      }
       return;
     }
     const resolved = resolveLocalDateTime(value);
@@ -573,7 +765,17 @@ export function SafetyPanel({
     setReturnResolution(null);
     setReturnTimeMessage(resolved.message);
     if (resolved.kind === "ambiguous") setReturnTimeChoices(resolved.choices);
-    await setOverdueAlarm(null);
+  }
+
+  async function clearReturn() {
+    setReturnLocal("");
+    setReturnResolution(null);
+    setReturnTimeChoices(null);
+    if (!(await setOverdueAlarm(null))) {
+      setReturnTimeMessage("Could not clear the stored deadline — the old one may still be armed.");
+      return;
+    }
+    setReturnTimeMessage("Return deadline cleared on this phone.");
   }
 
   async function chooseReturnOccurrence(choice: ResolvedLocalTime) {
@@ -584,18 +786,39 @@ export function SafetyPanel({
 
   async function markWaypoint(kind: SafetyWaypoint["kind"], note?: string) {
     if (lat == null || lng == null) return;
-    await dropWaypoint(packId, kind, lat, lng, note);
-    onWaypointsChange(await listWaypoints(packId));
+    setAdvancedWaypointStatus("Saving waypoint on this phone…");
+    try {
+      const point = await dropWaypoint(packId, kind, lat, lng, note, {
+        accuracyM,
+        source: positionSource ?? (stale ? "lastKnown" : "gps"),
+        recordedAt,
+      });
+      onWaypointsChange([point, ...waypoints.filter((item) => item.id !== point.id)]);
+      setAdvancedWaypointStatus(`${kind.toUpperCase()} waypoint saved and checked on this phone.`);
+    } catch (error) {
+      setAdvancedWaypointStatus(error instanceof Error ? error.message : "The waypoint was not saved.");
+    }
   }
 
   async function handleCheckin() {
-    const entry = await logCheckin(packId, {
+    const { entry, saved } = await logCheckin(packId, {
       lat,
       lng,
       note: checkinSettings.enabled ? "I'm OK" : undefined,
     });
+    if (!saved) {
+      // A check-in that never landed must not be shown as logged: after a reload no
+      // one — including the SAR dossier — would ever see it. This goes in the sticky
+      // error state, not the status label: the 30-second tick recomputes the label
+      // from unchanged inputs and used to erase the warning within one interval.
+      setCheckinSaveError("Check-in NOT SAVED — storage unavailable. Try again or note the time on paper.");
+      return;
+    }
+    setCheckinSaveError(null);
     setCheckins((prev) => [entry, ...prev].slice(0, 20));
-    setCheckinLabel(checkinStatus(entry.recordedAt, checkinSettings)?.label ?? null);
+    const status = checkinStatus(entry.recordedAt, checkinSettings);
+    setCheckinLabel(status?.label ?? null);
+    setCheckinOverdue(status?.overdue === true);
     onCheckinLogged?.();
   }
 
@@ -620,7 +843,7 @@ export function SafetyPanel({
             Safety &amp; SOS
           </SheetTitle>
           <SheetDescription>
-            Land-nav and rescue: resection, GPS-denied DR, SITREP, MARCH, USNG, ICE.
+            Save a place, backtrack, check in, or get emergency information.
           </SheetDescription>
         </SheetHeader>
 
@@ -643,16 +866,27 @@ export function SafetyPanel({
             <MessageSquare className="mr-2 size-4" />
             SMS ICE
           </Button>
-          <Button className="min-h-11" variant="destructive" onClick={onBeacon}>
+          <Button
+            className="min-h-11"
+            variant="destructive"
+            onClick={onBeacon}
+            aria-describedby="sound-flash-locator-warning"
+          >
             <Siren className="mr-2 size-4" />
-            Beacon
+            Sound &amp; flash locator
           </Button>
+          <p
+            id="sound-flash-locator-warning"
+            className="col-span-2 rounded-md border border-destructive/50 bg-destructive/10 p-2 text-center text-xs font-bold text-destructive"
+          >
+            Does not contact 911, SAR, or transmit your location.
+          </p>
         </section>
 
         <div className="mt-4 space-y-4 px-4 pb-6">
           {daylightWarning && (
             <div className="flex items-start gap-2 rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
-              <Sun className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <Sun className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-400" />
               <p>{daylightWarning}</p>
             </div>
           )}
@@ -676,9 +910,16 @@ export function SafetyPanel({
           )}
 
           {gm && (
-            <p className="text-xs text-muted-foreground">
-              {gm.gridToMagnetic}. {gm.magneticToGrid}. {moon.nightNav}
-            </p>
+            <>
+              <p className="text-xs text-muted-foreground">
+                {gm.gridToMagnetic}. {gm.magneticToGrid}. {moon.nightNav}
+              </p>
+              {gm.staleness && (
+                <p className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-xs">
+                  {gm.staleness}
+                </p>
+              )}
+            </>
           )}
 
           {overdueLabel && (
@@ -697,13 +938,20 @@ export function SafetyPanel({
           {checkinLabel && (
             <div
               className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${
-                checkinLabel.includes("OVERDUE")
+                checkinOverdue
                   ? "border-destructive bg-destructive/10 text-destructive"
                   : "border-amber-500/50 bg-amber-500/10"
               }`}
             >
               <Timer className="mt-0.5 size-4 shrink-0" />
               <p>{checkinLabel}</p>
+            </div>
+          )}
+
+          {checkinSaveError && (
+            <div className="flex items-start gap-2 rounded-lg border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
+              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+              <p>{checkinSaveError}</p>
             </div>
           )}
 
@@ -733,8 +981,16 @@ export function SafetyPanel({
                 <p className="mt-1 font-mono text-sm">{formatCoords(lat, lng, accuracyM)}</p>
                 {formatUsng(lat, lng) ? (
                   <>
-                    <p className="mt-1 font-mono text-xs">USNG {formatUsng(lat, lng)}</p>
-                    <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    {/* Digits are a precision claim, so they follow the reported
+                        accuracy; and a grid without a datum is not a position —
+                        WGS 84 and NAD 27 differ by about 200 m across CONUS. */}
+                    <p className="mt-1 font-mono text-xs">
+                      USNG {formatUsng(lat, lng, gridDigitsForAccuracy(accuracyM))}
+                    </p>
+                    {gridDigitsForAccuracy(accuracyM) === 5 && (
+                      <p className="font-mono text-xs">MGRS10 {formatMgrs10(lat, lng)}</p>
+                    )}
+                    <p className="text-[11px] text-muted-foreground">Datum {GRID_DATUM}</p>
                   </>
                 ) : (
                   <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
@@ -743,7 +999,11 @@ export function SafetyPanel({
                 )}
                 <p className="font-mono text-xs text-muted-foreground">{formatDdm(lat, lng)}</p>
                 <p className="font-mono text-xs text-muted-foreground">{formatDms(lat, lng)}</p>
-                {formatUtm(lat, lng) && <p className="font-mono text-xs text-muted-foreground">{formatUtm(lat, lng)}</p>}
+                {formatUtm(lat, lng) && (
+                  <p className="font-mono text-xs text-muted-foreground">
+                    {formatUtm(lat, lng, 10 ** (5 - gridDigitsForAccuracy(accuracyM)))}
+                  </p>
+                )}
                 <p className="mt-1 text-[11px] text-muted-foreground">{radioGrid(lat, lng).split("\n")[1]}</p>
                 <p className="text-[11px] text-muted-foreground">Zulu {formatZulu()}</p>
                 {recordedAt != null && (
@@ -774,6 +1034,33 @@ export function SafetyPanel({
             )}
           </div>
 
+          {/*
+            Directly in the panel, not behind a disclosure triangle labelled
+            "Advanced tools and field guides".
+
+            This is where the tourniquet clock, the triage card, the hypothermia
+            and heat guidance, the avalanche and wildlife references live. None
+            of them is an advanced tool — they are the reason somebody opened
+            this panel at the worst moment of their day, and reaching them took
+            a tap on a summary whose own words did not mention medicine. The tab
+            contents render only when their tab is selected, so the cost of
+            surfacing them is a tab bar.
+          */}
+          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
+
+          <FieldCapture
+            packId={packId}
+            trailName={trailName}
+            lat={lat}
+            lng={lng}
+            accuracyM={accuracyM}
+            stale={stale}
+            recordedAt={recordedAt}
+            positionSource={positionSource}
+            waypoints={waypoints}
+            onWaypointsChange={onWaypointsChange}
+          />
+
           <div className="grid grid-cols-2 gap-2">
             <Button
               variant={backtrackEnabled ? "default" : "outline"}
@@ -785,73 +1072,18 @@ export function SafetyPanel({
             </Button>
             <Button
               variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("water")}
-            >
-              <Droplets className="mr-2 size-4" />
-              Mark water
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("junction")}
-            >
-              <Flag className="mr-2 size-4" />
-              Mark junction
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("lkp")}
-            >
-              Mark LKP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("rp")}
-            >
-              Mark RP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("ap")}
-            >
-              Mark AP
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("cf")}
-            >
-              Mark CF
-            </Button>
-            <Button
-              variant="outline"
-              disabled={lat == null}
-              onClick={() => void markWaypoint("hr")}
-            >
-              Mark handrail
-            </Button>
-            <Button
-              variant={gpsDenied ? "default" : "outline"}
-              disabled={!gpsDenied && !gpsTrusted}
-              onClick={() => onToggleGpsDenied?.()}
-            >
-              {gpsDenied ? "Exit GPS denied" : "GPS denied"}
-            </Button>
-            <Button
-              variant="outline"
               disabled={trackPoints.length < 2}
               onClick={async () => {
                 const gpx = breadcrumbGpx(`${trailName} breadcrumbs`, trackPoints);
-                try {
-                  downloadTextFile(`${safeFilename(trailName)}-track.gpx`, gpx);
+                // saveTextFile reports whether a save actually ran. It used to be
+                // a synchronous throw, which never happened inside WKWebView — so
+                // this clipboard fallback was dead on iOS and the button claimed
+                // a download that had failed.
+                if (await saveTextFile(`${safeFilename(trailName)}-track.gpx`, gpx, "application/gpx+xml")) {
                   setGpxStatus("GPX downloaded");
-                } catch {
-                  const ok = await copyEmergencyInfo(gpx);
-                  setGpxStatus(ok ? "GPX copied" : "GPX export failed");
+                } else {
+                  const copied = await copyEmergencyInfo(gpx);
+                  setGpxStatus(copied ? "GPX copied" : "GPX export failed");
                 }
                 window.setTimeout(() => setGpxStatus(null), 2500);
               }}
@@ -874,25 +1106,60 @@ export function SafetyPanel({
               <Droplets className="mr-2 size-4" />
               I drank
             </Button>
-            <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
+            {/* Never gated on a GPS fix: a check-in is proof of life, not a position
+                report (logCheckin's lat/lng are optional by design), and the overdue
+                banner tells the user to tap this exact button. */}
+            <Button variant="outline" onClick={() => void handleCheckin()}>
               <CheckCircle2 className="mr-2 size-4" />
               I&apos;m OK
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                onCommsAttempt?.();
-                setOpsNote("Comms attempt logged. Try SMS / share / 911 on the next ridge.");
-              }}
-            >
-              Log comms try
-            </Button>
-            <Button variant="outline" onClick={() => setBeads((n) => n + 1)}>
-              Pace bead +100 m
-            </Button>
-            <Button variant="ghost" onClick={() => setBeads(0)}>
-              Reset beads
-            </Button>
+          </div>
+
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">
+              Advanced navigation and SAR tools
+            </summary>
+            <p className="mt-2 text-xs text-muted-foreground">
+              These coded markers and dead-reckoning tools are for people trained to use them.
+            </p>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("lkp")}>
+                Last known point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("rp")}>
+                Rally point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("ap")}>
+                Approach point
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("cf")}>
+                Catch feature
+              </Button>
+              <Button variant="outline" disabled={lat == null} onClick={() => void markWaypoint("hr")}>
+                Handrail
+              </Button>
+              <Button
+                variant={gpsDenied ? "default" : "outline"}
+                disabled={!gpsDenied && !gpsTrusted}
+                onClick={() => onToggleGpsDenied?.()}
+              >
+                {gpsDenied ? "Exit GPS-denied mode" : "GPS-denied mode"}
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  onCommsAttempt?.();
+                  setOpsNote("Comms attempt logged. Try SMS / share / 911 on the next ridge.");
+                }}
+              >
+                Log comms try
+              </Button>
+              <Button variant="outline" onClick={() => setBeads((n) => n + 1)}>
+                Pace bead +100 m
+              </Button>
+              <Button variant="ghost" onClick={() => setBeads(0)}>
+                Reset beads
+              </Button>
             <Button
               variant="outline"
               onClick={async () => {
@@ -908,14 +1175,21 @@ export function SafetyPanel({
                   positionSource,
                   offTrailM,
                   returnAt: returnResolution?.instant.toISOString() ?? null,
+                  returnLocal: returnResolution,
                   checkins,
                   navLegs: legs,
                   waypoints,
                 });
                 const ok = await copyEmergencyInfo(text);
                 if (!ok) {
-                  downloadTextFile(`${safeFilename(trailName)}-dossier.txt`, text, "text/plain");
-                  setDossierStatus("Dossier downloaded");
+                  // Last resort for the dossier: if this fails too, it exists
+                  // nowhere, and saying otherwise is the worst possible lie here.
+                  const saved = await saveTextFile(
+                    `${safeFilename(trailName)}-dossier.txt`,
+                    text,
+                    "text/plain",
+                  );
+                  setDossierStatus(saved ? "Dossier downloaded" : "Dossier NOT saved");
                 } else {
                   setDossierStatus("Dossier copied");
                 }
@@ -949,14 +1223,80 @@ export function SafetyPanel({
                     : null,
                 });
                 const ok = await copyEmergencyInfo(text);
-                if (!ok) downloadTextFile(`${safeFilename(trailName)}-paper.txt`, text, "text/plain");
-                setDossierStatus(ok ? "Paper backup copied" : "Paper backup downloaded");
+                if (ok) {
+                  setDossierStatus("Paper backup copied");
+                } else {
+                  const saved = await saveTextFile(
+                    `${safeFilename(trailName)}-paper.txt`,
+                    text,
+                    "text/plain",
+                  );
+                  setDossierStatus(saved ? "Paper backup downloaded" : "Paper backup NOT saved");
+                }
                 window.setTimeout(() => setDossierStatus(null), 2500);
               }}
             >
               Paper backup
             </Button>
-          </div>
+            <Button variant="outline" onClick={() => setShowHandoffQr((open) => !open)}>
+              <QrCode className="mr-2 size-4" />
+              {showHandoffQr ? "Hide handoff QR" : "Handoff QR"}
+            </Button>
+            </div>
+            {showHandoffQr && (
+              <div className="mt-3 rounded-lg border p-3">
+                <PositionQr
+                  payload={buildSarHandoff({
+                    trailName,
+                    lat,
+                    lng,
+                    accuracyM,
+                    recordedAt,
+                    positionSource,
+                    stale,
+                    returnAtIso: returnResolution?.instant.toISOString() ?? null,
+                    profile,
+                  })}
+                  label="SAR handoff"
+                />
+              </div>
+            )}
+            {/* The receiving half of the same loop: read a position off another
+                phone's screen, then work the party picture and cross-bearings
+                from it. */}
+            <div className="mt-3">
+              <PartyTriangulation lat={lat} lng={lng} headingTrue={heading} />
+            </div>
+            {advancedWaypointStatus && (
+              <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+                {advancedWaypointStatus}
+              </p>
+            )}
+          </details>
+          <GuardianShare
+            trailName={trailName}
+            profile={profile}
+            shareKey={packId}
+            returnAt={
+              returnResolution?.instant
+                ? returnResolution.instant.toISOString()
+                : returnLocal && Number.isFinite(Date.parse(returnLocal))
+                  ? new Date(returnLocal).toISOString()
+                  : null
+            }
+            returnLocal={returnResolution}
+            geometry={geometry}
+            lat={lat}
+            lng={lng}
+            accuracyM={accuracyM}
+            offTrailM={offTrailM}
+            positionSource={positionSource}
+            lastUpdateAt={recordedAt}
+            batteryPct={batteryPct}
+            progressPct={guardianProgress}
+            etaAt={guardianEta}
+            canPublishStatus={gpsTrusted && positionSource === "gps" && guardianProgress != null}
+          />
           <p className="text-xs text-muted-foreground">
             Pace beads: {beadsInfo.label}
             {gmt ? ` · ${gmt}` : ""}
@@ -991,7 +1331,7 @@ export function SafetyPanel({
                 </Button>
               ))}
             </div>
-            <Button variant="outline" disabled={lat == null} onClick={() => void handleCheckin()}>
+            <Button variant="outline" onClick={() => void handleCheckin()}>
               Log I&apos;m OK now
             </Button>
             {checkins.length > 0 && (
@@ -1001,24 +1341,12 @@ export function SafetyPanel({
             )}
           </div>
 
-          <div className="rounded-lg border p-3 space-y-2">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Field note</p>
-            <Input
-              value={noteText}
-              placeholder="Landmark, hazard, or rally point note"
-              onChange={(e) => setNoteText(e.target.value)}
-            />
-            <Button
-              variant="outline"
-              disabled={lat == null || !noteText.trim()}
-              onClick={async () => {
-                await markWaypoint("note", noteText.trim());
-                setNoteText("");
-              }}
-            >
-              Drop note waypoint
-            </Button>
-          </div>
+          <details className="rounded-lg border p-3">
+            <summary className="cursor-pointer text-sm font-medium">Advanced tools and field guides</summary>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Specialist land navigation, SAR reports, medical references, and survival calculations.
+            </p>
+            <div className="mt-3 space-y-4">
 
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1054,7 +1382,17 @@ export function SafetyPanel({
               ))}
             </div>
             {amsResult.warning && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">{amsResult.warning}</p>
+              // The lib grades four levels; flattening them all into small amber text
+              // typeset "This is an emergency" identically to "slow down".
+              <p
+                className={
+                  amsResult.level === "severe"
+                    ? "rounded-lg border border-destructive bg-destructive/10 p-2 text-xs font-medium text-destructive"
+                    : "text-xs text-amber-700 dark:text-amber-400"
+                }
+              >
+                {amsResult.warning}
+              </p>
             )}
             {amsResult.actions.length > 0 && (
               <ul className="list-disc pl-4 text-xs text-muted-foreground">
@@ -1091,7 +1429,7 @@ export function SafetyPanel({
               </ul>
               <p className="mt-2 font-medium text-foreground">Food / bear basics</p>
               <ul className="list-disc pl-4">
-                {bearSafetyCard().slice(0, 4).map((line) => (
+                {bearSafetyCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1106,7 +1444,7 @@ export function SafetyPanel({
                 ))}
               </ul>
               <ul className="mt-2 list-disc pl-4">
-                {wildernessFirstAidCard().slice(0, 5).map((line) => (
+                {wildernessFirstAidCard().map((line) => (
                   <li key={line}>{line}</li>
                 ))}
               </ul>
@@ -1149,7 +1487,7 @@ export function SafetyPanel({
             {gotoInfo && <p className="text-xs text-muted-foreground">{gotoInfo}</p>}
             {lat != null && lng != null && heading != null && (
               <p className="text-xs text-muted-foreground">
-                Current heading {Math.round(heading)}° true. Dead-reckon{" "}
+                Current heading {roundBearing(heading)}° true. Dead-reckon{" "}
                 {Math.round(distanceFromPaces(Number(paces) || 0, Number(paceLen) || 65, terrain))} m
                 on that heading with the pace boxes below.
               </p>
@@ -1185,7 +1523,13 @@ export function SafetyPanel({
                 id="terrain"
                 className="h-9 w-full rounded-lg border bg-background px-2 text-sm"
                 value={terrain}
-                onChange={(e) => setTerrain(e.target.value as PaceTerrain)}
+                onChange={(e) => {
+                  const next = e.target.value as PaceTerrain;
+                  setTerrain(next);
+                  // The parent's DR fix applies the same factor — without this the
+                  // panel narrated 800 m while the SOS position advanced 1000 m.
+                  onDeniedTerrain?.(next);
+                }}
               >
                 <option value="flat">Flat</option>
                 <option value="up">Upslope</option>
@@ -1217,6 +1561,134 @@ export function SafetyPanel({
               }}
             >
               Dead reckon
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Compass readout
+            </p>
+            {heading != null && lat != null && lng != null ? (
+              <p className="text-sm font-medium tabular-nums">
+                {formatWalkBearing(heading, lat, lng)}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Heading unavailable — enable GPS or enter true degrees for dead reckoning.
+              </p>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(
+                  formatCompassCard({
+                    headingTrue: heading,
+                    lat,
+                    lng,
+                    // The fused source from the page, never re-derived from gpsDenied:
+                    // a magnetometer heading labeled "GPS" told stationary readers to
+                    // distrust a live compass.
+                    source: headingSource
+                      ? headingSourceLabel(headingSource)
+                      : gpsDenied
+                        ? "Dead reckon"
+                        : "GPS",
+                    sourceKind: headingSource,
+                  }),
+                );
+                setCopiedCompass(true);
+                window.setTimeout(() => setCopiedCompass(false), 2000);
+              }}
+            >
+              {copiedCompass ? "Compass card copied" : "Copy compass card"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              MGRS grid squares
+            </p>
+            {mgrsCell ? (
+              <>
+                <p className="text-sm font-medium">{mgrsCell.grid}</p>
+                <p className="text-xs text-muted-foreground">
+                  100 km square: {mgrsCell.hundredKmId} · 1 km cell for land nav
+                </p>
+                {mgrsNeighbors.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Adjacent:{" "}
+                    {mgrsNeighbors.map((n) => `${n.direction} ${n.grid}`).join(" · ")}
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground">Waiting for GPS grid…</p>
+            )}
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {mgrsGridTips().map((t) => (
+                <li key={t}>{t}</li>
+              ))}
+            </ul>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={lat == null || lng == null}
+              onClick={async () => {
+                if (lat == null || lng == null) return;
+                await navigator.clipboard.writeText(formatMgrsGridCard(lat, lng));
+                setCopiedGrid(true);
+                window.setTimeout(() => setCopiedGrid(false), 2000);
+              }}
+            >
+              {copiedGrid ? "Grid card copied" : "Copy MGRS grid card"}
+            </Button>
+          </div>
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Wayfinding — backstops &amp; techniques
+            </p>
+            <p className="text-xs text-muted-foreground">{backstopDefinition()}</p>
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {backstopChecklist().map((b) => (
+                <li key={b}>{b}</li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap gap-1">
+              {wayfindingTips.map((t) => (
+                <Button
+                  key={t.id}
+                  size="sm"
+                  variant={wayfindingOpen === t.id ? "default" : "outline"}
+                  onClick={() => setWayfindingOpen(t.id)}
+                >
+                  {t.title}
+                </Button>
+              ))}
+            </div>
+            {wayfindingTips
+              .filter((t) => t.id === wayfindingOpen)
+              .map((t) => (
+                <div key={t.id}>
+                  <p className="text-xs font-medium text-foreground">{t.summary}</p>
+                  <ul className="mt-1 list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+                    {t.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(formatWayfindingCard(trailName));
+                setCopiedWayfinding(true);
+                window.setTimeout(() => setCopiedWayfinding(false), 2000);
+              }}
+            >
+              {copiedWayfinding ? "Wayfinding card copied" : "Copy wayfinding card"}
             </Button>
           </div>
 
@@ -1465,12 +1937,17 @@ export function SafetyPanel({
             {lat != null && lng != null && (
               <p className="text-xs text-muted-foreground">{sunCompassHint(new Date(), lat, lng)}</p>
             )}
-            {remainingMeters != null && remainingMeters > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {formatNaismith(naismithMinutes(remainingMeters, remainingGainM ?? 0))} remaining
-                (5 km/h + climb).
-              </p>
-            )}
+            {remainingMeters != null && remainingMeters > 0 && (() => {
+              const estimate = walkingEstimate(remainingMeters, remainingGainM ?? 0, panelPace);
+              return (
+                <p className="text-xs text-muted-foreground">
+                  {formatNaismith(estimate.minutes)} remaining
+                  {estimate.basis === "observed" && panelPace
+                    ? ` (your measured pace over ${(panelPace.traveledMeters / 1000).toFixed(1)} km + climb).`
+                    : " (5 km/h + climb)."}
+                </p>
+              );
+            })()}
             <div className="grid grid-cols-3 gap-2">
               <Input value={tsdDist} placeholder="m" onChange={(e) => setTsdDist(e.target.value)} />
               <Input value={tsdSpeed} placeholder="km/h" onChange={(e) => setTsdSpeed(e.target.value)} />
@@ -1545,23 +2022,68 @@ export function SafetyPanel({
             >
               Copy route card
             </Button>
-            {packWeather && (
+            {packWeather && weatherNow != null && (
               <p className="text-xs text-muted-foreground col-span-full">
-                {isPackWeatherFresh(packWeather)
-                  ? `Using pack-time snapshot (${packWeather.source}${packWeather.tempC != null ? ` · ${packWeather.tempC}°C` : ""}). Not a live forecast.`
-                  : "Pack weather is older than 18 hours — do not use it for heat or cold decisions. Enter current conditions."}
+                {formatPackWeatherNote(packWeather, weatherNow)}
               </p>
             )}
             <div className="grid grid-cols-3 gap-2">
-              <Input value={tempC} placeholder="°C" onChange={(e) => setTempC(e.target.value)} />
-              <Input value={windKph} placeholder="wind km/h" onChange={(e) => setWindKph(e.target.value)} />
-              <Input value={rh} placeholder="RH %" onChange={(e) => setRh(e.target.value)} />
+              {([
+                ["tempC", "Temperature °C", "°C"],
+                ["windKph", "Wind km/h", "wind km/h"],
+                ["rhPct", "Relative humidity %", "RH %"],
+              ] as const).map(([key, label, placeholder]) => (
+                <div key={key} className="space-y-1">
+                  <Label htmlFor={`field-weather-${key}`} className="sr-only">{label}</Label>
+                  <Input
+                    id={`field-weather-${key}`}
+                    inputMode="decimal"
+                    value={displayedWeatherFields[key].value}
+                    placeholder={placeholder}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setWeatherFields((current) => ({
+                        ...current,
+                        [key]: {
+                          value,
+                          // Clearing a pack value is an explicit choice too. Keep
+                          // it blank instead of silently restoring the snapshot
+                          // on the next one-minute freshness tick.
+                          source: "manual",
+                        },
+                      }));
+                    }}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {displayedWeatherFields[key].source === "manual"
+                      ? displayedWeatherFields[key].value.trim() ? "your observation" : "left blank by you"
+                      : displayedWeatherFields[key].source === "pack" && packDecisionWeather
+                        ? "fresh pack snapshot"
+                        : "unknown"}
+                  </p>
+                </div>
+              ))}
             </div>
-            <p className="text-xs text-muted-foreground">
-              {windChillWarning(Number(tempC), Number(windKph)) ??
-                heatWarning(Number(tempC), Number(rh)) ??
-                "Enter temp / wind / RH for wind-chill or heat index."}
-            </p>
+            {weatherHazard ? (
+              // Styled by the lib's severity, never by the text: the frostbite and
+              // heat-stroke bands used to render byte-identical to the muted
+              // "weather unknown" placeholder they replace.
+              <p
+                className={
+                  weatherHazard.severity === "danger"
+                    ? "rounded-lg border border-destructive bg-destructive/10 p-2 text-xs font-medium text-destructive"
+                    : weatherHazard.severity === "advisory"
+                      ? "rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 text-xs"
+                      : "text-xs text-muted-foreground"
+                }
+              >
+                {weatherHazard.text}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Weather unknown or outside calculator ranges. Enter observations you personally confirm; blank fields never become zero.
+              </p>
+            )}
             <div className="flex gap-2">
               <Input value={flashSec} placeholder="flash-to-bang s" onChange={(e) => setFlashSec(e.target.value)} />
               <Button
@@ -1633,8 +2155,7 @@ export function SafetyPanel({
                 onClick={async () => {
                   const ok = await copyEmergencyInfo(
                     fieldMetar({
-                      sky: "SCT",
-                      windKph: Number(windKph) || undefined,
+                      windKph: observedWindKph,
                       lat,
                       lng,
                     }),
@@ -1895,6 +2416,66 @@ export function SafetyPanel({
             </div>
           </div>
 
+          {wayfindingNote && (
+            <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+              {wayfindingNote}
+            </div>
+          )}
+
+          <div className="rounded-lg border p-3 space-y-3">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Survival harvest — hunting · trapping · cook
+            </p>
+            <p className="text-xs text-muted-foreground">{HARVEST_DISCLAIMER}</p>
+            {harvestNote && (
+              <p className="text-xs font-medium text-amber-800 dark:text-amber-200">{harvestNote}</p>
+            )}
+            <ul className="list-disc space-y-1 pl-4 text-xs text-muted-foreground">
+              {survivalHarvestPriorities().map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Hunting &amp; trapping</summary>
+              <p className="mt-2 font-medium text-foreground">Hunting</p>
+              <ul className="list-disc pl-4">
+                {huntingBasics().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <p className="mt-2 font-medium text-foreground">Trapping</p>
+              <ul className="list-disc pl-4">
+                {trappingBasics().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Field dress &amp; cook</summary>
+              <ul className="mt-2 list-disc pl-4">
+                {gameFieldDressing().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              <ul className="mt-2 list-disc pl-4">
+                {cookingWildGame().map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+            </details>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await navigator.clipboard.writeText(formatHarvestCard());
+                setCopiedHarvest(true);
+                window.setTimeout(() => setCopiedHarvest(false), 2000);
+              }}
+            >
+              {copiedHarvest ? "Harvest card copied" : "Copy harvest card"}
+            </Button>
+          </div>
+
           {sereNote && (
             <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
               {sereNote}
@@ -1976,6 +2557,9 @@ export function SafetyPanel({
             </Button>
           </div>
 
+            </div>
+          </details>
+
           <div className="rounded-lg border p-3 space-y-2">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Offline self-check
@@ -1999,11 +2583,16 @@ export function SafetyPanel({
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Planned return
             </p>
-            <Input
-              type="datetime-local"
-              value={returnLocal}
-              onChange={(e) => void persistReturn(e.target.value)}
-            />
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="datetime-local"
+                value={returnLocal}
+                onChange={(e) => void persistReturn(e.target.value)}
+              />
+              <Button size="sm" variant="outline" onClick={() => void clearReturn()}>
+                Clear deadline
+              </Button>
+            </div>
             {returnTimeChoices && (
               <div className="flex gap-2">
                 {returnTimeChoices.map((choice, index) => (
@@ -2016,6 +2605,43 @@ export function SafetyPanel({
             <p className="text-xs text-muted-foreground">
               {returnTimeMessage ?? "Stored as an absolute deadline on this phone. When time passes, navigation shows OVERDUE."}
             </p>
+            {alarmProblem && (
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-destructive">
+                  {alarmProblem === "needs-permission"
+                    ? "This phone has not been asked to raise the return-time alarm yet, so nothing will wake you with the screen locked."
+                    : alarmProblem === "denied"
+                      ? "Notifications are turned off for Klandagi, so the return-time alarm cannot wake you with the screen locked."
+                      : "This phone refused the return-time alarm, so nothing will wake you with the screen locked."}{" "}
+                  The in-app OVERDUE warning still works whenever the app is open.
+                </p>
+                {alarmProblem === "needs-permission" ? (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      void (async () => {
+                        await requestOverduePermission();
+                        // Re-arm against the deadline already stored, so a granted
+                        // permission takes effect without re-entering the time.
+                        const alarm = await getOverdueAlarm();
+                        await syncOverdueNotification(alarm?.returnAt ?? null);
+                      })();
+                    }}
+                  >
+                    Allow the return-time alarm
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void openOverdueNotificationSettings()}
+                  >
+                    Open notification settings
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="rounded-lg border p-3 space-y-2">
@@ -2047,6 +2673,28 @@ export function SafetyPanel({
               value={profile.icePhone}
               onChange={(e) => void persistProfile({ ...profile, icePhone: e.target.value })}
             />
+            {/* The card had a field for the license plate and none for the
+                agency that would actually run a search. This is the one fact a
+                contact cannot look up quickly at 3am. */}
+            <Label htmlFor="responder-agency">Who covers this route (sheriff / park dispatch)</Label>
+            <Input
+              id="responder-agency"
+              value={profile.responderAgency ?? ""}
+              placeholder="e.g. Mariposa County Sheriff"
+              onChange={(e) => void persistProfile({ ...profile, responderAgency: e.target.value })}
+            />
+            <Label htmlFor="responder-phone">Their non-emergency number</Label>
+            <Input
+              id="responder-phone"
+              type="tel"
+              value={profile.responderPhone ?? ""}
+              onChange={(e) => void persistProfile({ ...profile, responderPhone: e.target.value })}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Printed first under &ldquo;if they are overdue&rdquo; on the leave-behind card. Look it
+              up now, while you have signal — it is the hour your contact would otherwise spend
+              finding it.
+            </p>
             <Label htmlFor="party">Party size</Label>
             <Input
               id="party"
@@ -2057,6 +2705,7 @@ export function SafetyPanel({
                 void persistProfile({
                   ...profile,
                   partySize: Math.max(1, Number(e.target.value) || 1),
+                  partySizeConfirmed: true,
                 })
               }
             />
@@ -2116,8 +2765,6 @@ export function SafetyPanel({
               onChange={(e) => void persistProfile({ ...profile, medical: e.target.value })}
             />
           </div>
-
-          <CapabilityTabs altitudeM={altitudeM} elevationProfile={elevationProfile} />
 
           <div className="rounded-lg border p-3 text-xs text-muted-foreground space-y-1">
             <p className="font-medium text-foreground">Tell 911 / SAR</p>

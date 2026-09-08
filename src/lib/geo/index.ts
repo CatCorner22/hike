@@ -1,7 +1,7 @@
 import * as turf from "@turf/turf";
 import { minimumLongitudeInterval } from "@/lib/geo/antimeridian";
 import { fetchWithTimeout, readJsonCapped } from "@/lib/api/outbound";
-import { isValidCoordinate } from "@/lib/geo/coords";
+import { isFinitePosition, isValidCoordinate } from "@/lib/geo/coords";
 
 /** Elevation is an enhancement, not a blocker: fail fast and cache an empty profile. */
 const ELEVATION_TIMEOUT_MS = 8_000;
@@ -21,17 +21,6 @@ function geometrySegments(
     (line): line is GeoJSON.Position[] =>
       Array.isArray(line) && line.length >= 2 && line.every(isFinitePosition),
   );
-}
-
-function isFinitePosition(position: unknown): position is GeoJSON.Position {
-  return Array.isArray(position) &&
-    position.length >= 2 &&
-    Number.isFinite(position[0]) &&
-    Number.isFinite(position[1]) &&
-    (position[0] as number) >= -180 &&
-    (position[0] as number) <= 180 &&
-    (position[1] as number) >= -90 &&
-    (position[1] as number) <= 90;
 }
 
 export function lineLengthMeters(
@@ -61,14 +50,16 @@ export function distanceToTrailMeters(
 export function nearestPointOnTrail(
   point: { lat: number; lng: number },
   trail: GeoJSON.LineString | GeoJSON.MultiLineString,
-): { lat: number; lng: number; distanceMeters: number; index: number } | null {
+): { lat: number; lng: number; distanceMeters: number; index: number; alongMeters: number } | null {
   if (!isValidCoordinate(point)) return null;
   const pt = turf.point([point.lng, point.lat]);
-  let best: { lat: number; lng: number; distanceMeters: number; index: number } | null = null;
+  let best: { lat: number; lng: number; distanceMeters: number; index: number; alongMeters: number } | null = null;
   let indexOffset = 0;
+  let priorMeters = 0;
   for (const coords of geometrySegments(trail)) {
     if (coords.length < 2) continue;
-    const snapped = turf.nearestPointOnLine(turf.lineString(coords), pt, { units: "meters" });
+    const line = turf.lineString(coords);
+    const snapped = turf.nearestPointOnLine(line, pt, { units: "meters" });
     const d = snapped.properties.dist ?? Infinity;
     if (!best || d < best.distanceMeters) {
       best = {
@@ -76,90 +67,15 @@ export function nearestPointOnTrail(
         lat: snapped.geometry.coordinates[1],
         distanceMeters: d,
         index: indexOffset + (snapped.properties.index ?? 0),
+        alongMeters: priorMeters + (snapped.properties.location ?? 0),
       };
     }
     indexOffset += coords.length;
+    priorMeters += turf.length(line, { units: "meters" });
   }
-  return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0 };
+  return best ?? { lat: point.lat, lng: point.lng, distanceMeters: Number.NaN, index: 0, alongMeters: Number.NaN };
 }
 
-export function computeTrackStats(
-  coordinates: Array<{ lat: number; lng: number; elevation?: number | null }>,
-): {
-  distanceMeters: number;
-  elevationGainMeters: number;
-  durationSeconds: number;
-  avgPaceMinPerKm: number;
-} {
-  if (coordinates.length < 2) {
-    return {
-      distanceMeters: 0,
-      elevationGainMeters: 0,
-      durationSeconds: 0,
-      avgPaceMinPerKm: 0,
-    };
-  }
-
-  let distanceMeters = 0;
-  let elevationGainMeters = 0;
-
-  for (let i = 1; i < coordinates.length; i++) {
-    const prev = coordinates[i - 1];
-    const curr = coordinates[i];
-    distanceMeters += turf.distance(
-      turf.point([prev.lng, prev.lat]),
-      turf.point([curr.lng, curr.lat]),
-      { units: "meters" },
-    );
-
-    if (
-      prev.elevation != null &&
-      curr.elevation != null &&
-      curr.elevation > prev.elevation
-    ) {
-      elevationGainMeters += curr.elevation - prev.elevation;
-    }
-  }
-
-  const startTime = coordinates[0].elevation;
-  void startTime;
-
-  return {
-    distanceMeters,
-    elevationGainMeters,
-    durationSeconds: 0,
-    avgPaceMinPerKm:
-      distanceMeters > 0 ? (0 / (distanceMeters / 1000)) : 0,
-  };
-}
-
-export function computeTrackStatsWithTime(
-  points: Array<{
-    lat: number;
-    lng: number;
-    elevation?: number | null;
-    recordedAt: Date;
-  }>,
-) {
-  const base = computeTrackStats(points);
-  if (points.length < 2) return { ...base, durationSeconds: 0, avgPaceMinPerKm: 0 };
-
-  const durationSeconds =
-    (points[points.length - 1].recordedAt.getTime() -
-      points[0].recordedAt.getTime()) /
-    1000;
-
-  const avgPaceMinPerKm =
-    base.distanceMeters > 0
-      ? durationSeconds / 60 / (base.distanceMeters / 1000)
-      : 0;
-
-  return {
-    ...base,
-    durationSeconds,
-    avgPaceMinPerKm,
-  };
-}
 export function coordsToLineString(
   coordinates: Array<{ lat: number; lng: number }>,
 ): GeoJSON.LineString {
@@ -331,7 +247,7 @@ export function gpxFromLineString(
     })
     .join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Hike App">
+<gpx version="1.1" creator="Klandagi">
   <trk>
     <name>${escapeXml(name)}</name>
 ${segs}
@@ -349,7 +265,7 @@ export function gpxFromTrack(
     return `      <trkpt lat="${point.lat}" lon="${point.lng}">${ele}${time}\n      </trkpt>`;
   }).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Hike App">
+<gpx version="1.1" creator="Klandagi">
   <trk>
     <name>${escapeXml(name)}</name>
     <trkseg>
